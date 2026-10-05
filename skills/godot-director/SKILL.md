@@ -5,7 +5,7 @@ license: MIT
 compatibility: 'Godot 4.3 or newer, git and bash (Git Bash on Windows). Needs network access to fetch Godot Director from GitHub unless it is already present.'
 metadata:
   author: Freakling
-  version: 3.0.0
+  version: 3.2.0
   repository: https://github.com/Freakling/Godot-Director
 ---
 

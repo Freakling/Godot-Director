@@ -106,7 +106,7 @@ bugs and design proposals ── you decide ── repeat
 ```
 your-game/
 │  yours: never overwritten
-├── AGENTS.md                   for every assistant: project facts, layout, architecture, project rules
+├── AGENTS.md                   for every assistant: project facts, layout, architecture, ownership, project rules
 ├── CLAUDE.md                   "@AGENTS.md", for Claude Code
 ├── TASKS.md                    milestones and the queue (tasks and bugs)
 ├── design/gdd.md               the game's current design, and Open Questions
@@ -134,6 +134,7 @@ Machine-local and gitignored: `tools/godot_bin.local` (the path to your Godot) a
 ### The rules, briefly
 The full rules are in `.godot-director/rules.md`, and the assistant reads them every session.
 - **You decide design.** The assistant offers options and a recommendation. It never picks balance numbers (new values are marked `## PLACEHOLDER`), and never answers an open question itself.
+- **Areas you own are never generated.** Onboarding asks who owns art, audio, scenes, tunables and text. Human-owned areas get a documented placeholder policy instead of generated content. `director/` is an optional protected workspace — the AI reads it for context but never creates, modifies or deletes anything inside it.
 - **Each fact lives in one place,** and is updated in the same change that makes it untrue.
 - **Rules live in systems, not screens.** They sit in plain classes that tests can build directly. Saves are JSON in `user://`, never Resources, which can run scripts when loaded.
 - **Done means the check passes,** and the work is committed only with your approval.

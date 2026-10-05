@@ -29,5 +29,16 @@ One row per system: what it owns and where its boundary is. Screens depend on sy
 | `MarketConfig` | tunable market values | `scripts/resources/market_config.gd`, `data/market_config.tres` | — |
 | Shop screen | shows the run; buttons call `RunState` | `scenes/shop_screen.tscn`, `scripts/ui/shop_screen.gd` | reads `RunState`, listens to `changed` |
 
+## Ownership
+| Area | Owner | Placeholder |
+|---|---|---|
+| GDScript / game code | agent | — |
+| UI / screen layout | agent | — |
+| Art / sprites / textures | human | `ColorRect` under `Visual` node, labelled |
+| Audio / music / SFX | human | `AudioStreamPlayer`, no stream, named |
+| Scene / level design | agent | — |
+| Tunable values (`data/`) | human | `## PLACEHOLDER` default in schema |
+| Player-facing text | agent | — |
+
 ## Project rules
 - No git remote: never push.
