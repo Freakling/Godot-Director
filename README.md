@@ -164,36 +164,36 @@ The designer (main session) and the developer (builder subagent) are deliberatel
 ```mermaid
 sequenceDiagram
     participant H as You
-    participant M as Main session<br/>(designer · orchestrator)
-    participant B as Builder subagent<br/>(fresh context)
-    participant Rev as Reviewer subagent<br/>(fresh context, read-only)
-    participant R as Git records<br/>(TASKS · commits · GDD)
+    participant M as Main session (designer)
+    participant B as Builder subagent (fresh context)
+    participant Rev as Reviewer subagent (fresh context)
+    participant R as Git records (TASKS, commits, GDD)
 
-    Note over M: starts ~10 KB;<br/>procedures load lazily
+    Note over M: starts at ~10 KB, loads procedures lazily
 
     H->>M: /next-task
-    M->>R: grep candidates; read item
-    M->>R: claim → in-progress
-    M->>+B: item ID + full text
-    Note over B: reads only Touches,<br/>Architecture rows, GDD sections
-    B->>B: build · bash tools/check.sh
+    M->>R: grep candidates, read item
+    M->>R: claim item as in-progress
+    M->>+B: item ID and full text
+    Note over B: reads only Touches, Architecture rows, GDD sections
+    B->>B: build, then run check.sh
     B-->>-M: ~20-line report
-    Note over M: keeps only the report —<br/>not the files or check logs
+    Note over M: keeps only the report, not the files or check logs
 
     opt L item or API/saves changed
-        M->>R: git diff > review.diff
-        M->>+Rev: item · report · check result
+        M->>R: git diff to review.diff
+        M->>+Rev: item, report, check result
         Rev-->>-M: ranked findings
         M->>+B: rebuild with findings
         B-->>-M: updated report
     end
 
-    M->>R: mark done; update TASKS.md, AGENTS.md
-    M->>H: here's what changed — approve commit?
+    M->>R: mark done, update TASKS.md and AGENTS.md
+    M->>H: approve commit?
     H->>M: approved
     M->>R: commit
 
-    Note over R: records are the handoff — /clear<br/>or a new session loses nothing
+    Note over R: records are the handoff — /clear or a new session loses nothing
 ```
 
 **Model sizing** (optional, off by default): small items can run the builder on Haiku. Turn it on in AGENTS.md › Project rules.
