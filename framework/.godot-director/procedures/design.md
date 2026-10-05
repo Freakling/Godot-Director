@@ -33,3 +33,4 @@ Brainstorm a topic, rank and answer open design questions, or change how part of
 ## Finish
 - Summarise what was decided, what's still open, and the next most useful question.
 - Commit the design files as `docs: <summary>`, with a body listing the decisions, after the human approves (see `rules.md` › Git). A design session doesn't edit code or data.
+- After the commit, suggest `/clear` (or starting a fresh session) before the next topic. The GDD, decisions.md and TASKS.md hold everything; the conversation history no longer adds value and only grows the context.
