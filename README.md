@@ -142,10 +142,61 @@ The full rules are in `.godot-director/rules.md`, and the assistant reads them e
 In Claude Code's default mode, the harness asks you before each commit and push. In auto or bypass mode those prompts don't appear, so the rules tell the assistant to ask you in the conversation instead.
 
 ### Context and token use
+
+The designer (main session) and the developer (builder subagent) are deliberately separate contexts. Each optimises differently.
+
+**The main session — designer and orchestrator**
 - **Small at the start.** A session starts with about 10 KB of instructions (AGENTS.md and the rules). Each procedure, and the task format, loads only when it's used.
-- **Builds run in a fresh context.** In Claude Code, the `builder` subagent reads, edits and checks, and the main session keeps only its short report. A session that gets through several tasks stays small instead of carrying every file it touched.
-- **Nothing to hand off.** TASKS.md, the commits and AGENTS.md hold the state, so after a commit you can `/clear`, or start a new session, and lose nothing. An item paused midway gets a one-line `Note:`.
-- **Model sizing** (optional, off by default): builds of small items run on Haiku. Turn it on in AGENTS.md › Project rules.
+- **Stays small across items.** The main session picks items, records decisions, updates TASKS.md, and approves commits. It never reads the files being changed. After it hands an item to the builder and the report comes back, its context holds only that ~20-line report — not the source files, test output, or check logs the builder went through.
+- **Nothing to hand off between sessions.** TASKS.md, the commits, AGENTS.md and the GDD hold everything. Once an item is committed, a new session (or `/clear` in Claude Code) loses nothing. An item interrupted mid-build gets a one-line `Note:` in TASKS.md; the next session reads it and resumes.
+
+**The builder subagent — developer with a fresh context**
+- **Fresh context per item.** In Claude Code, each build runs as a separate `builder` subagent that starts with an empty context. It reads only what the item needs: the files in `Touches`, the relevant Architecture rows in AGENTS.md, and the GDD sections named in the item. It builds, runs the check, and returns a structured ~20-line report.
+- **Isolation prevents accumulation.** Because the builder is isolated, the main session never carries the file contents, check logs, or edit history from the build. A session that works through ten tasks stays about as lean as one that worked through one.
+- **The report is the only channel.** The builder's report fields (`Files`, `Done when`, `Systems`, `API/saves`, `Found`, `For the human`) give the main session exactly what it needs to update the records and decide what's next — no more.
+
+**The reviewer subagent — read-only, also isolated**
+- For larger items, a separate `reviewer` subagent checks the diff in its own fresh context before the commit. Its findings go back to the main session as a ranked list; code fixes are rebuilt, out-of-scope findings become new TASKS.md items.
+
+**Parallel sessions (design + coding)**
+- Two sessions can run at once against separate git worktrees — one designing, one building. Each reads from the same project files, and the `in-progress` claim in TASKS.md prevents them from touching the same item.
+
+```mermaid
+sequenceDiagram
+    participant H as You
+    participant M as Main session<br/>(designer · orchestrator)
+    participant B as Builder subagent<br/>(fresh context)
+    participant Rev as Reviewer subagent<br/>(fresh context, read-only)
+    participant R as Git records<br/>(TASKS · commits · GDD)
+
+    Note over M: starts ~10 KB;<br/>procedures load lazily
+
+    H->>M: /next-task
+    M->>R: grep candidates; read item
+    M->>R: claim → in-progress
+    M->>+B: item ID + full text
+    Note over B: reads only Touches,<br/>Architecture rows, GDD sections
+    B->>B: build · bash tools/check.sh
+    B-->>-M: ~20-line report
+    Note over M: keeps only the report —<br/>not the files or check logs
+
+    opt L item or API/saves changed
+        M->>R: git diff > review.diff
+        M->>+Rev: item · report · check result
+        Rev-->>-M: ranked findings
+        M->>+B: rebuild with findings
+        B-->>-M: updated report
+    end
+
+    M->>R: mark done; update TASKS.md, AGENTS.md
+    M->>H: here's what changed — approve commit?
+    H->>M: approved
+    M->>R: commit
+
+    Note over R: records are the handoff — /clear<br/>or a new session loses nothing
+```
+
+**Model sizing** (optional, off by default): small items can run the builder on Haiku. Turn it on in AGENTS.md › Project rules.
 
 ### The check
 `bash tools/check.sh` runs four steps:
