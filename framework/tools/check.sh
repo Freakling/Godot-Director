@@ -35,6 +35,7 @@ fingerprint() {
       '*.tres' '*.res' '*.gdshader' '*.gdshaderinc' project.godot tools/check.cfg tools/check.sh \
       tools/check.local.sh 2>/dev/null | tr '\0' '\n'
     echo tools/godot_bin.local
+    echo tools/check.ignore
   } | while IFS= read -r path; do [ -f "$path" ] && printf '%s\n' "$path"; done )"
   [ -n "$paths" ] || return 0
   { printf '%s\n' "$paths"; printf '%s\n' "$paths" | git hash-object --no-filters --stdin-paths; } \
@@ -143,6 +144,8 @@ allow="$state_dir/allow.txt"
   printf '%s\n' "ObjectDB instances leaked at exit" "resources still in use at exit" "Pages in use exist at exit"
   # Lines a test prints to expect an error. C4G-IGNORE: is the 2.x spelling, deprecated: remove in 4.0.
   clean "$state_dir/check.log" | sed -n -e "s/^GDIR-IGNORE://p" -e "s/^C4G-IGNORE://p"
+  # Project-approved suppressions (tools/check.ignore: one substring per line, # comments).
+  [ -f tools/check.ignore ] && grep -v '^[[:space:]]*#' tools/check.ignore
 } | grep -v '^[[:space:]]*$' > "$allow"
 
 # Matching lines, plus the "at:" line under each, minus allowlisted ones.
@@ -199,6 +202,57 @@ if [ "$failed" -eq 0 ]; then
     echo "check: note: files changed while the check ran; run it again to cover the changes."
   fi
   rm -f "$state_dir/last-fail"
+  # Streak tracking: count how many consecutive passing runs each warning has appeared in,
+  # and emit a note for any that have reached the threshold.
+  streak_file="$state_dir/warn-streak.json"
+  threshold=5
+  if [ -f tools/check.cfg ]; then
+    t="$(awk '/^\[warnings\]/{s=1;next} /^\[/{s=0}
+              s && /^recurring_threshold[[:space:]]*=/{
+                sub(/[^=]*=[[:space:]]*/,""); sub(/[#[:space:]].*/,""); print; exit
+              }' tools/check.cfg)"
+    [ -n "$t" ] && [ "$t" -eq "$t" ] 2>/dev/null && threshold="$t"
+  fi
+  printf '%s\n' "$warnings" \
+    | grep -v '^[[:space:]]*at:' \
+    | sed 's/^[[:space:]]*//' \
+    | sort -u \
+    | awk -v sf="$streak_file" -v thresh="$threshold" '
+      # Read {"text":count,...} from sf into st[].
+      function rj(f, st,    ln, s, i, c, k, v, ins, esc) {
+        while ((getline ln < f) > 0) s = s ln; close(f)
+        ins = 0; esc = 0; k = ""; v = ""
+        for (i = 1; i <= length(s); i++) {
+          c = substr(s, i, 1)
+          if (esc) { if (ins) k = k c; esc = 0; continue }
+          if (c == "\\") { esc = 1; continue }
+          if (c == "\"") { ins = !ins; if (ins) k = ""; continue }
+          if (ins) { k = k c; continue }
+          if (c ~ /[0-9]/) { v = v c; continue }
+          if ((c == "," || c == "}") && k != "" && v != "") { st[k] = int(v); k = ""; v = "" }
+        }
+      }
+      # Write st[] as {"text":count,...} to f, omitting zero-count entries.
+      function wj(f, st,    sep, k, ek) {
+        printf "{" > f; sep = ""
+        for (k in st) {
+          if (st[k] <= 0) continue
+          ek = k; gsub(/\\/, "\\\\", ek); gsub(/"/, "\\\"", ek)
+          printf "%s\"%s\":%d", sep, ek, st[k] > f; sep = ","
+        }
+        printf "}" > f; close(f)
+      }
+      BEGIN { rj(sf, old) }
+      NF   { cur[$0] = 1 }
+      END  {
+        for (k in old) new[k] = (k in cur) ? old[k] + 1 : 0
+        for (k in cur) if (!(k in new)) new[k] = 1
+        for (k in new)
+          if (new[k] >= thresh)
+            printf "check: note: recurring warning (%d\303\227): %s\n", new[k], k
+        wj(sf, new)
+      }
+    '
   echo "check: PASS"
   exit 0
 fi

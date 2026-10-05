@@ -71,3 +71,12 @@ End with the list of items done and what's next.
 
 ## Stopping partway through
 If you must stop before the item is done, add `- Note: <where it stands, what's next>` to the item.
+
+## Recurring warnings
+After a passing check, `check: note: recurring warning (N×): <text>` lines may appear. Each names a warning that has appeared in every passing run for N consecutive checks. When you see one:
+
+1. **Verify it's benign.** Search the codebase for the warning's source. Confirm it's genuinely harmless — engine noise, a resource the game creates at runtime, a known Godot limitation — and not masking a real problem. If it might be real, flag it to the human instead.
+2. **Propose a suppression.** Tell the human the warning text and why it's harmless, and propose adding the matching substring to `tools/check.ignore` with a `#` comment explaining why. Wait for approval.
+3. **Apply and commit as XS.** Add the line to `tools/check.ignore` and commit it as `chore: suppress recurring warning` — one warning per commit, no item ID needed unless the human asks for one.
+
+Don't batch multiple suppressions in one commit. A suppression that the human rejects becomes a note to investigate the warning's source in a separate item.
