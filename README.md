@@ -181,7 +181,7 @@ sequenceDiagram
     B-->>-M: ~20-line report
     Note over M: keeps only the report, not the files or check logs
 
-    opt L item or API/saves changed
+    opt L or XL item, or API/saves changed
         M->>R: git diff to review.diff
         M->>+Rev: item, report, check result
         Rev-->>-M: ranked findings

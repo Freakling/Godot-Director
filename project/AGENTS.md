@@ -32,5 +32,5 @@ One row per system: what it owns and where its boundary is. Screens depend on sy
 Examples:
 - The agent may generate UI icons; all other art and audio stays human-made.
 - No git remote: never push.
-- Model sizing: on (default off; Claude Code only)
+- Model sizing: on (recommended on; Claude Code only)
 -->
