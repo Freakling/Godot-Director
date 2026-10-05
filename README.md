@@ -90,8 +90,6 @@ playtest (how it feels)   ·   function check (does each built rule work?)
 bugs and design proposals ── you decide ── repeat
 ```
 
-**From your phone:** start a Claude Code session on your workstation, turn on Remote Control (`/remote-control`), and continue it from the Claude mobile app; or send a task with Dispatch. The work still runs on your workstation, with Godot, git and your files, so the workstation has to stay awake.
-
 ---
 
 ## What this is
@@ -140,8 +138,6 @@ The full rules are in `.godot-director/rules.md`, and the assistant reads them e
 - **Done means the check passes,** and the work is committed only with your approval.
 - **Guarded git:** in Claude Code, force-push, `reset --hard`, `--no-verify` and other work-destroying commands are blocked by a hook that checks the whole command line. It's a strong safety net, not a guarantee.
 
-In Claude Code's default mode, the harness asks you before each commit and push. In auto or bypass mode those prompts don't appear, so the rules tell the assistant to ask you in the conversation instead.
-
 ### Context and token use
 
 The designer (main session) and the developer (builder subagent) are deliberately separate contexts. Each optimises differently.
@@ -157,47 +153,6 @@ The designer (main session) and the developer (builder subagent) are deliberatel
 - **Isolation prevents accumulation.** Because the builder is isolated, the main session never carries the file contents, check logs, or edit history from the build. A session that works through ten tasks stays about as lean as one that worked through one.
 - **The report is the only channel.** The builder's report fields (`Files`, `Done when`, `Systems`, `API/saves`, `Found`, `For the human`) give the main session exactly what it needs to update the records and decide what's next — no more.
 
-**The reviewer subagent — read-only, also isolated**
-- For larger items, a separate `reviewer` subagent checks the diff in its own fresh context before the commit. Its findings go back to the main session as a ranked list; code fixes are rebuilt, out-of-scope findings become new TASKS.md items.
-
-**Parallel sessions (design + coding)**
-- Two sessions can run at once against separate git worktrees — one designing, one building. Each reads from the same project files, and the `in-progress` claim in TASKS.md prevents them from touching the same item.
-
-```mermaid
-sequenceDiagram
-    participant H as You
-    participant M as Main session (designer)
-    participant B as Builder subagent (fresh context)
-    participant Rev as Reviewer subagent (fresh context)
-    participant R as Git records (TASKS, commits, GDD)
-
-    Note over M: starts at ~10 KB, loads procedures lazily
-
-    H->>M: /next-task
-    M->>R: grep candidates, read item
-    M->>R: claim item as in-progress
-    M->>+B: item ID and full text
-    Note over B: reads only Touches, Architecture rows, GDD sections
-    B->>B: build, then run check.sh
-    B-->>-M: ~20-line report
-    Note over M: keeps only the report, not the files or check logs
-
-    opt L or XL item, or API/saves changed
-        M->>R: git diff to review.diff
-        M->>+Rev: item, report, check result
-        Rev-->>-M: ranked findings
-        M->>+B: rebuild with findings
-        B-->>-M: updated report
-    end
-
-    M->>R: mark done, update TASKS.md and AGENTS.md
-    M->>H: approve commit?
-    H->>M: approved
-    M->>R: commit
-
-    Note over R: records are the handoff — /clear or a new session loses nothing
-```
-
 **Model sizing** (recommended on): `XS` and `S` items run the builder on a smaller model (Haiku in Claude Code); `M` through `XL` use the session model. Onboarding asks you to choose; record it in AGENTS.md › Project rules.
 
 ### The check
@@ -208,10 +163,6 @@ sequenceDiagram
 4. runs `tools/check.local.sh`, if the game has one.
 
 It exits 0 on pass, 1 on fail, and 3 when it can't run. It remembers the last passing state, so hooks don't run it again when nothing has changed. Game-specific settings go in `tools/check.cfg`, and extra steps (for example an existing GUT suite) go in `tools/check.local.sh`.
-
-### Customising
-- **Project-specific rules** go in AGENTS.md › Project rules, where they win over the defaults. Project-wide Claude permissions and hooks go in `.claude/settings.json`. Per-machine ones go in `.claude/settings.local.json`.
-- **Change the framework itself:** edit `framework/` (installed files) or `project/` (seeds for new games), add the change to `CHANGELOG.md`, and run `bash selftest.sh <path to Godot>`. Then upgrade your games.
 
 ### This repository
 | Path | |
