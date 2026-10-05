@@ -196,7 +196,7 @@ sequenceDiagram
     Note over R: records are the handoff — /clear or a new session loses nothing
 ```
 
-**Model sizing** (optional, off by default): small items can run the builder on Haiku. Turn it on in AGENTS.md › Project rules.
+**Model sizing** (recommended on): `XS` and `S` items run the builder on a smaller model (Haiku in Claude Code); `M` through `XL` use the session model. Onboarding asks you to choose; record it in AGENTS.md › Project rules.
 
 ### The check
 `bash tools/check.sh` runs four steps:

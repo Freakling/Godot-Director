@@ -1,6 +1,16 @@
 # Changelog
 
-Each entry lists what changed. An entry that requires changes to a game's own files (AGENTS.md, TASKS.md, the GDD) ends with **Upgrade steps**, which onboarding carries out during an upgrade.
+Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
+
+## 3.1.0 (2026-10-05)
+
+- **`XS` and `XL` item sizes.** `XS` is a single value, label or line with no logic change and no new tests. `XL` is a cross-cutting refactor, a complete subsystem redesign, or a change touching most systems. `L` and `XL` items both trigger an independent review before commit.
+- **Model sizing recommended on.** Onboarding now asks about it explicitly and recommends enabling it. When on, `XS` and `S` items run on the smallest capable model (Haiku in Claude Code); `M`, `L` and `XL` use the session model. The model tier table is now in `rules.md` so non-Claude tools have a definition to map to their own model names.
+- **Upgrade path: fast and full modes.** Upgrades now have two explicit modes: fast (changelog steps only, the default) and full (re-run all content steps against the existing files). Changelog upgrade steps now explicitly cover game-owned files, so every project reaches the same capability level as a fresh install of the current version.
+
+**Upgrade steps**
+1. **Model sizing.** Check AGENTS.md › Project rules for a `Model sizing` line. If it is absent, ask the human whether to enable it (recommend yes), and add `Model sizing: on` if they agree.
+2. **New sizes.** `XS` and `XL` are now available for new items. Existing `S`, `M` and `L` labels are unchanged; no edits to existing items are needed.
 
 ## 3.0.0 (2026-10-02)
 

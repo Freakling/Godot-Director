@@ -66,5 +66,10 @@ Update the owning place in the same change that makes it untrue. Replace superse
 - **The records are the hand-off.** TASKS.md (what's done and what's next), commit messages (why), AGENTS.md and the GDD carry everything between sessions. Once an item is committed, a fresh session, or `/clear` in Claude Code, loses nothing.
 
 ## Reviews and model size
-- An `L` item, or an `M` item that changes save data or a system's public methods, gets an independent review (`review.md`) before its commit. Fix the findings that are in scope.
-- The session model is the human's choice. Project rules may turn on model sizing for builds (see `next-task.md`).
+- An `L` or `XL` item, or an `M` item that changes save data or a system's public methods, gets an independent review (`review.md`) before its commit. Fix the findings that are in scope.
+- **Model sizing** (when on in Project rules): match the build to the item's size. The model names below are for Claude Code; other tools use the closest equivalent.
+  | Size | Model tier |
+  |---|---|
+  | `XS`, `S` | smallest capable model |
+  | `M`, `L`, `XL` | session model |
+  See `next-task.md` for Claude Code model names.

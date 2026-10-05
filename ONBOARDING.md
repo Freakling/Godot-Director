@@ -35,11 +35,20 @@ Run `bash "$GDIR/install.sh" --tools <claude|none> .` for a first install. For a
     - `CLAUDE.md` must contain the line `@AGENTS.md`, at the top. Move instructions meant for every assistant into AGENTS.md.
     - `AGENTS.md` keeps its content, gains the missing sections, and gets the line that points to `.godot-director/rules.md`.
     - `TASKS.md` and `design/gdd.md` convert to the seed's format, keeping their content.
-- **Upgrade mode:**
-  1. Read the entries in `$GDIR/CHANGELOG.md` that are newer than the old version (the install report names it), and carry out their "Upgrade steps". From 2.x that includes 3.0.0, the rename: the report lists what `install.sh` already moved, and the steps cover the game's own files.
-  2. Run step 3 only if `bash tools/check.sh` exits 3.
-  3. Summarise what changed, using the CHANGELOG and `git diff --stat`.
-  4. Go to step 9.
+- **Upgrade mode.** Fresh installs (fresh start, existing game, migrate from 1.x) always run all steps. Upgrades are the only mode where the human chooses the depth. Present the choice before continuing:
+
+  Tell the human the version being upgraded from and to, then summarise in one sentence each what the relevant changelog entries change. Then ask:
+
+  > **Fast or full upgrade?**
+  > - **Fast** (default for routine upgrades): applies the changelog steps, which cover both framework files and any game-owned file updates for new features (AGENTS.md, TASKS.md, the GDD). Takes a few minutes.
+  > - **Full**: does everything fast does, then re-checks all project files against the current standards — same thoroughness as a fresh install of this version. Choose this after many versions have accumulated, for a new machine or contributor, or when you want a complete review.
+
+  Then:
+  1. Read the entries in `$GDIR/CHANGELOG.md` newer than the old version (the install report names it). Carry out each **Upgrade steps** section in order. From 2.x that includes 3.0.0.
+  2. If full, carry out steps 4–8.
+  3. Run step 3 only if `bash tools/check.sh` exits 3 (fast) or run it again now (full).
+  4. Summarise what changed, using the CHANGELOG and `git diff --stat`.
+  5. Go to step 9.
 
 ## 3. Godot for this clone
 Run `bash tools/setup-clone.sh --skip-hook`, adding the Godot path if the human gave one. It finds Godot 4.3+ and saves the path in `tools/godot_bin.local`, which is gitignored and never committed. If it exits 3, ask the human where Godot is and rerun it with the path. On Windows, prefer the `*_console.exe` build.
@@ -128,8 +137,8 @@ Walk the human through the defaults. Record only the differences, in AGENTS.md �
 - The agent owns code, data schemas, placeholder art, tests and the records.
 - Ask whether the agent may produce any production art, audio or player-facing text.
 - Commits: the agent proposes and the human approves. Pushes happen when the human asks, or never if there's no remote.
-- Model sizing (Claude Code only): off by default. When it's on, the `builder` subagent builds `S` items on Haiku.
-- Reviews: by default after `L` items, and after `M` items that change saves or a system's public methods.
+- Model sizing (Claude Code only): **ask the human, and recommend on.** When on, the `builder` subagent uses Haiku for `XS` and `S` items and the session model for everything else. Record the answer in Project rules.
+- Reviews: by default after `L` and `XL` items, and after `M` items that change saves or a system's public methods.
 
 ## 8. Playtest template
 Replace the `{{LOOP…}}` parts of `playtesting/TEMPLATE.md` with one section per loop in GDD › Core Loop, usually 3–6. Each gets one fixed scored statement and 1–2 open questions about decisions and feel. Update the "Loops you played" line to match.
