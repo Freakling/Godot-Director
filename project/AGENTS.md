@@ -27,10 +27,18 @@ One row per system: what it owns and where its boundary is. Screens depend on sy
 |---|---|---|---|
 <!-- | `RunState` (autoload) | the current run: day, gold, roster | `scripts/autoload/run_state.gd` | calls `Market`; emits `changed` for screens | -->
 
+## Ownership
+<!-- Filled in during onboarding. One row per work area where ownership matters.
+Owner: agent | human | shared. For human-owned areas, the agent uses the placeholder described. -->
+| Area | Owner | Placeholder |
+|---|---|---|
+<!-- | Art / sprites / textures | human | `ColorRect` under `Visual` node, labelled | -->
+<!-- | Audio / music / SFX     | human | `AudioStreamPlayer`, no stream, named     | -->
+<!-- | director/               | human | read-only for the agent                   | -->
+
 ## Project rules
 <!-- Only where this project differs from the Godot Director defaults, as agreed with the human.
 Examples:
-- The agent may generate UI icons; all other art and audio stays human-made.
-- No git remote: never push.
 - Model sizing: on (recommended on; Claude Code only)
+- No git remote: never push.
 -->

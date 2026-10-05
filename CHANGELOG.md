@@ -2,6 +2,15 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## 3.2.0 (2026-10-05)
+
+- **Protected workspace (`director/`).** The human's personal space — reference art, sketches, audio files, notes. The agent reads files there for context but is blocked from creating, modifying or deleting anything inside it. Edit and Write tool hooks enforce this in Claude Code.
+- **Ownership interview in onboarding.** Step 7 now goes through every work area (code, UI, art, audio, scene design, tunables, text) and asks who owns each. Human-owned areas get a documented placeholder policy. AGENTS.md now has an `## Ownership` table to record the result.
+
+**Upgrade steps**
+1. In AGENTS.md, add an `## Ownership` section (see `$GDIR/project/AGENTS.md` for the template). Fill it with the agreed ownership for each area, or leave the commented-out examples and fill it in conversation.
+2. If the human owns any area, consider creating `director/` as their protected workspace. Ask them.
+
 ## 3.1.0 (2026-10-05)
 
 - **`XS` and `XL` item sizes.** `XS` is a single value, label or line with no logic change and no new tests. `XL` is a cross-cutting refactor, a complete subsystem redesign, or a change touching most systems. `L` and `XL` items both trigger an independent review before commit.

@@ -132,10 +132,29 @@ Finally, search the documents for leftovers and fix them. Use `git grep -n -e �
 - **`project.godot`:** it has `untyped_declaration` (step 5).
 
 ## 7. Ownership and project rules
-Walk the human through the defaults. Record only the differences, in AGENTS.md › Project rules.
-- The human owns design, balance, art direction and priorities.
-- The agent owns code, data schemas, placeholder art, tests and the records.
-- Ask whether the agent may produce any production art, audio or player-facing text.
+
+### Work-area ownership interview
+For each area below, state the default and ask the human whether they want to own it. Record the result in AGENTS.md › Ownership (create that section now with a table). A human-owned area means the agent uses placeholders when it needs something from there — it never makes the real thing.
+
+| Area | Default | Agent placeholder when human owns it |
+|---|---|---|
+| **GDScript / game code** | agent | stubbed function or empty class with `## PLACEHOLDER` comment |
+| **UI / screen layout** | agent | minimal functional screen, commented for redesign |
+| **Art / sprites / textures** | human | `ColorRect` under a node named `Visual`, labelled with what goes there |
+| **Audio / music / SFX** | human | `AudioStreamPlayer` node, no stream assigned, comment naming the audio |
+| **Scene / level design** | shared | grey-box scene with placeholder geometry; human finishes the layout |
+| **Tunable values (`data/`)** | human | `## PLACEHOLDER` default in the schema; human sets final values in `.tres` |
+| **Player-facing text** | agent | `"[PLACEHOLDER: describe the text]"` string constant |
+
+### Protected workspace
+If the human owns any area — or wants a space the agent will never touch — offer to create `director/`. The agent reads files there for context (reference art, sketches, audio, notes) but never creates, modifies or deletes anything inside it.
+
+If they want it:
+1. Create `director/` and `director/README.md` explaining what it is and that the agent won't touch it.
+2. Ask whether to gitignore it (for large binary assets) or commit it (for design docs and notes). Update `.gitignore` accordingly.
+3. Add a row to AGENTS.md › Ownership: `director/ — human's workspace, read-only for the agent`.
+
+### Workflow defaults
 - Commits: the agent proposes and the human approves. Pushes happen when the human asks, or never if there's no remote.
 - Model sizing (Claude Code only): **ask the human, and recommend on.** When on, the `builder` subagent uses Haiku for `XS` and `S` items and the session model for everything else. Record the answer in Project rules.
 - Reviews: by default after `L` and `XL` items, and after `M` items that change saves or a system's public methods.
