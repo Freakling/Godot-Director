@@ -1,5 +1,7 @@
 # Godot Director
 
+<p align="center"><img src=".claude-plugin/icon.png" alt="Godot Director" width="160"></p>
+
 **Make the game you designed, with AI doing the building and you staying the designer.**
 
 A workflow for Godot projects, new or already in development. You decide the design, the balance and the priorities. The AI builds, tests and keeps the records. Built for Claude Code, and usable with any AI coding assistant that reads `AGENTS.md`. Everything lives in your game's own git repository.
