@@ -1,7 +1,7 @@
 <!-- Godot Director · framework-owned: replaced on upgrade. -->
 # Next task
 
-Pick the next ready item in `TASKS.md` (or the one the human named), have it built, prove it with the check, update the records, and commit it with the human's approval.
+Pick the next ready item in `TASKS.md` (or the one the human named), have it built, prove it with the check, update the records, and commit it.
 
 The build runs in a fresh context wherever the tool allows it; in Claude Code that's the `builder` subagent. This session keeps only the item, the builder's short report and the bookkeeping, so its context stays small however many items it gets through.
 
@@ -25,7 +25,7 @@ The request can be:
 Set the item to `in-progress YYYY-MM-DD` (today).
 
 ## 3. Build
-- **In Claude Code,** give the `builder` subagent the item's ID and full text. Run it in the foreground (`run_in_background: false`), and never run two builders at once: they would edit, and check, each other's files.
+- **In Claude Code,** give the `builder` subagent the item's ID and full text. Tell it to skip the final `bash tools/check.sh` call — step 4 runs the check from this session, and the pre-commit hook is the safety net. Run it in the foreground (`run_in_background: false`), and never run two builders at once: they would edit, and check, each other's files.
   1. Before starting it, create the file `.godot/godot-director/building`. Delete it when the report arrives; while it exists, the Stop hook leaves the half-built files alone.
   2. The builder runs on the session model. If AGENTS.md › Project rules turn on model sizing, pass `model: haiku` for an `XS` or `S` item.
 - **Other tools:** follow `build.md` yourself, or in a subagent if your tool has them.
@@ -57,15 +57,14 @@ Only when `rules.md` › Reviews and model size calls for one, judged from the i
 4. Review again only if the fixes were substantial.
 
 ## 7. Commit and report
-- **Commit** as `rules.md` › Git describes: one commit for the item's paths, including its records.
+- **Commit** immediately after the check passes: one commit for the item's paths, including its records, as `rules.md` › Git describes. The pre-commit hook is the gate; no conversational approval pause is needed.
 - **Report** in a few lines: what changed, the check result, placeholders added, and anything waiting on the human. Mention that the item's `(play)` outcomes, or a bug fix without a regression test, will be in the next function check.
 - **After the commit,** the records hold everything about the item. A new item can start in a fresh session, or after `/clear` in Claude Code, without losing anything.
 
 ## Several items
 Repeat steps 1–7 for each item, skipping `human` items as step 1 does. Report one line per finished item, and don't re-read files you've already seen. Stop early when:
 - an item is blocked on something only the human can answer;
-- a build fails;
-- the human declines a commit.
+- a build fails.
 
 End with the list of items done and what's next.
 
