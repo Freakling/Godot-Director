@@ -8,6 +8,7 @@
   },
   "repository": "https://github.com/Freakling/Godot-Director",
   "license": "MIT",
+  "icon": "./.claude-plugin/icon.png",
   "keywords": [
     "godot",
     "gamedev",
