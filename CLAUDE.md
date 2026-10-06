@@ -16,7 +16,7 @@ This repository is Godot Director, the workflow that gets installed into Godot g
 - **After any change:**
   1. Run `bash selftest.sh <path to Godot 4.3+>`. It must pass.
   2. Add the change to `CHANGELOG.md`, with "Upgrade steps" if games' own files need changing.
-  3. For a release, bump `VERSION` and `.claude-plugin/plugin.json` together; the self-test checks that they match.
+  3. For a release, bump `VERSION` and `.claude-plugin/plugin.json` together; the self-test checks that they match. The GitHub release notes must open with a **"How to install"** section covering all three install paths (skill, Claude Code plugin, manual) and the upgrade path for each — new users land there first. The changelog entry follows it.
   4. If the change affects what a game's files look like, update `examples/market-day` too.
 - **Scripts** must run in Git Bash on Windows, in macOS bash 3.2 with BSD tools, and on Linux. Use `/usr/bin/find`, `/usr/bin/sort` and `/usr/bin/tar` instead of the Windows programs with the same names. Avoid GNU-only flags and `declare -A`. Keep process starts few, because they're slow on Windows. Keep files LF (see `.gitattributes`).
 - **GDScript** here must compile on Godot 4.3+ with `untyped_declaration=2`.
