@@ -2,6 +2,16 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## 3.4.0 (2026-10-06)
+
+- **Builder skips final check.** The `builder` subagent no longer runs `bash tools/check.sh` at the end of its build. Step 4 of `next-task.md` runs the check from the outer session, and the pre-commit hook is the safety net — the third invocation was ~2 minutes of waste per task.
+- **Review threshold raised to L and XL.** `M` items no longer trigger an independent review by default. The pre-commit hook and the builder's own testing are sufficient at that scale. Exception: an `M` item that rewrites the save codec (`to_dict`/`from_dict` pair) or touches more than three system boundaries still gets a review.
+- **Auto-commit during autonomous work.** `next-task.md` now says to commit immediately after the check passes. The pre-commit hook is the gate; no conversational approval pause is inserted between a passing check and the commit.
+
+**Upgrade steps**
+
+No game-owned file changes. Framework files (`next-task.md`, `rules.md`) are replaced on upgrade.
+
 ## 3.3.0 (2026-10-05)
 
 - **Recurring-warning suppression.** After each passing run, `check.sh` tracks how many consecutive passes each warning has appeared in. Once a warning hits the threshold (default 5, configurable as `recurring_threshold` in `check.cfg`'s new `[warnings]` section), it emits `check: note: recurring warning (N×): <text>`. The AI director then verifies whether the warning is genuinely benign and, with human approval, adds a matching substring to `tools/check.ignore` as an XS commit.
