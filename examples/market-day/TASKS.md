@@ -18,10 +18,10 @@ Milestones, the work queue and bugs: the only place work is tracked. Item format
 ## Queue
 
 ### T1 · The check passes on a clean clone · done · S · agent
-- Depends on: —
+- Depends on: (none)
 - Touches: project.godot, tools/check.cfg
 - Done when: `bash tools/check.sh` exits 0 after deleting `.godot/` (check)
-- GDD: —
+- GDD: (none)
 
 ### T2 · Grain price moves each day · done · M · agent
 - Depends on: T1
@@ -53,7 +53,7 @@ Milestones, the work queue and bugs: the only place work is tracked. Item format
 - Done when: from day 2 on, the status line shows yesterday's price (play)
 - GDD: Systems › Shop screen
 
-### T6 · Tune the market values · todo · — · human
+### T6 · Tune the market values · todo · (none) · human
 - Depends on: T5
 - Touches: data/market_config.tres
 - Done when: no `## PLACEHOLDER` left in `market_config.gd` (check) · a full run is winnable but not trivial (play)

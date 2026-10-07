@@ -2,21 +2,31 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## 3.4.5 (2026-10-07)
+
+- **No en or em dashes.** All 71 occurrences of Unicode en dashes (U+2013) and em dashes (U+2014) across the repository are replaced with ASCII equivalents chosen by meaning: hyphens for numeric ranges, colons for explanatory clauses, semicolons for independent clause joins, and commas or parentheses for parenthetical asides. The em-dash null-marker in task headings and tables becomes `(none)`.
+- **Selftest assertion.** `selftest.sh` now fails if any tracked text file contains a U+2013 or U+2014 character.
+- **Style rule in CLAUDE.md.** Future agents working on the framework are told to use hyphens, colons, semicolons, and parentheses; no typographic dashes.
+
+**Upgrade steps**
+
+No game-owned file changes are required. If your game's own files (AGENTS.md, TASKS.md, GDD) use an em dash as a null marker in task headings or table cells, replace it with `(none)` for consistency. No other changes are necessary.
+
 ## 3.4.4 (2026-10-07)
 
-- **Tool-neutral model sizing rules.** `rules.md` no longer contains model IDs — it now describes five capability tiers only (`XS`/`S`: smallest/fastest; `M`: balanced; `L`/`XL`: most capable). Canonical defaults live only in `refresh-model-sizing.md` and `ONBOARDING.md`, keeping the framework core independent of any specific assistant's model names.
+- **Tool-neutral model sizing rules.** `rules.md` no longer contains model IDs; it now describes five capability tiers only (`XS`/`S`: smallest/fastest; `M`: balanced; `L`/`XL`: most capable). Canonical defaults live only in `refresh-model-sizing.md` and `ONBOARDING.md`, keeping the framework core independent of any specific assistant's model names.
 - **README model-sizing paragraph.** Replaced the stale two-tier summary with the canonical paragraph: per-size mapping, Claude Code defaults by tier name, escalation on failure, and how to update.
-- **Escalation rule in next-task.** A failed build now retries once on the next-size model (not the session model). An `XL` failure — already on the largest model — stops and comes to the director.
+- **Escalation rule in next-task.** A failed build now retries once on the next-size model (not the session model). An `XL` failure (already on the largest model) stops and comes to the director.
 - **Selftest assertion.** The self-test now checks that model IDs in `ONBOARDING.md` match the Claude Code defaults table in `refresh-model-sizing.md`, so a slip between the two files fails CI immediately.
 
 **Upgrade steps**
 
-Run `/refresh-model-sizing` to confirm or update your model mapping. No hand-edits to framework files are needed — the procedure writes `AGENTS.md` for you.
+Run `/refresh-model-sizing` to confirm or update your model mapping. No hand-edits to framework files are needed; the procedure writes `AGENTS.md` for you.
 
 ## 3.4.3 (2026-10-07)
 
 - **Consistent assistant-support position.** Every claim about which assistants work with Godot Director now uses one position: designed to work with any assistant that reads `AGENTS.md`; built and tested on Claude Code only; other assistants are untested. Previous hedges ("should work in theory", "every tool") and unnamed-assistant mentions are removed. The capability note in the README's "other assistant" section now states exactly which features depend on subagent and hook support.
-- **`npx skills add` description tightened.** States only what it does — installs the skill for the assistant you choose in the prompt; in Claude Code it becomes a slash command — without naming specific other tools.
+- **`npx skills add` description tightened.** States only what it does: installs the skill for the assistant you choose in the prompt; in Claude Code it becomes a slash command. No other assistants are named.
 - **Release-notes rule updated.** `CLAUDE.md` now requires the canonical assistant-support wording in "How to install" sections of release notes.
 
 **Upgrade steps**
@@ -29,12 +39,12 @@ No game-owned file changes.
 
 **Upgrade steps**
 
-No framework file changes affect installed games. Existing `AGENTS.md` files may keep the old terms — updating them is optional.
+No framework file changes affect installed games. Existing `AGENTS.md` files may keep the old terms. Updating them is optional.
 
 ## 3.4.1 (2026-10-07)
 
 - **Per-size model mapping.** Each of the five item sizes (`XS`, `S`, `M`, `L`, `XL`) now maps to its own model ID, stored in AGENTS.md › Project rules. The previous two-tier rule (Haiku for XS/S, session model for everything else) is replaced by five independent entries. Default Claude Code mapping: XS/S → `claude-haiku-4-5-20251001`, M → `claude-sonnet-5-5`, L/XL → `claude-opus-5-5` (`claude-fable-5-1` is an alternative for XL on Claude platform / usage credits).
-- **`/refresh-model-sizing` skill.** A new skill and procedure. It first checks whether the current assistant supports subagent spawning with per-subagent model selection — if not, it tells the human and stops without writing anything. If yes (Claude Code by default; other capable tools also supported), it proposes a mapping, confirms with the human, and writes it to Project rules. Run it when models change or on a new machine.
+- **`/refresh-model-sizing` skill.** A new skill and procedure. It first checks whether the current assistant supports subagent spawning with per-subagent model selection; if not, it tells the human and stops without writing anything. If yes (Claude Code by default; other capable tools also supported), it proposes a mapping, confirms with the human, and writes it to Project rules. Run it when models change or on a new machine.
 - **Onboarding writes the full mapping.** Step 7 now presents the five-size default and asks the human to confirm or adjust before writing it into Project rules.
 - **Model sizing scoped correctly.** `rules.md` now labels model sizing as Claude Code (and any tool with equivalent subagent + model-selection support). Tools that don't qualify skip the feature entirely.
 
@@ -48,11 +58,11 @@ No framework file changes affect installed games. Existing `AGENTS.md` files may
    - L: claude-opus-5-5
    - XL: claude-opus-5-5
    ```
-   Or run `/refresh-model-sizing` — it will detect the environment and propose the mapping for you.
+   Or run `/refresh-model-sizing`: it will detect the environment and propose the mapping for you.
 
 ## 3.4.0 (2026-10-06)
 
-- **Builder skips final check.** The `builder` subagent no longer runs `bash tools/check.sh` at the end of its build. Step 4 of `next-task.md` runs the check from the outer session, and the pre-commit hook is the safety net — the third invocation was ~2 minutes of waste per task.
+- **Builder skips final check.** The `builder` subagent no longer runs `bash tools/check.sh` at the end of its build. Step 4 of `next-task.md` runs the check from the outer session, and the pre-commit hook is the safety net; the third invocation was ~2 minutes of waste per task.
 - **Review threshold raised to L and XL.** `M` items no longer trigger an independent review by default. The pre-commit hook and the builder's own testing are sufficient at that scale. Exception: an `M` item that rewrites the save codec (`to_dict`/`from_dict` pair) or touches more than three system boundaries still gets a review.
 - **Auto-commit during autonomous work.** `next-task.md` now says to commit immediately after the check passes. The pre-commit hook is the gate; no conversational approval pause is inserted between a passing check and the commit.
 
@@ -63,14 +73,14 @@ No game-owned file changes. Framework files (`next-task.md`, `rules.md`) are rep
 ## 3.3.0 (2026-10-05)
 
 - **Recurring-warning suppression.** After each passing run, `check.sh` tracks how many consecutive passes each warning has appeared in. Once a warning hits the threshold (default 5, configurable as `recurring_threshold` in `check.cfg`'s new `[warnings]` section), it emits `check: note: recurring warning (N×): <text>`. The AI director then verifies whether the warning is genuinely benign and, with human approval, adds a matching substring to `tools/check.ignore` as an XS commit.
-- **`tools/check.ignore`.** A new optional project file — one substring per line, `#` comments supported — whose entries are added to the allowlist that `check.sh` already builds. Approved suppressions take effect immediately on the next run. Changing the file invalidates the check cache.
+- **`tools/check.ignore`.** A new optional project file: one substring per line, `#` comments supported. Its entries are added to the allowlist that `check.sh` already builds. Approved suppressions take effect immediately on the next run. Changing the file invalidates the check cache.
 
 **Upgrade steps**
 1. In `check.cfg`, add the `[warnings]` section (see the updated template in `$GDIR/project/tools/check.cfg`). No values need changing; it documents the `recurring_threshold` option.
 
 ## 3.2.0 (2026-10-05)
 
-- **Protected workspace (`director/`).** The human's personal space — reference art, sketches, audio files, notes. The agent reads files there for context but is blocked from creating, modifying or deleting anything inside it. Edit and Write tool hooks enforce this in Claude Code.
+- **Protected workspace (`director/`).** The human's personal space: reference art, sketches, audio files, notes. The agent reads files there for context but is blocked from creating, modifying or deleting anything inside it. Edit and Write tool hooks enforce this in Claude Code.
 - **Ownership interview in onboarding.** Step 7 now goes through every work area (code, UI, art, audio, scene design, tunables, text) and asks who owns each. Human-owned areas get a documented placeholder policy. AGENTS.md now has an `## Ownership` table to record the result.
 
 **Upgrade steps**

@@ -25,7 +25,7 @@ The request can be:
 Set the item to `in-progress YYYY-MM-DD` (today).
 
 ## 3. Build
-- **In Claude Code,** give the `builder` subagent the item's ID and full text. Tell it to skip the final `bash tools/check.sh` call — step 4 runs the check from this session, and the pre-commit hook is the safety net. Run it in the foreground (`run_in_background: false`), and never run two builders at once: they would edit, and check, each other's files.
+- **In Claude Code,** give the `builder` subagent the item's ID and full text. Tell it to skip the final `bash tools/check.sh` call: step 4 runs the check from this session, and the pre-commit hook is the safety net. Run it in the foreground (`run_in_background: false`), and never run two builders at once: they would edit, and check, each other's files.
   1. Before starting it, create the file `.godot/godot-director/building`. Delete it when the report arrives; while it exists, the Stop hook leaves the half-built files alone.
   2. If AGENTS.md › Project rules turn on model sizing, read the per-size model from the mapping there (lines `- XS: …` through `- XL: …`) and pass `model: <id>` for this item's size. Otherwise use the session model.
 - **Other tools:** follow `build.md` yourself, or in a subagent if your tool has them.
@@ -34,7 +34,7 @@ Set the item to `in-progress YYYY-MM-DD` (today).
   - If the answer is a design decision, record it following `design.md` › Record each decision before rebuilding. It's committed with the item.
   - Then rebuild, including the answer.
 - **Report `failed`:**
-  - An item built on a smaller-tier model gets one rebuild on the next-size model, and its size is annotated `S (escalated from XS)` or similar. An `XL` failure — already on the largest model — stops: give the human the check output without retrying.
+  - An item built on a smaller-tier model gets one rebuild on the next-size model, and its size is annotated `S (escalated from XS)` or similar. An `XL` failure (already on the largest model) stops: give the human the check output without retrying.
   - Otherwise, add a `Note:` to the item and give the human the check output.
 - **Report `failed: pre-existing`:** the failure was there before the build. Tell the human (see step 1).
 
@@ -62,7 +62,7 @@ Only when `rules.md` › Reviews and model size calls for one, judged from the i
 - **After the commit,** the records hold everything about the item. A new item can start in a fresh session, or after `/clear` in Claude Code, without losing anything.
 
 ## Several items
-Repeat steps 1–7 for each item, skipping `human` items as step 1 does. Report one line per finished item, and don't re-read files you've already seen. Stop early when:
+Repeat steps 1-7 for each item, skipping `human` items as step 1 does. Report one line per finished item, and don't re-read files you've already seen. Stop early when:
 - an item is blocked on something only the human can answer;
 - a build fails.
 
@@ -74,8 +74,8 @@ If you must stop before the item is done, add `- Note: <where it stands, what's 
 ## Recurring warnings
 After a passing check, `check: note: recurring warning (N×): <text>` lines may appear. Each names a warning that has appeared in every passing run for N consecutive checks. When you see one:
 
-1. **Verify it's benign.** Search the codebase for the warning's source. Confirm it's genuinely harmless — engine noise, a resource the game creates at runtime, a known Godot limitation — and not masking a real problem. If it might be real, flag it to the human instead.
+1. **Verify it's benign.** Search the codebase for the warning's source. Confirm it's genuinely harmless (engine noise, a resource the game creates at runtime, a known Godot limitation) and not masking a real problem. If it might be real, flag it to the human instead.
 2. **Propose a suppression.** Tell the human the warning text and why it's harmless, and propose adding the matching substring to `tools/check.ignore` with a `#` comment explaining why. Wait for approval.
-3. **Apply and commit as XS.** Add the line to `tools/check.ignore` and commit it as `chore: suppress recurring warning` — one warning per commit, no item ID needed unless the human asks for one.
+3. **Apply and commit as XS.** Add the line to `tools/check.ignore` and commit it as `chore: suppress recurring warning`: one warning per commit, no item ID needed unless the human asks for one.
 
 Don't batch multiple suppressions in one commit. A suppression that the human rejects becomes a note to investigate the warning's source in a separate item.

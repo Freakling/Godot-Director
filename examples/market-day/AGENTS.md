@@ -26,19 +26,19 @@ One row per system: what it owns and where its boundary is. Screens depend on sy
 |---|---|---|---|
 | `RunState` (autoload) | the current run: day, gold, grain; applies trades | `scripts/autoload/run_state.gd` | uses `Market`; emits `changed` |
 | `Market` | price per day, whether a trade is allowed, end and win conditions | `scripts/systems/market.gd` | reads `MarketConfig` |
-| `MarketConfig` | tunable market values | `scripts/resources/market_config.gd`, `data/market_config.tres` | — |
+| `MarketConfig` | tunable market values | `scripts/resources/market_config.gd`, `data/market_config.tres` | (none) |
 | Shop screen | shows the run; buttons call `RunState` | `scenes/shop_screen.tscn`, `scripts/ui/shop_screen.gd` | reads `RunState`, listens to `changed` |
 
 ## Ownership
 | Area | Owner | Placeholder |
 |---|---|---|
-| GDScript / game code | agent | — |
-| UI / screen layout | agent | — |
+| GDScript / game code | agent | (none) |
+| UI / screen layout | agent | (none) |
 | Art / sprites / textures | human | `ColorRect` under `Visual` node, labelled |
 | Audio / music / SFX | human | `AudioStreamPlayer`, no stream, named |
-| Scene / level design | agent | — |
+| Scene / level design | agent | (none) |
 | Tunable values (`data/`) | human | `## PLACEHOLDER` default in schema |
-| Player-facing text | agent | — |
+| Player-facing text | agent | (none) |
 
 ## Project rules
 - No git remote: never push.

@@ -15,7 +15,7 @@
 {{ONE_PARAGRAPH_PITCH}}
 
 ## Design Pillars
-<!-- 3–5 short statements every feature is checked against. -->
+<!-- 3-5 short statements every feature is checked against. -->
 
 ## Core Loop
 ### Moment to moment

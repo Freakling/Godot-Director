@@ -11,7 +11,7 @@ A consistency pass across the GDD, decisions, TASKS.md, AGENTS.md, project setti
 3. **Items.**
    - IDs are unique and below `Next IDs`, and every `Depends on` exists, in TASKS.md or the archive.
    - No `done` item depends on a `todo` one.
-   - Every `agent` item has a Size, `Touches`, tagged `Done when` outcomes (or a Repro, for bugs) and a `GDD:` value. That value is an existing heading, or `—` for items that aren't about the design.
+   - Every `agent` item has a Size, `Touches`, tagged `Done when` outcomes (or a Repro, for bugs) and a `GDD:` value. That value is an existing heading, or `(none)` for items that aren't about the design.
    - Every `Q<n>` an item names is still in Open Questions. If it's been answered, update the item.
    - Items follow `.godot-director/tasks.md`.
    - Report `in-progress` items claimed before today.

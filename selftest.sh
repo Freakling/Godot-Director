@@ -84,6 +84,9 @@ for file in $(cd "$src" && grep -rIli --exclude-dir=.git --exclude-dir=.godot -e
 done
 [ -z "$leftovers" ] && ok "the old name is left only in the changelog and the 2.x migration" \
   || bad "the old name (claude4godot, c4g) is still in:$leftovers"
+out="$(cd "$src" && git grep -P '[\x{2013}\x{2014}]' -- '*.md' '*.sh' '*.gd' '*.cfg' '*.json' '*.txt' 2>/dev/null)"
+[ -z "$out" ] && ok "no en or em dashes in tracked text files" \
+  || bad "en or em dashes found" "$out"
 mismatch=""
 for size in XS S M L XL; do
   sid="$(grep "| \`$size\` |" "$src/framework/.godot-director/procedures/refresh-model-sizing.md" \

@@ -6,8 +6,8 @@ Check whether this assistant supports model sizing, propose a per-size model map
 ## 0. Capability check
 
 Model sizing requires the assistant to do two things:
-1. **Spawn subagents** — run the builder in a separate context for each item.
-2. **Select the model per subagent** — specify a different model ID for each call.
+1. **Spawn subagents:** run the builder in a separate context for each item.
+2. **Select the model per subagent:** specify a different model ID for each call.
 
 Assess your own tool honestly before continuing.
 
@@ -15,7 +15,7 @@ Assess your own tool honestly before continuing.
 
 **Any other tool:** state which of the two capabilities your tool has. If either is missing, tell the human:
 
-> Model sizing requires an assistant that can both spawn subagents and select their model per call. [Tool] doesn't support that combination, so the feature is skipped — every build runs on whichever model this session uses.
+> Model sizing requires an assistant that can both spawn subagents and select their model per call. [Tool] doesn't support that combination, so the feature is skipped; every build runs on whichever model this session uses.
 
 Stop here. Do not write a model sizing block to AGENTS.md. The human may want to add a note in Project rules such as `Model sizing: not supported ([Tool])` so future sessions don't ask again.
 
@@ -31,7 +31,7 @@ Read AGENTS.md › Project rules. Report whether model sizing is on or off and, 
 
 Recommend one model for each of the five item sizes with a one-line reason.
 
-**Claude Code — hard defaults:**
+**Claude Code: hard defaults:**
 
 | Size | Model ID | Why |
 |---|---|---|

@@ -10,7 +10,7 @@ A workflow for Godot projects, new or already in development. You decide the des
 
 AI writes game code fast. Without structure, that speed goes wrong in familiar ways:
 
-- **The design drifts.** The AI quietly decides a mechanic or a number you never agreed to. With Godot Director, design calls come to you as 2–4 options with a recommendation. Only your choice is written down, and anything undecided goes on an open-questions list instead of being guessed.
+- **The design drifts.** The AI quietly decides a mechanic or a number you never agreed to. With Godot Director, design calls come to you as 2-4 options with a recommendation. Only your choice is written down, and anything undecided goes on an open-questions list instead of being guessed.
 - **"Done" means "it compiled".** One check defines "works": the whole project loads and the tests pass. It runs before every commit that touches code, and in Claude Code also before the AI ends its turn.
 - **Rules end up inside UI screens.** Game rules live in testable classes and screens only display them. The check fails when a screen rolls dice or writes game state.
 - **Context gets lost between sessions.** A few plain files hold everything: the design document, a decision log, the task queue, and an architecture table. Each fact has one home, so any session picks up where the last one stopped.
@@ -134,7 +134,7 @@ Machine-local and gitignored: `tools/godot_bin.local` (the path to your Godot) a
 ### The rules, briefly
 The full rules are in `.godot-director/rules.md`, and the assistant reads them every session.
 - **You decide design.** The assistant offers options and a recommendation. It never picks balance numbers (new values are marked `## PLACEHOLDER`), and never answers an open question itself.
-- **Areas you own are never generated.** Onboarding asks who owns art, audio, scenes, tunables and text. Human-owned areas get a documented placeholder policy instead of generated content. `director/` is an optional protected workspace — the AI reads it for context but never creates, modifies or deletes anything inside it.
+- **Areas you own are never generated.** Onboarding asks who owns art, audio, scenes, tunables and text. Human-owned areas get a documented placeholder policy instead of generated content. `director/` is an optional protected workspace; the AI reads it for context but never creates, modifies or deletes anything inside it.
 - **Each fact lives in one place,** and is updated in the same change that makes it untrue.
 - **Rules live in systems, not screens.** They sit in plain classes that tests can build directly. Saves are JSON in `user://`, never Resources, which can run scripts when loaded.
 - **Done means the check passes,** and the work is committed only with your approval.
@@ -146,14 +146,14 @@ The orchestrator and the builder are deliberately separate contexts. Each optimi
 
 **The orchestrator**
 - **Small at the start.** A session starts with about 10 KB of instructions (AGENTS.md and the rules). Each procedure, and the task format, loads only when it's used.
-- **Stays small across items.** The orchestrator picks items, records decisions, updates TASKS.md, and approves commits. It never reads the files being changed. After it hands an item to the builder and the report comes back, its context holds only that ~20-line report — not the source files, test output, or check logs the builder went through.
+- **Stays small across items.** The orchestrator picks items, records decisions, updates TASKS.md, and approves commits. It never reads the files being changed. After it hands an item to the builder and the report comes back, its context holds only that ~20-line report, not the source files, test output, or check logs the builder went through.
 - **Nothing to hand off between sessions.** TASKS.md, the commits, AGENTS.md and the GDD hold everything. Once an item is committed, a new session (or `/clear` in Claude Code) loses nothing. An item interrupted mid-build gets a one-line `Note:` in TASKS.md; the next session reads it and resumes.
-- **Design sessions: clear after each commit.** Once a design session's commit lands, the conversation has no value left — every decision is in the GDD and decisions.md. `/clear` before the next topic so you're not carrying a week of brainstorming into an unrelated question. The procedure reminds you at the end of each session.
+- **Design sessions: clear after each commit.** Once a design session's commit lands, the conversation has no value left: every decision is in the GDD and decisions.md. `/clear` before the next topic so you're not carrying a week of brainstorming into an unrelated question. The procedure reminds you at the end of each session.
 
 **The builder**
 - **Fresh context per item.** In Claude Code, each build runs as a separate `builder` subagent that starts with an empty context. It reads only what the item needs: the files in `Touches`, the relevant Architecture rows in AGENTS.md, and the GDD sections named in the item. It builds, runs the check, and returns a structured ~20-line report.
 - **Isolation prevents accumulation.** Because the builder is isolated, the orchestrator never carries the file contents, check logs, or edit history from the build. A session that works through ten tasks stays about as lean as one that worked through one.
-- **The report is the only channel.** The builder's report fields (`Files`, `Done when`, `Systems`, `API/saves`, `Found`, `For the human`) give the orchestrator exactly what it needs to update the records and decide what's next — no more.
+- **The report is the only channel.** The builder's report fields (`Files`, `Done when`, `Systems`, `API/saves`, `Found`, `For the human`) give the orchestrator exactly what it needs to update the records and decide what's next; no more.
 
 **Model sizing** (recommended on): each item size maps to its own build model in AGENTS.md › Project rules. Claude Code defaults: XS and S to Haiku, M to Sonnet, L and XL to Opus. A size without an entry uses the session model, and a failed build retries once on the next size's model. Onboarding writes the mapping; `/refresh-model-sizing` updates it, or tells you if your assistant can't choose a model per subagent.
 

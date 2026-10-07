@@ -10,26 +10,26 @@
 This is about how the game plays, not whether features exist. Answer from the player's seat: what you decided, why, and how it felt. Write `skipped` for any loop you didn't reach.
 
 ## A trading day
-- **Score 1–5:** Each day I knew whether to buy, sell or wait. →
+- **Score 1-5:** Each day I knew whether to buy, sell or wait. →
 - Walk through one day: what did you look at, and what did you decide?
   -
 - Was there a day with nothing worth deciding? Which one?
   -
 
 ## The whole run
-- **Score 1–5:** At the end I could see why I won or lost. →
+- **Score 1-5:** At the end I could see why I won or lost. →
 - Which trade mattered most?
   -
 
 ## Pressure and Pacing
-- **Score 1–5:** The pace felt right, neither stalling nor overwhelming. →
+- **Score 1-5:** The pace felt right, neither stalling nor overwhelming. →
 - What ran out first, or held you back most?
   -
 - Where did it feel too easy, too grindy or too punishing? When exactly?
   -
 
 ## Reading the Game
-- **Score 1–5:** I could trace what happened back to my own decisions. →
+- **Score 1-5:** I could trace what happened back to my own decisions. →
 - Anything you couldn't find, misread or had to guess? (Placeholder art is expected; mention it only if it got in the way.)
   -
 

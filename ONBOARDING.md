@@ -41,11 +41,11 @@ Run `bash "$GDIR/install.sh" --tools <claude|none> .` for a first install. For a
 
   > **Fast or full upgrade?**
   > - **Fast** (default for routine upgrades): applies the changelog steps, which cover both framework files and any game-owned file updates for new features (AGENTS.md, TASKS.md, the GDD). Takes a few minutes.
-  > - **Full**: does everything fast does, then re-checks all project files against the current standards — same thoroughness as a fresh install of this version. Choose this after many versions have accumulated, for a new machine or contributor, or when you want a complete review.
+  > - **Full**: does everything fast does, then re-checks all project files against the current standards; same thoroughness as a fresh install of this version. Choose this after many versions have accumulated, for a new machine or contributor, or when you want a complete review.
 
   Then:
   1. Read the entries in `$GDIR/CHANGELOG.md` newer than the old version (the install report names it). Carry out each **Upgrade steps** section in order. From 2.x that includes 3.0.0.
-  2. If full, carry out steps 4–8.
+  2. If full, carry out steps 4-8.
   3. Run step 3 only if `bash tools/check.sh` exits 3 (fast) or run it again now (full).
   4. Summarise what changed, using the CHANGELOG and `git diff --stat`.
   5. Go to step 9.
@@ -82,7 +82,7 @@ Then run `bash tools/check.sh` once and keep the result. An existing game often 
    ```
 2. **A short design interview,** in short rounds. For each question, give options with a recommendation and let the human pick:
    1. pitch, genre, and the feeling the game should give;
-   2. 3–5 Design Pillars;
+   2. 3-5 Design Pillars;
    3. the core loop: moment to moment, session, run or campaign, and starting conditions;
    4. platforms, input, 2D or 3D, camera, art direction and target aspect ratios.
 3. **Record it.** Write the answers into the GDD as the current design, and add a line to `design/decisions.md` for each. Anything undecided becomes a `Q<n>`.
@@ -90,7 +90,7 @@ Then run `bash tools/check.sh` once and keep the result. An existing game often 
 
 ### Existing game
 1. **AGENTS.md › Architecture:** one row per autoload, per area of rule code, and per group of screens. Take "Owns" from the scripts' top comments and public methods, not from guesses.
-2. **GDD:** fill each section from the existing design documents and code. Mark anything inferred `(inferred — please confirm)`, and turn anything unknown into a `Q<n>`. Delete a section the game doesn't need only after the human agrees.
+2. **GDD:** fill each section from the existing design documents and code. Mark anything inferred `(inferred, please confirm)`, and turn anything unknown into a `Q<n>`. Delete a section the game doesn't need only after the human agrees.
 3. **TASKS.md:** turn TODOs, known bugs and the human's priorities into items, with bugs as `B` items.
 4. **Screens with game logic.** Set `tools/check.cfg` › `[screens] dirs` to the UI folders. Each screen script that breaks the rule gets:
    - its own `M` item titled "Decouple: <screen>", which moves the logic into a system and removes the script from the list;
@@ -100,7 +100,7 @@ Then run `bash tools/check.sh` once and keep the result. An existing game often 
 7. **Typed GDScript.** Add `gdscript/warnings/untyped_declaration=2` under `[debug]` in `project.godot`. If the check then fails with many untyped declarations, set it to `1`, and add an item: "Type the remaining untyped declarations, then set untyped_declaration to 2". To list them later, set it to 2 temporarily.
 
 ### Migrate from Godot Director 1.x
-Rewrite the old files into the new format (`$GDIR/project/` shows the target shape of each, and `.godot-director/tasks.md` the item format), then delete what's obsolete; git keeps the history. IDs carry over: T and B numbers stay the same, and §11 questions become `Q<n>` with the same number. Also do steps 4–7 of Existing game above, for the screens, the check failures, the test suites and the typing setting.
+Rewrite the old files into the new format (`$GDIR/project/` shows the target shape of each, and `.godot-director/tasks.md` the item format), then delete what's obsolete; git keeps the history. IDs carry over: T and B numbers stay the same, and §11 questions become `Q<n>` with the same number. Also do steps 4-7 of Existing game above, for the screens, the check failures, the test suites and the typing setting.
 
 | 1.x | 2.x |
 |---|---|
@@ -134,7 +134,7 @@ Finally, search the documents for leftovers and fix them. Use `git grep -n -e �
 ## 7. Ownership and project rules
 
 ### Work-area ownership interview
-For each area below, state the default and ask the human whether they want to own it. Record the result in AGENTS.md › Ownership (create that section now with a table). A human-owned area means the agent uses placeholders when it needs something from there — it never makes the real thing.
+For each area below, state the default and ask the human whether they want to own it. Record the result in AGENTS.md › Ownership (create that section now with a table). A human-owned area means the agent uses placeholders when it needs something from there; it never makes the real thing.
 
 | Area | Default | Agent placeholder when human owns it |
 |---|---|---|
@@ -147,12 +147,12 @@ For each area below, state the default and ask the human whether they want to ow
 | **Player-facing text** | agent | `"[PLACEHOLDER: describe the text]"` string constant |
 
 ### Protected workspace
-If the human owns any area — or wants a space the agent will never touch — offer to create `director/`. The agent reads files there for context (reference art, sketches, audio, notes) but never creates, modifies or deletes anything inside it.
+If the human owns any area, or wants a space the agent will never touch, offer to create `director/`. The agent reads files there for context (reference art, sketches, audio, notes) but never creates, modifies or deletes anything inside it.
 
 If they want it:
 1. Create `director/` and `director/README.md` explaining what it is and that the agent won't touch it.
 2. Ask whether to gitignore it (for large binary assets) or commit it (for design docs and notes). Update `.gitignore` accordingly.
-3. Add a row to AGENTS.md › Ownership: `director/ — human's workspace, read-only for the agent`.
+3. Add a row to AGENTS.md › Ownership: `director/: human's workspace, read-only for the agent`.
 
 ### Workflow defaults
 - Commits: the agent proposes and the human approves. Pushes happen when the human asks, or never if there's no remote.
@@ -168,7 +168,7 @@ If they want it:
 - Reviews: by default after `L` and `XL` items, and after `M` items that change saves or a system's public methods.
 
 ## 8. Playtest template
-Replace the `{{LOOP…}}` parts of `playtesting/TEMPLATE.md` with one section per loop in GDD › Core Loop, usually 3–6. Each gets one fixed scored statement and 1–2 open questions about decisions and feel. Update the "Loops you played" line to match.
+Replace the `{{LOOP…}}` parts of `playtesting/TEMPLATE.md` with one section per loop in GDD › Core Loop, usually 3-6. Each gets one fixed scored statement and 1-2 open questions about decisions and feel. Update the "Loops you played" line to match.
 
 If the loops aren't decided yet, leave the placeholders, and add an agent item "Fill the playtest template's loop sections" that depends on the core-loop question.
 

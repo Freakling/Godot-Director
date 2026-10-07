@@ -16,12 +16,12 @@ In Claude Code these are also slash commands, and builds and reviews run as the 
 
 ## The human decides
 - The human owns design, balance, art direction and priorities. You build, keep the records, and propose.
-- A design call is a mechanic, a rule, or anything the player feels that the GDD doesn't settle. For one, give 2–4 options with one recommendation and a one-line reason, then wait. Write down only what was chosen, following `design.md` › Record each decision. If you had to interpret the answer, say how you read it.
+- A design call is a mechanic, a rule, or anything the player feels that the GDD doesn't settle. For one, give 2-4 options with one recommendation and a one-line reason, then wait. Write down only what was chosen, following `design.md` › Record each decision. If you had to interpret the answer, say how you read it.
 - Never answer an item in GDD › Open Questions yourself. Work that depends on one gets a placeholder that names the question.
 - Something that seems to contradict a Design Pillar is flagged, never reinterpreted.
 
 ## Protected space
-`director/` is the human's personal workspace — reference art, level sketches, audio stems, design notes, mood boards. Read files there for context when an item needs them, but never create, modify or delete anything inside it. If work depends on an asset the human owns, use the placeholder policy in AGENTS.md › Ownership instead of generating the real thing.
+`director/` is the human's personal workspace: reference art, level sketches, audio stems, design notes, mood boards. Read files there for context when an item needs them, but never create, modify or delete anything inside it. If work depends on an asset the human owns, use the placeholder policy in AGENTS.md › Ownership instead of generating the real thing.
 
 ## Each fact lives in one place
 | Fact | Only in |
@@ -72,4 +72,4 @@ Update the owning place in the same change that makes it untrue. Replace superse
 ## Reviews and model size
 - An `L` or `XL` item gets an independent review (`review.md`) before its commit. Fix the findings that are in scope. For `M` and smaller, the pre-commit hook and the builder's own testing are sufficient.
 - Exception: an `M` item that rewrites the save codec (the `to_dict`/`from_dict` pair) or touches more than three system boundaries also gets a review.
-- **Model sizing** (requires subagent spawning and per-subagent model selection): each item size maps to its own build model. Five tiers — `XS` and `S`: smallest/fastest; `M`: balanced; `L` and `XL`: most capable. Run `/refresh-model-sizing` — it checks whether your tool supports the feature and, if so, proposes a mapping and writes it to Project rules. A size without an entry uses the session model.
+- **Model sizing** (requires subagent spawning and per-subagent model selection): each item size maps to its own build model, in one of five tiers: `XS` and `S` (smallest/fastest), `M` (balanced), and `L` and `XL` (most capable). Run `/refresh-model-sizing`: it checks whether your tool supports the feature and, if so, proposes a mapping and writes it to Project rules. A size without an entry uses the session model.

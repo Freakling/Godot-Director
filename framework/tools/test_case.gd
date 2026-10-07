@@ -4,7 +4,7 @@ extends RefCounted
 ## A test file is res://tests/**/test_*.gd (folder set in tools/check.cfg) that starts with
 ##     extends "res://tools/test_case.gd"
 ## and has synchronous methods named test_*() -> void. `bash tools/check.sh` runs every one.
-## Game rules live in RefCounted classes, so a test builds them directly — no scene tree needed.
+## Game rules live in RefCounted classes, so a test builds them directly; no scene tree needed.
 
 var _gdir_errors: PackedStringArray = PackedStringArray()
 
