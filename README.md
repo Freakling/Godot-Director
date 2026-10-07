@@ -155,7 +155,7 @@ The orchestrator and the builder are deliberately separate contexts. Each optimi
 - **Isolation prevents accumulation.** Because the builder is isolated, the orchestrator never carries the file contents, check logs, or edit history from the build. A session that works through ten tasks stays about as lean as one that worked through one.
 - **The report is the only channel.** The builder's report fields (`Files`, `Done when`, `Systems`, `API/saves`, `Found`, `For the human`) give the orchestrator exactly what it needs to update the records and decide what's next — no more.
 
-**Model sizing** (recommended on): `XS` and `S` items run the builder on a smaller model (Haiku in Claude Code); `M` through `XL` use the session model. Onboarding asks you to choose; record it in AGENTS.md › Project rules.
+**Model sizing** (recommended on): each item size maps to its own build model in AGENTS.md › Project rules. Claude Code defaults: XS and S to Haiku, M to Sonnet, L and XL to Opus. A size without an entry uses the session model, and a failed build retries once on the next size's model. Onboarding writes the mapping; `/refresh-model-sizing` updates it, or tells you if your assistant can't choose a model per subagent.
 
 ### The check
 `bash tools/check.sh` runs four steps:

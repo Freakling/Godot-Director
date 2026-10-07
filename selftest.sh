@@ -84,6 +84,15 @@ for file in $(cd "$src" && grep -rIli --exclude-dir=.git --exclude-dir=.godot -e
 done
 [ -z "$leftovers" ] && ok "the old name is left only in the changelog and the 2.x migration" \
   || bad "the old name (claude4godot, c4g) is still in:$leftovers"
+mismatch=""
+for size in XS S M L XL; do
+  sid="$(grep "| \`$size\` |" "$src/framework/.godot-director/procedures/refresh-model-sizing.md" \
+    | head -n1 | awk -F'|' '{gsub(/[` ]/, "", $3); print $3}')"
+  oid="$(grep "^  - $size:" "$src/ONBOARDING.md" | awk '{print $NF}')"
+  [ "$sid" = "$oid" ] || mismatch="$mismatch $size"
+done
+[ -z "$mismatch" ] && ok "ONBOARDING.md model IDs match refresh-model-sizing.md" \
+  || bad "ONBOARDING.md model IDs don't match refresh-model-sizing.md (sizes:$mismatch)"
 
 # --- installer ----------------------------------------------------------------------------------
 echo "installer"

@@ -34,7 +34,7 @@ Set the item to `in-progress YYYY-MM-DD` (today).
   - If the answer is a design decision, record it following `design.md` › Record each decision before rebuilding. It's committed with the item.
   - Then rebuild, including the answer.
 - **Report `failed`:**
-  - An item built on a smaller-tier model gets one rebuild on the session model, and its size is annotated `M (escalated from XS)` or similar.
+  - An item built on a smaller-tier model gets one rebuild on the next-size model, and its size is annotated `S (escalated from XS)` or similar. An `XL` failure — already on the largest model — stops: give the human the check output without retrying.
   - Otherwise, add a `Note:` to the item and give the human the check output.
 - **Report `failed: pre-existing`:** the failure was there before the build. Tell the human (see step 1).
 

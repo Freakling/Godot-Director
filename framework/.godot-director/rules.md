@@ -72,11 +72,4 @@ Update the owning place in the same change that makes it untrue. Replace superse
 ## Reviews and model size
 - An `L` or `XL` item gets an independent review (`review.md`) before its commit. Fix the findings that are in scope. For `M` and smaller, the pre-commit hook and the builder's own testing are sufficient.
 - Exception: an `M` item that rewrites the save codec (the `to_dict`/`from_dict` pair) or touches more than three system boundaries also gets a review.
-- **Model sizing** (Claude Code; and any tool that supports spawning subagents with per-subagent model selection): each item size maps to a specific model ID, one entry per size. Run `/refresh-model-sizing` — it checks whether your tool supports the feature and, if so, proposes a mapping and writes it to Project rules. Default Claude Code mapping:
-  | Size | Model ID |
-  |---|---|
-  | `XS` | `claude-haiku-4-5-20251001` |
-  | `S` | `claude-haiku-4-5-20251001` |
-  | `M` | `claude-sonnet-5-5` |
-  | `L` | `claude-opus-5-5` |
-  | `XL` | `claude-opus-5-5` (`claude-fable-5-1` for Claude platform / usage-credit users) |
+- **Model sizing** (requires subagent spawning and per-subagent model selection): each item size maps to its own build model. Five tiers — `XS` and `S`: smallest/fastest; `M`: balanced; `L` and `XL`: most capable. Run `/refresh-model-sizing` — it checks whether your tool supports the feature and, if so, proposes a mapping and writes it to Project rules. A size without an entry uses the session model.

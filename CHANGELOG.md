@@ -2,6 +2,17 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## 3.4.4 (2026-10-07)
+
+- **Tool-neutral model sizing rules.** `rules.md` no longer contains model IDs — it now describes five capability tiers only (`XS`/`S`: smallest/fastest; `M`: balanced; `L`/`XL`: most capable). Canonical defaults live only in `refresh-model-sizing.md` and `ONBOARDING.md`, keeping the framework core independent of any specific assistant's model names.
+- **README model-sizing paragraph.** Replaced the stale two-tier summary with the canonical paragraph: per-size mapping, Claude Code defaults by tier name, escalation on failure, and how to update.
+- **Escalation rule in next-task.** A failed build now retries once on the next-size model (not the session model). An `XL` failure — already on the largest model — stops and comes to the director.
+- **Selftest assertion.** The self-test now checks that model IDs in `ONBOARDING.md` match the Claude Code defaults table in `refresh-model-sizing.md`, so a slip between the two files fails CI immediately.
+
+**Upgrade steps**
+
+Run `/refresh-model-sizing` to confirm or update your model mapping. No hand-edits to framework files are needed — the procedure writes `AGENTS.md` for you.
+
 ## 3.4.3 (2026-10-07)
 
 - **Consistent assistant-support position.** Every claim about which assistants work with Godot Director now uses one position: designed to work with any assistant that reads `AGENTS.md`; built and tested on Claude Code only; other assistants are untested. Previous hedges ("should work in theory", "every tool") and unnamed-assistant mentions are removed. The capability note in the README's "other assistant" section now states exactly which features depend on subagent and hook support.
