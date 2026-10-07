@@ -1,7 +1,7 @@
 {
   "name": "godot-director",
   "displayName": "Godot Director",
-  "version": "3.4.1",
+  "version": "3.4.2",
   "description": "Installs and upgrades the Godot Director workflow in a Godot project: you design, the AI builds, and a project check proves it works.",
   "author": {
     "name": "Freakling"

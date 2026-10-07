@@ -2,7 +2,7 @@
 
 <p align="center"><img src=".claude-plugin/icon.png" alt="Godot Director" width="160"></p>
 
-**Make the game you designed, with AI doing the building and you staying the designer.**
+**Make the game you designed, with AI doing the building and you staying the director.**
 
 A workflow for Godot projects, new or already in development. You decide the design, the balance and the priorities. The AI builds, tests and keeps the records. Built for Claude Code, and usable with any AI coding assistant that reads `AGENTS.md`. Everything lives in your game's own git repository.
 
@@ -142,18 +142,18 @@ The full rules are in `.godot-director/rules.md`, and the assistant reads them e
 
 ### Context and token use
 
-The designer (main session) and the developer (builder subagent) are deliberately separate contexts. Each optimises differently.
+The orchestrator and the builder are deliberately separate contexts. Each optimises differently.
 
-**The main session — designer and orchestrator**
+**The orchestrator**
 - **Small at the start.** A session starts with about 10 KB of instructions (AGENTS.md and the rules). Each procedure, and the task format, loads only when it's used.
-- **Stays small across items.** The main session picks items, records decisions, updates TASKS.md, and approves commits. It never reads the files being changed. After it hands an item to the builder and the report comes back, its context holds only that ~20-line report — not the source files, test output, or check logs the builder went through.
+- **Stays small across items.** The orchestrator picks items, records decisions, updates TASKS.md, and approves commits. It never reads the files being changed. After it hands an item to the builder and the report comes back, its context holds only that ~20-line report — not the source files, test output, or check logs the builder went through.
 - **Nothing to hand off between sessions.** TASKS.md, the commits, AGENTS.md and the GDD hold everything. Once an item is committed, a new session (or `/clear` in Claude Code) loses nothing. An item interrupted mid-build gets a one-line `Note:` in TASKS.md; the next session reads it and resumes.
 - **Design sessions: clear after each commit.** Once a design session's commit lands, the conversation has no value left — every decision is in the GDD and decisions.md. `/clear` before the next topic so you're not carrying a week of brainstorming into an unrelated question. The procedure reminds you at the end of each session.
 
-**The builder subagent — developer with a fresh context**
+**The builder**
 - **Fresh context per item.** In Claude Code, each build runs as a separate `builder` subagent that starts with an empty context. It reads only what the item needs: the files in `Touches`, the relevant Architecture rows in AGENTS.md, and the GDD sections named in the item. It builds, runs the check, and returns a structured ~20-line report.
-- **Isolation prevents accumulation.** Because the builder is isolated, the main session never carries the file contents, check logs, or edit history from the build. A session that works through ten tasks stays about as lean as one that worked through one.
-- **The report is the only channel.** The builder's report fields (`Files`, `Done when`, `Systems`, `API/saves`, `Found`, `For the human`) give the main session exactly what it needs to update the records and decide what's next — no more.
+- **Isolation prevents accumulation.** Because the builder is isolated, the orchestrator never carries the file contents, check logs, or edit history from the build. A session that works through ten tasks stays about as lean as one that worked through one.
+- **The report is the only channel.** The builder's report fields (`Files`, `Done when`, `Systems`, `API/saves`, `Found`, `For the human`) give the orchestrator exactly what it needs to update the records and decide what's next — no more.
 
 **Model sizing** (recommended on): `XS` and `S` items run the builder on a smaller model (Haiku in Claude Code); `M` through `XL` use the session model. Onboarding asks you to choose; record it in AGENTS.md › Project rules.
 

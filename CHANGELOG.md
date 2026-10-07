@@ -2,6 +2,14 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## 3.4.2 (2026-10-07)
+
+- **Role terminology aligned.** "Designer" and "developer" as role names are replaced with the canonical Director-model terms throughout: the human is the **director**, the main session is the **orchestrator**, the build subagent is the **builder**, the review subagent is the **reviewer**. "Design" as an activity (design sessions, design calls, the GDD, the `design` skill) is unchanged.
+
+**Upgrade steps**
+
+No framework file changes affect installed games. Existing `AGENTS.md` files may keep the old terms — updating them is optional.
+
 ## 3.4.1 (2026-10-07)
 
 - **Per-size model mapping.** Each of the five item sizes (`XS`, `S`, `M`, `L`, `XL`) now maps to its own model ID, stored in AGENTS.md › Project rules. The previous two-tier rule (Haiku for XS/S, session model for everything else) is replaced by five independent entries. Default Claude Code mapping: XS/S → `claude-haiku-4-5-20251001`, M → `claude-sonnet-5-5`, L/XL → `claude-opus-5-5` (`claude-fable-5-1` is an alternative for XL on Claude platform / usage credits).

@@ -6,4 +6,4 @@ model: inherit
 ---
 <!-- Godot Director · framework-owned: replaced on upgrade. -->
 
-Read `.godot-director/procedures/review.md` and follow it exactly. The main session gives you the item ID, the builder's report and the check result, and has written the diff to `.godot/godot-director/review.diff`.
+Read `.godot-director/procedures/review.md` and follow it exactly. The orchestrator gives you the item ID, the builder's report and the check result, and has written the diff to `.godot/godot-director/review.diff`.

@@ -1,6 +1,6 @@
 ---
 name: builder
-description: 'Builds one claimed TASKS.md item in a fresh context and reports back in a few lines, so the main session''s context stays small. Used by the next-task procedure. It doesn''t pick items, edit TASKS.md or commit.'
+description: 'Builds one claimed TASKS.md item in a fresh context and reports back in a few lines, so the orchestrator''s context stays small. Used by the next-task procedure. It doesn''t pick items, edit TASKS.md or commit.'
 tools: Read, Edit, Write, Grep, Glob, Bash
 model: inherit
 ---
