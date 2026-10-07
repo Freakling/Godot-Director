@@ -10,6 +10,7 @@ These rules apply to any AI assistant working in this project. For each of these
 - **align.md:** check the docs and tasks are aligned.
 - **prune.md:** prune the task list.
 - **review.md:** review a finished change.
+- **refresh-model-sizing.md:** scan available models and update the per-size model mapping in Project rules.
 
 In Claude Code these are also slash commands, and builds and reviews run as the `builder` and `reviewer` subagents.
 
@@ -71,9 +72,11 @@ Update the owning place in the same change that makes it untrue. Replace superse
 ## Reviews and model size
 - An `L` or `XL` item gets an independent review (`review.md`) before its commit. Fix the findings that are in scope. For `M` and smaller, the pre-commit hook and the builder's own testing are sufficient.
 - Exception: an `M` item that rewrites the save codec (the `to_dict`/`from_dict` pair) or touches more than three system boundaries also gets a review.
-- **Model sizing** (when on in Project rules): match the build to the item's size. The model names below are for Claude Code; other tools use the closest equivalent.
-  | Size | Model tier |
+- **Model sizing** (when on in Project rules): each item size maps to a specific model ID, one entry per size. Run `/refresh-model-sizing` to set or update the mapping; it detects available models and asks the human to confirm. Default Claude Code mapping:
+  | Size | Default model |
   |---|---|
-  | `XS`, `S` | smallest capable model |
-  | `M`, `L`, `XL` | session model |
-  See `next-task.md` for Claude Code model names.
+  | `XS` | Haiku |
+  | `S` | Haiku |
+  | `M` | Sonnet |
+  | `L` | Opus |
+  | `XL` | Opus (`claude-fable-5-1` is an alternative for Claude platform / usage-credit users) |

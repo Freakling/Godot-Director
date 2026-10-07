@@ -156,7 +156,15 @@ If they want it:
 
 ### Workflow defaults
 - Commits: the agent proposes and the human approves. Pushes happen when the human asks, or never if there's no remote.
-- Model sizing (Claude Code only): **ask the human, and recommend on.** When on, the `builder` subagent uses Haiku for `XS` and `S` items and the session model for everything else. Record the answer in Project rules.
+- Model sizing (Claude Code only): **ask the human, and recommend on.** When on, each item size maps to a specific model. Present the default mapping and ask whether any size should differ. Write the agreed mapping into AGENTS.md › Project rules in this exact format (run `/refresh-model-sizing` to update it later when models change):
+  ```
+  Model sizing: on
+  - XS: claude-haiku-4-5-20251001
+  - S: claude-haiku-4-5-20251001
+  - M: claude-sonnet-5-5
+  - L: claude-opus-5-5
+  - XL: claude-opus-5-5
+  ```
 - Reviews: by default after `L` and `XL` items, and after `M` items that change saves or a system's public methods.
 
 ## 8. Playtest template

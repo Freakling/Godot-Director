@@ -2,6 +2,24 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## Unreleased
+
+- **Per-size model mapping.** Each of the five item sizes (`XS`, `S`, `M`, `L`, `XL`) now maps to its own model ID, stored in AGENTS.md › Project rules. The previous two-tier rule (Haiku for XS/S, session model for everything else) is replaced by five independent entries. Default Claude Code mapping: XS → Haiku, S → Haiku, M → Sonnet, L → Opus, XL → Opus (`claude-fable-5-1` is an alternative for XL on Claude platform / usage credits).
+- **`/refresh-model-sizing` skill.** A new skill and procedure that detects the current assistant environment and available models, proposes a mapping for all five sizes, confirms it with the human, and writes it to Project rules. Run it when models change or after a new install.
+- **Onboarding writes the full mapping.** Step 7 now presents the five-size default and asks the human to confirm or adjust before writing it into Project rules.
+
+**Upgrade steps**
+1. In AGENTS.md › Project rules, replace `Model sizing: on` (if present) with the five-line block. For Claude Code defaults:
+   ```
+   Model sizing: on
+   - XS: claude-haiku-4-5-20251001
+   - S: claude-haiku-4-5-20251001
+   - M: claude-sonnet-5-5
+   - L: claude-opus-5-5
+   - XL: claude-opus-5-5
+   ```
+   Or run `/refresh-model-sizing` — it will detect the environment and propose the mapping for you.
+
 ## 3.4.0 (2026-10-06)
 
 - **Builder skips final check.** The `builder` subagent no longer runs `bash tools/check.sh` at the end of its build. Step 4 of `next-task.md` runs the check from the outer session, and the pre-commit hook is the safety net — the third invocation was ~2 minutes of waste per task.
