@@ -54,7 +54,7 @@ Either way, onboarding works out whether this is a new game, an existing game, a
 
 Afterwards, restart Claude Code so the new commands load. Each new clone of the game later needs one command: `bash tools/setup-clone.sh`.
 
-**With another AI assistant:** tell onboarding, and it installs the tool-neutral core only (`--tools none`); you can also keep the Claude adapter alongside. Your assistant reads `AGENTS.md`, which points it to `.godot-director/rules.md` and the procedures. The check and the git hook work the same for every tool, and for you.
+**With another AI assistant:** tell onboarding, and it installs the tool-neutral core only (`--tools none`); you can also keep the Claude adapter alongside. Your assistant reads `AGENTS.md`, which points it to `.godot-director/rules.md` and the procedures. The check and the git hook work the same for every tool, and for you. Note: Godot Director is built and tested on Claude Code. Other assistants should work in theory — the core is tool-neutral by design — but this is untested in practice. Reports welcome.
 
 ### Upgrade
 - **Skill:** ask for the skill again (`/godot-director` in Claude Code); it fetches the latest Godot Director each time.
