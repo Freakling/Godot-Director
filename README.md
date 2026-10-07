@@ -31,7 +31,7 @@ Your game needs git (`git init` if it has none) and no uncommitted changes. You 
 npx skills add Freakling/Godot-Director
 ```
 
-That installs the `godot-director` skill for your assistant (Claude Code, Cursor, Codex and many others; you pick in the prompt). Then ask your assistant to set up Godot Director, or in Claude Code run `/godot-director`. The skill fetches Godot Director outside your game and runs onboarding.
+That gives your assistant access to the setup instructions. In Claude Code it becomes a `/godot-director` command; in other tools, ask your assistant to set up Godot Director and it will follow the same instructions. The skill fetches Godot Director outside your game and runs onboarding.
 
 **Option 2: the Claude Code plugin.** In Claude Code:
 

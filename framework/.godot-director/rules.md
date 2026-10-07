@@ -72,11 +72,11 @@ Update the owning place in the same change that makes it untrue. Replace superse
 ## Reviews and model size
 - An `L` or `XL` item gets an independent review (`review.md`) before its commit. Fix the findings that are in scope. For `M` and smaller, the pre-commit hook and the builder's own testing are sufficient.
 - Exception: an `M` item that rewrites the save codec (the `to_dict`/`from_dict` pair) or touches more than three system boundaries also gets a review.
-- **Model sizing** (when on in Project rules): each item size maps to a specific model ID, one entry per size. Run `/refresh-model-sizing` to set or update the mapping; it detects available models and asks the human to confirm. Default Claude Code mapping:
-  | Size | Default model |
+- **Model sizing** (Claude Code; and any tool that supports spawning subagents with per-subagent model selection): each item size maps to a specific model ID, one entry per size. Run `/refresh-model-sizing` — it checks whether your tool supports the feature and, if so, proposes a mapping and writes it to Project rules. Default Claude Code mapping:
+  | Size | Model ID |
   |---|---|
-  | `XS` | Haiku |
-  | `S` | Haiku |
-  | `M` | Sonnet |
-  | `L` | Opus |
-  | `XL` | Opus (`claude-fable-5-1` is an alternative for Claude platform / usage-credit users) |
+  | `XS` | `claude-haiku-4-5-20251001` |
+  | `S` | `claude-haiku-4-5-20251001` |
+  | `M` | `claude-sonnet-5-5` |
+  | `L` | `claude-opus-5-5` |
+  | `XL` | `claude-opus-5-5` (`claude-fable-5-1` for Claude platform / usage-credit users) |
