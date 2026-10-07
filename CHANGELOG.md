@@ -2,6 +2,16 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## 3.4.3 (2026-10-07)
+
+- **Consistent assistant-support position.** Every claim about which assistants work with Godot Director now uses one position: designed to work with any assistant that reads `AGENTS.md`; built and tested on Claude Code only; other assistants are untested. Previous hedges ("should work in theory", "every tool") and unnamed-assistant mentions are removed. The capability note in the README's "other assistant" section now states exactly which features depend on subagent and hook support.
+- **`npx skills add` description tightened.** States only what it does — installs the skill for the assistant you choose in the prompt; in Claude Code it becomes a slash command — without naming specific other tools.
+- **Release-notes rule updated.** `CLAUDE.md` now requires the canonical assistant-support wording in "How to install" sections of release notes.
+
+**Upgrade steps**
+
+No game-owned file changes.
+
 ## 3.4.2 (2026-10-07)
 
 - **Role terminology aligned.** "Designer" and "developer" as role names are replaced with the canonical Director-model terms throughout: the human is the **director**, the main session is the **orchestrator**, the build subagent is the **builder**, the review subagent is the **reviewer**. "Design" as an activity (design sessions, design calls, the GDD, the `design` skill) is unchanged.

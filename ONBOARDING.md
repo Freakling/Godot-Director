@@ -19,7 +19,7 @@ The human makes every design and ownership decision; you gather, propose and wri
    - **migrate from 1.x:** `.promptx/personas/` or `playtesting/FUNCTION_CHECK.md` exists. An `AGENTS.md` alone isn't proof, since many projects have one.
    - **existing game:** `project.godot` and scripts, without Godot Director.
    - **fresh start:** no `project.godot`, or an empty project.
-6. **Assistant adapters.** For a first install, ask which assistants will work on the game. The answer is `claude`, the default, or `none` for other assistants only; the core works through `AGENTS.md`, which most assistants read. An upgrade keeps the earlier choice.
+6. **Assistant adapters.** For a first install, ask which assistants will work on the game. The answer is `claude`, the default, or `none` if only using other assistants; the core works through `AGENTS.md`. An upgrade keeps the earlier choice.
 
 ## 2. Install the files
 Run `bash "$GDIR/install.sh" --tools <claude|none> .` for a first install. For an upgrade, run `bash "$GDIR/install.sh" .` without `--tools`. Then read its report.

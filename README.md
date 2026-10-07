@@ -4,7 +4,7 @@
 
 **Make the game you designed, with AI doing the building and you staying the director.**
 
-A workflow for Godot projects, new or already in development. You decide the design, the balance and the priorities. The AI builds, tests and keeps the records. Built for Claude Code, and usable with any AI coding assistant that reads `AGENTS.md`. Everything lives in your game's own git repository.
+A workflow for Godot projects, new or already in development. You decide the design, the balance and the priorities. The AI builds, tests and keeps the records. Designed to work with any AI coding assistant that reads `AGENTS.md`. Built and tested on Claude Code; other assistants are untested. Everything lives in your game's own git repository.
 
 ## Why
 
@@ -31,7 +31,7 @@ Your game needs git (`git init` if it has none) and no uncommitted changes. You 
 npx skills add Freakling/Godot-Director
 ```
 
-That gives your assistant access to the setup instructions. In Claude Code it becomes a `/godot-director` command; in other tools, ask your assistant to set up Godot Director and it will follow the same instructions. The skill fetches Godot Director outside your game and runs onboarding.
+That installs the skill for the assistant you choose in the prompt. In Claude Code it becomes a `/godot-director` command. The skill fetches Godot Director outside your game and runs onboarding.
 
 **Option 2: the Claude Code plugin.** In Claude Code:
 
@@ -54,7 +54,7 @@ Either way, onboarding works out whether this is a new game, an existing game, a
 
 Afterwards, restart Claude Code so the new commands load. Each new clone of the game later needs one command: `bash tools/setup-clone.sh`.
 
-**With another AI assistant:** tell onboarding, and it installs the tool-neutral core only (`--tools none`); you can also keep the Claude adapter alongside. Your assistant reads `AGENTS.md`, which points it to `.godot-director/rules.md` and the procedures. The check and the git hook work the same for every tool, and for you. Note: Godot Director is built and tested on Claude Code. Other assistants should work in theory — the core is tool-neutral by design — but this is untested in practice. Reports welcome.
+**With another AI assistant:** tell onboarding, and it installs the tool-neutral core only (`--tools none`); you can also keep the Claude adapter alongside. Your assistant reads `AGENTS.md`, which points it to `.godot-director/rules.md` and the procedures. The core is tool-neutral: rules, procedures, the check and the git pre-commit hook work the same everywhere. Fresh-context builds, the reviewer, model sizing and the hooks that block risky commands depend on your assistant supporting subagents and hooks.
 
 ### Upgrade
 - **Skill:** ask for the skill again (`/godot-director` in Claude Code); it fetches the latest Godot Director each time.
