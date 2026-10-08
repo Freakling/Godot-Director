@@ -2,6 +2,14 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## 3.4.6 (2026-10-09)
+
+- **Design session context brief.** The design procedure now has a "Brief the human" step between Prepare and the first question. Before asking anything, the AI presents the relevant GDD lines (quoted or summarised), the related entries from `design/decisions.md` (date, decision, why), and the scope of questions to address - then asks if anything is missing. The human director gets the context they need to make decisions without having to pull it from memory.
+
+**Upgrade steps**
+
+No game-owned file changes are required.
+
 ## 3.4.5 (2026-10-07)
 
 - **No en or em dashes.** All 71 occurrences of Unicode en dashes (U+2013) and em dashes (U+2014) across the repository are replaced with ASCII equivalents chosen by meaning: hyphens for numeric ranges, colons for explanatory clauses, semicolons for independent clause joins, and commas or parentheses for parenthetical asides. The em-dash null-marker in task headings and tables becomes `(none)`.

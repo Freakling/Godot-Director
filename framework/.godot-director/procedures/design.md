@@ -13,6 +13,15 @@ Brainstorm a topic, rank and answer open design questions, or change how part of
 
   Give a one-line reason for each position.
 
+## Brief the human
+
+After preparing, present what you found before the first question:
+- **Relevant GDD:** quote the lines that bear directly on the topic, or a one-sentence summary per section if nothing verbatim is at stake.
+- **Related decisions:** any entries from `design/decisions.md` that touch this topic - date, decision, and why. Skip unrelated ones.
+- **Scope:** the questions you plan to address, in ranked order if you ranked them.
+
+Then ask: "Anything I've missed, or shall we begin?"
+
 ## For each question
 1. Offer 2-4 concrete options. For each: how it plays, what it would take to build (which systems in AGENTS.md › Architecture), and which pillar it serves or strains.
 2. Recommend one, with a one-line reason.
