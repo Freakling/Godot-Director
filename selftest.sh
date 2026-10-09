@@ -63,12 +63,22 @@ for doc in "$src"/framework/.godot-director/rules.md "$src"/framework/.godot-dir
   for ref in $(grep -o '[a-z-]*\.md' "$doc" | sort -u); do
     case "$ref" in
       rules.md|tasks.md) [ -f "$src/framework/.godot-director/$ref" ] || missing="$missing $(basename "$doc")→$ref" ;;
-      next-task.md|build.md|design.md|playtest.md|function-check.md|align.md|prune.md|review.md)
+      next-task.md|build.md|design.md|playtest.md|function-check.md|align.md|drift-reset.md|prune.md|review.md|refresh-model-sizing.md)
         [ -f "$src/framework/.godot-director/procedures/$ref" ] || missing="$missing $(basename "$doc")→$ref" ;;
     esac
   done
 done
 [ -z "$missing" ] && ok "rules and procedures only point to files that exist" || bad "dangling references:$missing"
+missing=""
+for procedure in "$src"/framework/.godot-director/procedures/*.md; do
+  name="$(basename "$procedure")"
+  grep -qF "$name" "$src/framework/.godot-director/rules.md" || missing="$missing $name"
+done
+[ -z "$missing" ] && ok "rules.md names every procedure" || bad "procedures rules.md doesn't name:$missing"
+grep -q 'drift-reset\.md' "$src/framework/.godot-director/procedures/align.md" \
+  && grep -q '^disable-model-invocation: true$' "$src/framework/.claude/skills/drift-reset/SKILL.md" \
+  && ok "align recommends the drift reset, and only the human can start it" \
+  || bad "align.md must recommend drift-reset.md, and the drift-reset skill must set disable-model-invocation"
 missing=""
 for agent in "$src"/framework/.claude/agents/*.md; do
   procedure="$(grep -o '\.godot-director/procedures/[a-z-]*\.md' "$agent" | head -n 1)"

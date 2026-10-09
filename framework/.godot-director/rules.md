@@ -8,6 +8,7 @@ These rules apply to any AI assistant working in this project. For each of these
 - **playtest.md:** new playtest, process a playtest.
 - **function-check.md:** prepare or process a function check.
 - **align.md:** check the docs and tasks are aligned.
+- **drift-reset.md:** reset the design when a pillar has been built more than one way, and later its postmortem. Only when the human asks: align often, reset when you have to.
 - **prune.md:** prune the task list.
 - **review.md:** review a finished change.
 - **refresh-model-sizing.md:** scan available models and update the per-size model mapping in Project rules.

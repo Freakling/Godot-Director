@@ -26,4 +26,4 @@ A consistency pass across the GDD, decisions, TASKS.md, AGENTS.md, project setti
 8. **Setup.**
    - `bash tools/check.sh` passes and prints no `note:` about typing or hooks.
    - The `.gitignore` and `.gitattributes` lines that install.sh adds are still there. If any are missing, rerun the installer.
-9. **Report.** Say what you fixed and what needs the human. Commit the fixes as `docs: align` after the human approves; during onboarding they go into the install commit instead.
+9. **Report.** Say what you fixed and what needs the human. Recommend a drift reset (`drift-reset.md`) when a conflict comes back that `design/decisions.md` shows was already settled, or one conflict involves several Design Pillars; patching those one place at a time makes them worse. Only the human starts one. Commit the fixes as `docs: align` after the human approves; during onboarding they go into the install commit instead.

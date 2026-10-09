@@ -2,6 +2,24 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## 3.5.0 (2026-10-09)
+
+- **New: `/drift-reset`, the design drift reset** (`.godot-director/procedures/drift-reset.md`). For when a Design Pillar has been built more than one way and patching makes it worse. Only the human starts it, and in Claude Code the skill can't be invoked by the model. It recommends a branch of its own and works in `design/resets/YYYY-MM-DD/`, never deleting what it wrote there:
+  1. **Analyse as built:** a read-only `reviewer` per area writes `as-built.md`, including where each rule lives (rule class or screen) and which rules the check wouldn't catch.
+  2. **Map interpretations:** each pillar is classed consistent, divergent or contradictory, with playtests and function checks as evidence, in `interpretations.md`.
+  3. **Rewrite the design:** every conflict is a design call as in `/design`; the old GDD is kept as `gdd-before.md`, and only the human's choices reach `decisions.md`.
+  4. **Plan the rebuild:** sized TASKS.md items with exact `Touches`, listed in `plan.md`; the rebuild runs through `/next-task`.
+  5. **`/drift-reset postmortem`:** checks the rebuild against `interpretations.md` and proposes new tests or `tools/check.cfg` patterns, as design calls, for drift that could be caught automatically next time.
+
+  The reset writes no code and never rewrites human-owned areas; a tunable value in the drift becomes a design call.
+- **Align recommends a reset** when a conflict that `decisions.md` already settled comes back, or one conflict involves several pillars. Align often, reset when you have to.
+- **Reviewer subagent** can also analyse one area for a drift reset; it stays read-only.
+- **Selftest:** checks that `rules.md` names every procedure, that align recommends the reset, and that the drift-reset skill can't be invoked by the model.
+
+**Upgrade steps**
+
+No game-owned file changes are required. In Claude Code, restart the session so the new skill loads.
+
 ## 3.4.6 (2026-10-09)
 
 - **Design session context brief.** The design procedure now has a "Brief the human" step between Prepare and the first question. Before asking anything, the AI presents the relevant GDD lines (quoted or summarised), the related entries from `design/decisions.md` (date, decision, why), and the scope of questions to address - then asks if anything is missing. The human director gets the context they need to make decisions without having to pull it from memory.

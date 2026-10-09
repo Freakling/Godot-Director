@@ -74,6 +74,7 @@ Only Godot Director's own files are replaced, and your edits to them are kept. W
 | "New playtest", "Process my playtest" (`/playtest`) | Creates a report from the template, or turns a filled-in one into bugs, score trends and design proposals. |
 | "Prepare a function check", "Process the function check" (`/function-check`) | A checklist of what's been built since the last round and needs a human eye; you tick Works or Broken. |
 | "Check the docs are aligned" (`/align`) | A consistency pass. Drift gets fixed; gaps and conflicts come to you. |
+| "Reset the design drift" (`/drift-reset`, later `/drift-reset postmortem`) | For when a pillar has been built two ways. Maps how the game really works, puts each conflict to you as a design call, and plans the rebuild as tasks. Align often, reset when you have to. |
 | "Prune the task list" (`/prune`) | Moves done items to `TASKS-archive.md`. |
 
 ```
@@ -117,7 +118,7 @@ your-game/
 │  Godot Director's, tool-neutral: updated on upgrade
 ├── .godot-director/rules.md      the workflow rules, loaded through AGENTS.md
 ├── .godot-director/tasks.md      the TASKS.md item format, read when items are written
-├── .godot-director/procedures/   next-task · build · design · playtest · function-check · align · prune · review
+├── .godot-director/procedures/   next-task · build · design · playtest · function-check · align · drift-reset · prune · review
 ├── tools/check.sh, check.gd    the check;  tools/test_case.gd: base for tests in tests/
 ├── tools/setup-clone.sh        per clone: finds Godot, installs the pre-commit hook
 ├── .githooks/pre-commit        runs the check before commits that touch code, scenes or data

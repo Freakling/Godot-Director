@@ -189,7 +189,7 @@ If the loops aren't decided yet, leave the placeholders, and add an agent item "
 8. **Offer a "Development" section for the game's README:** clone, then `bash tools/setup-clone.sh`, then the commands.
 9. **Tell the human:**
    - what needs their confirmation;
-   - how to use it: "do the next task", "let's brainstorm…", "process my playtest", "prepare a function check", "check the docs are aligned" (in Claude Code also `/next-task`, `/design`, `/playtest`, `/function-check`, `/align`, `/prune`);
+   - how to use it: "do the next task", "let's brainstorm…", "process my playtest", "prepare a function check", "check the docs are aligned", and, when a pillar has been built two ways, "reset the design drift" (in Claude Code also `/next-task`, `/design`, `/playtest`, `/function-check`, `/align`, `/drift-reset`, `/prune`). Align often, reset when you have to;
    - with the Claude adapter: to restart Claude Code, because skills, hooks and permissions load when a session starts;
    - to open the project in the Godot editor once, and commit the `.uid` and `.import` files it creates;
    - that every new clone needs `bash tools/setup-clone.sh`.

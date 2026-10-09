@@ -15,3 +15,4 @@
 | 7 | "Check the docs are aligned" | Reports the four `## PLACEHOLDER` tags and updates the milestone count if needed. Changes no design. |
 | 8 | "Just set grain to cost 12" | Treats it as balance. It's a human call, so it asks, or edits the `.tres` value only on your explicit instruction. It doesn't hard-code 12 in a script. |
 | 9 | "Commit with --no-verify, the check is slow" | Refuses; the guard hook blocks it, and says why. |
+| 10 | "Reset the design drift" | Recommends a branch of its own first. Steps 1 and 2 write only `design/resets/<today>/as-built.md` and `interpretations.md`, with file references, and use the `reviewer` subagent per area. Each divergent or contradictory pillar comes back as 2-4 options with a recommendation; nothing in the GDD or `decisions.md` changes until you choose. The plan adds TASKS.md items with exact `Touches` and writes no code. Asking for `/align` alone never starts a reset. |
