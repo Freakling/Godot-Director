@@ -2,6 +2,14 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## Unreleased
+
+- **README: Part of Director-Driven Development.** A new section after the opening description links the method and its three frameworks: Godot-Director, App-Director and SaaSAllTheThings.
+
+**Upgrade steps**
+
+No game-owned file changes are required.
+
 ## 3.5.0 (2026-10-09)
 
 - **New: `/drift-reset`, the design drift reset** (`.godot-director/procedures/drift-reset.md`). For when a Design Pillar has been built more than one way and patching makes it worse. Only the human starts it, and in Claude Code the skill can't be invoked by the model. It recommends a branch of its own and works in `design/resets/YYYY-MM-DD/`, never deleting what it wrote there:
