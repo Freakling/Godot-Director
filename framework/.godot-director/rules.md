@@ -6,6 +6,7 @@ These rules apply to any AI assistant working in this project. For each of these
 - **next-task.md:** do the next task(s), or a named item (T12, B3, R2). The build itself is `build.md`.
 - **design.md:** brainstorm, open design questions, change the design.
 - **research.md:** research a question in a fresh context and save a dated note in `design/research/`, for a design call or a decision about plugins, assets, export or stores. It informs; the human decides. Domain reference: `.godot-director/research-domain.md`.
+- **export.md:** export the game with Godot headless into `builds/` (`/export`), or set exports up: target platforms and where exports run. Setting up is a design session on the export open question.
 - **playtest.md:** new playtest, process a playtest.
 - **function-check.md:** prepare or process a function check.
 - **align.md:** check the docs and tasks are aligned.

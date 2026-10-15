@@ -131,6 +131,25 @@ grep -q '^\*\*Next IDs:\*\* T[0-9]* · B[0-9]* · R[0-9]*$' "$src/project/TASKS.
 grep -q '^\*\*Next IDs:\*\* T[0-9]* · B[0-9]* · R[0-9]*$' "$src/examples/market-day/TASKS.md" || wired="$wired market-day/TASKS.md(Next IDs)"
 [ -z "$wired" ] && ok "the research assistant is wired into the procedures, the item format, the seeds and the docs" \
   || bad "the research assistant isn't wired into:$wired"
+# Export: the procedure and skill exist and are wired in, the skipped-step path writes a question
+# and a gated setup item, and nothing here needs export templates or a Godot run.
+missing=""
+for file in framework/.godot-director/procedures/export.md framework/.claude/skills/export/SKILL.md; do
+  [ -f "$src/$file" ] || missing="$missing $file"
+done
+[ -z "$missing" ] && ok "the export procedure and skill exist" || bad "export files missing:$missing"
+wired=""
+exportproc="$proc/procedures/export.md"
+grep -q 'export\.md' "$proc/rules.md" || wired="$wired rules.md"
+grep -q 'export\.md' "$src/framework/.claude/skills/export/SKILL.md" || wired="$wired skills/export"
+grep -q '/export' "$src/README.md" || wired="$wired README.md"
+grep -q 'export\.md' "$src/ONBOARDING.md" && grep -q 'Set up exports' "$src/ONBOARDING.md" || wired="$wired ONBOARDING.md"
+grep -q -e '--export-release' -e 'godot_bin.local' "$exportproc" && grep -q 'export_presets\.cfg' "$exportproc" && grep -q 'export_templates' "$exportproc" || wired="$wired export.md(command, presets, templates)"
+grep -q 'When the human skips it' "$exportproc" && grep -q 'Depends on: Q<n>' "$exportproc" && grep -q 'GDD › Open Questions' "$exportproc" || wired="$wired export.md(skip path)"
+grep -q 'Q<n>' "$proc/tasks.md" && grep -q 'Open Questions' "$proc/procedures/next-task.md" || wired="$wired tasks.md/next-task.md(Q<n> in Depends on)"
+grep -q '"/builds/"' "$src/install.sh" && grep -q '^/builds/$' "$src/examples/market-day/.gitignore" || wired="$wired /builds/ gitignore line"
+[ -z "$wired" ] && ok "export is wired into the rules, the skill, the docs, the onboarding skip path and the gitignore" \
+  || bad "export isn't wired into:$wired"
 # The old name (Claude4Godot, 2.x and earlier) is left only in history and in the 2.x migration.
 allowed=" CHANGELOG.md install.sh selftest.sh ONBOARDING.md framework/tools/check.gd framework/tools/check.sh framework/tools/setup-clone.sh "
 leftovers=""
@@ -172,6 +191,11 @@ if [ -f .godot-director/procedures/research.md ] && [ -f .godot-director/researc
   ok "installs the research assistant: procedure, domain file, researcher, skill and note folder"
 else
   bad "installs the research assistant: procedure, domain file, researcher, skill and note folder" "$out"
+fi
+if [ -f .godot-director/procedures/export.md ] && [ -f .claude/skills/export/SKILL.md ] && grep -q '^/builds/$' .gitignore; then
+  ok "installs /export: procedure, skill and the builds/ gitignore line"
+else
+  bad "installs /export: procedure, skill and the builds/ gitignore line" "$out"
 fi
 grep -q "Market Day" AGENTS.md && ok "keeps the project's own files" || bad "keeps the project's own files"
 [ -z "$(git status --porcelain)" ] && ok "adds no duplicate .gitignore/.gitattributes lines" || bad "adds no duplicate lines" "$(git status --porcelain)"

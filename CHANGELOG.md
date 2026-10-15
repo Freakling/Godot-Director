@@ -2,6 +2,21 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## Unreleased
+
+- **New: `/export` and an export step in onboarding** (`.godot-director/procedures/export.md`). Exporting is Godot's own word for producing a game's binaries, so the skill is `/export`.
+  - **`/export` exports the game.** It reads the presets in `export_presets.cfg`, finds Godot through `tools/godot_bin.local`, checks that the export templates for the project's engine version are installed (and says how to install them when they aren't), runs `--export-release` (or `--export-debug` on request) headless for each preset, and reports the files it produced. Builds go to `builds/<preset>/`, which is gitignored. It commits nothing and changes no source file.
+  - **Onboarding asks for the export settings Godot doesn't have yet.** The target platforms, and where exports run: on your machine, in a build container (local or in the cloud), or on a hosted service such as GitHub Actions, with guidance to set it up. The answers become presets in `export_presets.cfg`, the platforms in the GDD, decision lines, and one line in AGENTS.md › Project rules. You can skip the step.
+  - **A skipped step stays visible.** It adds an open question to GDD › Open Questions (which platforms, and where exports run) and a "Set up exports" item that depends on it. `/design Q<n>` runs the step later, and `/next-task` builds the setup once the question is answered. Changing exports later is a design session too.
+  - **`Depends on` can name an open question.** An item that lists `Q<n>` there is ready once the question is no longer in Open Questions; `/next-task` and the item format say so.
+  - **The installer** adds `/builds/` to the game's `.gitignore`.
+  - **Selftest** checks that the procedure and skill exist and are wired into the rules, README, ONBOARDING and the skip path, that the installer ships them and the gitignore line, and needs no export templates. The example ignores `/builds/`, and the scenarios gain one for `/export`.
+
+**Upgrade steps**
+
+1. The installer adds `/builds/` to the game's `.gitignore`; check that the line is there.
+2. Ask the human whether the game should have exports, and run ONBOARDING.md › 6 › Exports: the platforms and where exports run. If the game already has `export_presets.cfg`, read it first and ask only for what is missing. If the human skips it, add the open question and the "Set up exports" item that `.godot-director/procedures/export.md` › "When the human skips it" gives, with the game's next `Q` and `T` numbers (bump `Next` and `Next IDs`).
+
 ## 3.8.0 (2026-10-15)
 
 - **The manual install clones the latest release.** The README's manual option cloned `main`, the integration branch, so a manual install got unreleased changes. It now clones the release tag (`git clone --branch <tag> --depth 1`), and says the tag is `v` followed by the version and where the latest one is listed; a release's source zip is the other way in. The manual upgrade wording still holds: put the new folder in and ask for ONBOARDING.md again.

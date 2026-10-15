@@ -12,7 +12,7 @@ Read this before adding or editing an item.
 ```
 
 - **Heading.** It reads `ID · title · status · size · owner`, and a bug adds `· high|med|low`. New IDs (`T<n>`, `B<n>`, `R<n>`) come from the `Next IDs` line, which you then bump. If the line has no `R` counter yet, add `· R1`. IDs are never reused.
-- **Status.** `todo`, `in-progress YYYY-MM-DD` (the claim date) or `done`. "Ready" isn't stored: a `todo` item is ready when everything in `Depends on` is `done`.
+- **Status.** `todo`, `in-progress YYYY-MM-DD` (the claim date) or `done`. "Ready" isn't stored: a `todo` item is ready when everything in `Depends on` is `done`. `Depends on` may also name an open question (`Q<n>`): that part is met once the question is no longer in GDD › Open Questions.
 - **Size.**
   - `XS`: a single value, label, or line. No logic change and no new tests.
   - `S`: 1-2 files, data, text, or a clear bug.

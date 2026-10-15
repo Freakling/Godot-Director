@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T5 · B2
+**Next IDs:** T6 · B2
 
 ## Queue
+
+### T5 · Export onboarding and /export · done · M · agent
+- Touches: framework/.godot-director/procedures/export.md (new), framework/.claude/skills/export/SKILL.md (new), framework/.godot-director/rules.md, framework/.godot-director/tasks.md, framework/.godot-director/procedures/next-task.md, ONBOARDING.md, README.md, install.sh, examples/market-day/.gitignore, examples/scenarios.md, selftest.sh, CHANGELOG.md
+- Done when: onboarding asks for the target platforms and where exports run (this machine, a build container, or a hosted service such as GitHub Actions), and a skipped step adds a GDD open question and a setup item that depends on it (check) · `/export` exports the presets headless into the gitignored `builds/` folder after checking the export templates (check) · the selftest checks the wiring and needs no export templates (test)
+- GDD: (none)
+- Source: Director-Driven-Development T19
 
 ### T4 · The manual install clones the latest release · done · XS · agent
 - Touches: README.md, CHANGELOG.md
