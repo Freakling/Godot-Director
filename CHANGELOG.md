@@ -5,6 +5,8 @@ Each entry lists what changed. **Upgrade steps** at the end of an entry cover bo
 ## Unreleased
 
 - **README: Part of Director-Driven Development.** A new section after the opening description links the method and its three frameworks: Godot-Director, App-Director and SaaSAllTheThings.
+- **The upgrade-file check ignores nested clones.** `git ls-files` lists a nested repository in an ignored folder (such as a clone in `work/`) as a directory, which blocked every commit while no upgrade file existed. The pre-commit hook, the `/align` check and onboarding now keep only paths that end in `.gdir-new`, so a real upgrade file still blocks the commit.
+- **selftest.sh** checks that a nested clone in an ignored folder doesn't block a commit, and that a real upgrade file still does.
 
 **Upgrade steps**
 

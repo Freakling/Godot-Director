@@ -7,7 +7,7 @@ A consistency pass across the GDD, decisions, TASKS.md, AGENTS.md, project setti
 2. **Entry files.**
    - AGENTS.md points to `.godot-director/rules.md`.
    - In Claude Code, CLAUDE.md contains `@AGENTS.md`.
-   - No `*.gdir-new` files are left unmerged: `git ls-files -o -i --exclude-standard -- '*.gdir-new'`.
+   - No `*.gdir-new` files are left unmerged: `git ls-files -o -i --exclude-standard -- '*.gdir-new' | grep '\.gdir-new$'` (the grep drops nested clones, which `ls-files` lists as directories).
 3. **Items.**
    - IDs are unique and below `Next IDs`, and every `Depends on` exists, in TASKS.md or the archive.
    - No `done` item depends on a `todo` one.
