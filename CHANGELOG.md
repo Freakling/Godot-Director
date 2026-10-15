@@ -2,6 +2,14 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## Unreleased
+
+- **Every install path gets the latest release.** The installer skill and the Claude Code plugin now install the release tagged `v<version>`; `main` is where changes are integrated, not what people install. The skill clones `--branch v<version>` into a fresh temporary folder, the way SaaSAllTheThings does, and deletes it after onboarding, instead of cloning `main` into a fixed folder and pulling it on reuse. The marketplace names the plugin as a `github` source with `ref` `v<version>`, because Claude Code's relative-path source (`./`) can't pin a ref. The skill's `metadata.version` said 3.3.0; it now follows `VERSION`. `CLAUDE.md` › After any change lists every file that carries the version and says each release is tagged `v<version>` once its pull request is merged. The selftest checks that the skill's version and the release it clones, and the marketplace's `ref`, agree with `VERSION`. The README says the skill and the plugin install the latest release, and that upgrading the skill means running `npx skills add` again.
+
+**Upgrade steps**
+
+None for the game's own files.
+
 ## 3.7.0 (2026-10-15)
 
 - **New: `/research`, the research assistant** (`.godot-director/procedures/research.md`). When a design question depends on facts nobody has checked, or you ask for research, a read-only `researcher` subagent looks into it in a fresh context and reports a note. It informs; you decide: its recommendation is one option shown with its reason, and it never records a decision, edits the GDD or `design/decisions.md`, answers an open question, or asks you anything. It states its assumptions in the note instead.
@@ -16,7 +24,6 @@ Each entry lists what changed. **Upgrade steps** at the end of an entry cover bo
 - **Align** checks that `Next IDs` has an `R` counter, that research items have a `Question:` instead of `Done when`, and that each done research item has its note.
 - **Selftest** checks that the research files exist and are wired into the procedures, the item format, the seeds and the docs, that the researcher has no edit, write or shell tool, that the installer ships everything (including with `--tools none`), and that a research note commits without running the check.
 - **The example** (`examples/market-day`) shows the `R` counter and the note folder, and the scenarios gain two for research.
-- **Every install path gets the latest release.** The installer skill and the Claude Code plugin now install the release tagged `v<version>`; `main` is where changes are integrated, not what people install. The skill clones `--branch v<version>` into a fresh temporary folder, the way SaaSAllTheThings does, and deletes it after onboarding, instead of cloning `main` into a fixed folder and pulling it on reuse. The marketplace names the plugin as a `github` source with `ref` `v<version>`, because Claude Code's relative-path source (`./`) can't pin a ref. The skill's `metadata.version` said 3.3.0; it now follows `VERSION`. `CLAUDE.md` › After any change lists every file that carries the version and says each release is tagged `v<version>` once its pull request is merged. The selftest checks that the skill's version and the release it clones, and the marketplace's `ref`, agree with `VERSION`. The README says the skill and the plugin install the latest release, and that upgrading the skill means running `npx skills add` again.
 
 **Upgrade steps**
 
