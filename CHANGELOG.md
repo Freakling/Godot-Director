@@ -5,6 +5,8 @@ Each entry lists what changed. **Upgrade steps** at the end of an entry cover bo
 ## Unreleased
 
 - **README: Part of Director-Driven Development.** A new section after the opening description links the method and its three frameworks: Godot-Director, App-Director and SaaSAllTheThings.
+- **The upgrade-file check ignores nested clones.** `git ls-files` lists a nested repository in an ignored folder (such as a clone in `work/`) as a directory, which blocked every commit while no upgrade file existed. The pre-commit hook, the `/align` check and onboarding now keep only paths that end in `.gdir-new`, so a real upgrade file still blocks the commit.
+- **selftest.sh** checks that a nested clone in an ignored folder doesn't block a commit, and that a real upgrade file still does.
 - **One commit model, shared with App-Director and SaaSAllTheThings.** One task, one commit, with the pre-commit check as the gate.
   - **A single `/next-task` pauses for your approval** of its commit (`next-task.md` step 7, which used to commit at once). The README and the behaviour scenarios already described it that way.
   - **A run commits without pausing.** When you ask for one ("grab tasks until you're blocked", "work through the queue", "the next N tasks"), each task commits as soon as its check passes. The run stops when an item is blocked on you, a build fails, or you decline a commit, and the final report lists every commit.

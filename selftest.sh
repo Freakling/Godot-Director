@@ -388,6 +388,19 @@ printf 'x\n' > tools/check.sh.gdir-new
 printf '\n# another change\n' >> scripts/systems/market.gd && git add scripts/systems/market.gd
 out="$(git_q commit -qm "with gdir-new" 2>&1)"; expect_status "refuses while a .gdir-new file is unmerged" 1 $? "$out"
 rm -f tools/check.sh.gdir-new
+
+# A nested clone in an ignored folder is listed by ls-files as a directory. It doesn't block a
+# commit, but a real upgrade file still does while the clone is there.
+git restore --staged scripts/systems/market.gd && git checkout -- scripts/systems/market.gd
+printf '/clones/\n' >> .git/info/exclude
+mkdir -p clones/nested && (cd clones/nested && git init -q && git_q commit -q --allow-empty -m nested) >/dev/null 2>&1
+out="$(git_q commit -q --allow-empty -m "with a nested clone" 2>&1)"
+expect_status "a nested clone in an ignored folder doesn't block a commit" 0 $? "$out"
+printf 'x\n' > tools/check.sh.gdir-new
+out="$(git_q commit -q --allow-empty -m "with a nested clone and gdir-new" 2>&1)"
+expect_status "a real upgrade file still blocks with a nested clone present" 1 $? "$out"
+expect_no_output "names the upgrade file, not the nested clone" "clones/" "$out"
+rm -f tools/check.sh.gdir-new
 no_project="$work/no-project"; new_repo "$no_project"
 bash "$src/install.sh" "$no_project" >/dev/null 2>&1
 (cd "$no_project" && printf '%s\n' "$godot" > tools/godot_bin.local && bash tools/setup-clone.sh >/dev/null 2>&1 \
