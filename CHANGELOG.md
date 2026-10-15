@@ -2,6 +2,29 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## Unreleased
+
+- **New: `/research`, the research assistant** (`.godot-director/procedures/research.md`). When a design question depends on facts nobody has checked, or you ask for research, a read-only `researcher` subagent looks into it in a fresh context and reports a note. It informs; you decide: its recommendation is one option shown with its reason, and it never records a decision, edits the GDD or `design/decisions.md`, answers an open question, or asks you anything. It states its assumptions in the note instead.
+  - **Research is a task type.** Research items get their own IDs, `R<n>`, drawn from the `Next IDs` line like bugs. Instead of `Done when` they have `Question:` and, when they feed an open question, `Informs: Q<n>`. They are sized like any item, and the size picks the model. An item is done when its note exists.
+  - **Two ways to start.** On the fly: a design session delegates a complex question, or you run `/research <question>`, and the item is created and run at once. For later: queue the item, and list it under `Depends on` of the tasks that need its findings. A task that needs the decision stays gated by the open question itself.
+  - **`/next-task` hands research items to the `researcher`.** No check runs and no review: research changes no code. This session writes the note to `design/research/YYYY-MM-DD-<slug>.md` and commits it with the records. A finished item that informs `Q<n>` makes that question ready for a design call, and a run goes on to the next item.
+  - **Design sessions** list `design/research/` first, show notes on the topic in the context brief, delegate a question that needs facts, and end the decision's `why` with the note's path so later sessions reuse the evidence.
+  - **The note** is one dated file per topic: the conclusion first, the options and trade-offs, the recommendation, every claim with its source, source tier and confidence, the date the claims were verified, and what stays unknown.
+  - **A Godot domain file** (`.godot-director/research-domain.md`) is read when the question touches the engine and its docs for the project's version, plugins and assets and their licences, export and store requirements, or how comparable games solve the problem (design references, checked against the Design Pillars).
+  - **Confidentiality.** Project text and unpublished design never go into a public search query or fetch.
+  - **The researcher** has `Read`, `Grep`, `Glob`, `WebSearch` and `WebFetch`: no edit, write or shell tool. `.claude/settings.json` allows web search and fetch; everything with side effects keeps asking.
+- **Align** checks that `Next IDs` has an `R` counter, that research items have a `Question:` instead of `Done when`, and that each done research item has its note.
+- **Selftest** checks that the research files exist and are wired into the procedures, the item format, the seeds and the docs, that the researcher has no edit, write or shell tool, that the installer ships everything (including with `--tools none`), and that a research note commits without running the check.
+- **The example** (`examples/market-day`) shows the `R` counter and the note folder, and the scenarios gain two for research.
+
+**Upgrade steps**
+
+1. **TASKS.md:** add an `R` counter to the `Next IDs` line, so `**Next IDs:** T12 · B3` becomes `**Next IDs:** T12 · B3 · R1`.
+2. **`design/research/`:** the installer creates the folder with a short `README.md` (a project file, yours from then on) when the game doesn't have it. Notes are added there as research runs; commit them like the other records.
+3. `.claude/settings.json` is framework-owned, so it is replaced on upgrade. If you edited it, the new version arrives as `.claude/settings.json.gdir-new`; merge it, and make sure `"WebSearch"` and `"WebFetch"` are in `permissions.allow`, which lets the researcher read the web without asking each time. Restart Claude Code afterwards so the new skill, subagent and permissions load.
+
+No other game-owned file changes are required.
+
 ## 3.6.0 (2026-10-15)
 
 - **README: Part of Director-Driven Development.** A new section after the opening description links the method and its three frameworks: Godot-Director, App-Director and SaaSAllTheThings.

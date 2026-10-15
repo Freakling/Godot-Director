@@ -4,7 +4,7 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T2 · B2
+**Next IDs:** T3 · B2
 
 ## Queue
 
@@ -19,5 +19,11 @@ Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reor
 - Done when: `next-task.md` step 7 pauses for approval unless the human asked for a run ("grab tasks until you're blocked", "work through the queue", "the next N tasks"), and Several items also stops when the human declines a commit (check) · `git commit` is in `permissions.allow` and not in `permissions.ask` of `.claude/settings.json`, while `git push` still asks (check) · `rules.md`, the skill description, the README and the scenarios agree (check)
 - GDD: (none)
 - Source: Director-Driven-Development T35 (the shared commit model)
+
+### T2 · The research assistant · done · M · agent
+- Touches: framework/.godot-director/procedures/research.md (new), framework/.godot-director/research-domain.md (new), framework/.claude/agents/researcher.md (new), framework/.claude/skills/research/SKILL.md (new), framework/.claude/settings.json, framework/.godot-director/tasks.md, framework/.godot-director/rules.md, framework/.godot-director/procedures/next-task.md, framework/.godot-director/procedures/design.md, framework/.godot-director/procedures/align.md, project/TASKS.md (+R counter), project/design/research/README.md (new), examples/market-day/TASKS.md, examples/market-day/design/research/README.md (new), examples/scenarios.md, README.md, ONBOARDING.md, selftest.sh, CHANGELOG.md
+- Done when: `research.md`, `research-domain.md`, the `researcher` subagent and the `/research` skill exist, and `rules.md`, `next-task.md`, `design.md`, `tasks.md`, the README and ONBOARDING.md name or use them (check) · the `researcher` has `Read, Grep, Glob, WebSearch, WebFetch` and no edit, write or shell tool, and `settings.json` allows web search and fetch (check) · `project/TASKS.md` carries an `R` counter on its `Next IDs` line, and the installer ships the procedure, the domain file, the note folder and the Claude adapter files, with `--tools none` too (check) · a commit with only a research note doesn't run the project check (check)
+- GDD: (none)
+- Source: Director-Driven-Development T42 (product/anchors/research.md)
 
 ## Notes
