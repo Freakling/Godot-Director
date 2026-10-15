@@ -5,7 +5,11 @@
   "plugins": [
     {
       "name": "godot-director",
-      "source": "./",
+      "source": {
+        "source": "github",
+        "repo": "Freakling/Godot-Director",
+        "ref": "v3.6.0"
+      },
       "description": "Installs and upgrades the Godot Director workflow in a Godot project."
     }
   ]

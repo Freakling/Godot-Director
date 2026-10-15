@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T3 · B2
+**Next IDs:** T4 · B2
 
 ## Queue
+
+### T3 · The install paths get the latest release · done · M · agent
+- Touches: skills/godot-director/SKILL.md, .claude-plugin/marketplace.json, CLAUDE.md, README.md, selftest.sh, CHANGELOG.md
+- Done when: the installer skill clones the release tag `v<version>` and the marketplace's plugin entry pins `v<version>`, and the skill's `metadata.version` agrees with `VERSION` (check) · `CLAUDE.md` › After any change lists every file that carries the version and says each release is tagged `v<version>` (check) · the selftest fails when the skill's version, the tag it clones or the marketplace's `ref` disagrees with `VERSION` (test)
+- GDD: (none)
+- Source: Director-Driven-Development T39
 
 ### B1 · The upgrade-file check ignores nested clones · done · S · agent · med
 - Touches: framework/.githooks/pre-commit, framework/.godot-director/procedures/align.md, ONBOARDING.md, selftest.sh
