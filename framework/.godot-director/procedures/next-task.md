@@ -19,7 +19,7 @@ The request can be:
 4. **Items already `in-progress`:**
    - **Claimed today:** another session may be working on it right now, so ask before touching it.
    - **Older:** a session probably ended mid-task. Read its `Note:`, look at `git status` and `git diff`, then resume it or set it back to `todo`, and say which.
-5. **Candidates** are `agent` items with status `todo` whose `Depends on` items are all `done`, research items included. IDs missing from TASKS.md are in `TASKS-archive.md`.
+5. **Candidates** are `agent` items with status `todo` whose `Depends on` items are all `done` (a `Q<n>` there counts once it is no longer in GDD › Open Questions), research items included. IDs missing from TASKS.md are in `TASKS-archive.md`.
 6. **Order:** `high` bugs first, then everything else in file order. File order is the human's priority, so don't reorder.
 7. **Nothing ready?** Report what's blocked and on what (dependencies, `human` items, open questions), and stop.
 

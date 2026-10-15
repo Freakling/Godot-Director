@@ -130,6 +130,7 @@ Finally, search the documents for leftovers and fix them. Use `git grep -n -e �
 - **AGENTS.md:** name, pitch, Godot version, dimension, platforms and rendering. Fill in the Layout table from the real folders (delete rows that don't apply), and the Architecture table (from step 5).
 - **`tools/check.cfg`:** set `[screens] dirs` to the real UI folders, and `known` as in step 5. Use `allow_writes_to` only for an autoload a screen legitimately edits, such as Settings, and ask the human first. Put third-party folders in `[scan] skip`.
 - **`project.godot`:** it has `untyped_declaration` (step 5).
+- **Exports.** Offer the export step: the target platforms and where exports run (this machine, a build container, or a hosted service such as GitHub Actions). Follow `.godot-director/procedures/export.md` › Set up exports, in its voice: short rounds, options with a recommendation. Skip what the project already answers: an existing `export_presets.cfg` and the platforms in the GDD. The human can skip the step. A skip adds the open question and the "Set up exports" item that `export.md` › "When the human skips it" describes, so `/design Q<n>` runs the step later and `/next-task` builds the setup.
 
 ## 7. Ownership and project rules
 
@@ -189,7 +190,7 @@ If the loops aren't decided yet, leave the placeholders, and add an agent item "
 8. **Offer a "Development" section for the game's README:** clone, then `bash tools/setup-clone.sh`, then the commands.
 9. **Tell the human:**
    - what needs their confirmation;
-   - how to use it: "do the next task", "let's brainstorm…", "process my playtest", "prepare a function check", "check the docs are aligned", "research how other games handle…", and, when a pillar has been built two ways, "reset the design drift" (in Claude Code also `/next-task`, `/design`, `/research`, `/playtest`, `/function-check`, `/align`, `/drift-reset`, `/prune`). Align often, reset when you have to;
+   - how to use it: "do the next task", "let's brainstorm…", "process my playtest", "prepare a function check", "check the docs are aligned", "research how other games handle…", "export the game", and, when a pillar has been built two ways, "reset the design drift" (in Claude Code also `/next-task`, `/design`, `/research`, `/export`, `/playtest`, `/function-check`, `/align`, `/drift-reset`, `/prune`). Align often, reset when you have to;
    - with the Claude adapter: to restart Claude Code, because skills, hooks and permissions load when a session starts;
    - to open the project in the Godot editor once, and commit the `.uid` and `.import` files it creates;
    - that every new clone needs `bash tools/setup-clone.sh`.
