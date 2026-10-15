@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T4 · B2
+**Next IDs:** T5 · B2
 
 ## Queue
+
+### T4 · The manual install clones the latest release · done · XS · agent
+- Touches: README.md, CHANGELOG.md
+- Done when: the manual install option in README.md clones the release tag `v<version>` (or takes that release's source zip) instead of `main`, with the tag left as a placeholder found on the Releases page (check) · the manual upgrade wording still holds (check)
+- GDD: (none)
+- Source: Director-Driven-Development T65
 
 ### T3 · The install paths get the latest release · done · M · agent
 - Touches: skills/godot-director/SKILL.md, .claude-plugin/marketplace.json, CLAUDE.md, README.md, selftest.sh, CHANGELOG.md
