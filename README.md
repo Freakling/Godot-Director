@@ -79,6 +79,7 @@ Only Godot Director's own files are replaced, and your edits to them are kept. W
 | "Do the next 3 tasks", "Work through the queue", "Grab tasks until you're blocked" | The same, item after item, committing each without pausing, until one needs you. |
 | "Which open questions block development?" (`/design questions`) | Ranks the open design questions by what they unblock, with options and a recommendation for each. |
 | "Let's brainstorm {topic}" (`/design {topic}`) | A design session. Your decisions become GDD text, decision-log lines and task items. |
+| "Research how other games handle {topic}", "What licence does this plugin use?" (`/research {question}`) | A read-only researcher looks into one question in a fresh context and saves a dated note in `design/research/`: the conclusion, the options, the sources with a confidence, and a recommendation. It informs; you decide. A design session asks it for facts it doesn't have, and you can queue a research item (`R1`, `R2`, ...) for later. |
 | "New playtest", "Process my playtest" (`/playtest`) | Creates a report from the template, or turns a filled-in one into bugs, score trends and design proposals. |
 | "Prepare a function check", "Process the function check" (`/function-check`) | A checklist of what's been built since the last round and needs a human eye; you tick Works or Broken. |
 | "Check the docs are aligned" (`/align`) | A consistency pass. Drift gets fixed; gaps and conflicts come to you. |
@@ -117,16 +118,18 @@ your-game/
 │  yours: never overwritten
 ├── AGENTS.md                   for every assistant: project facts, layout, architecture, ownership, project rules
 ├── CLAUDE.md                   "@AGENTS.md", for Claude Code
-├── TASKS.md                    milestones and the queue (tasks and bugs)
+├── TASKS.md                    milestones and the queue (tasks, bugs and research)
 ├── design/gdd.md               the game's current design, and Open Questions
 ├── design/decisions.md         why: one line per design decision
+├── design/research/            dated research notes, one per topic; the decision line links to its note
 ├── playtesting/TEMPLATE.md     playtest template, one section per core loop
 ├── tools/check.cfg             check settings: screen folders, folders to skip
 │
 │  Godot Director's, tool-neutral: updated on upgrade
 ├── .godot-director/rules.md      the workflow rules, loaded through AGENTS.md
 ├── .godot-director/tasks.md      the TASKS.md item format, read when items are written
-├── .godot-director/procedures/   next-task · build · design · playtest · function-check · align · drift-reset · prune · review
+├── .godot-director/procedures/   next-task · build · design · research · playtest · function-check · align · drift-reset · prune · review
+├── .godot-director/research-domain.md  what the researcher adds for Godot: the docs and engine version, plugin and asset licences, export and store requirements
 ├── tools/check.sh, check.gd    the check;  tools/test_case.gd: base for tests in tests/
 ├── tools/setup-clone.sh        per clone: finds Godot, installs the pre-commit hook
 ├── .githooks/pre-commit        runs the check before commits that touch code, scenes or data
@@ -134,7 +137,7 @@ your-game/
 │
 │  Godot Director's, Claude Code adapter: updated on upgrade
 ├── .claude/skills/             /next-task and the rest: each points to its procedure
-├── .claude/agents/             builder (builds each item in a fresh context) · reviewer (read-only)
+├── .claude/agents/             builder (builds each item in a fresh context) · reviewer and researcher (read-only)
 ├── .claude/hooks/              runs the check before a turn ends; blocks risky git commands
 └── .claude/settings.json       permissions, hooks, timeouts
 ```

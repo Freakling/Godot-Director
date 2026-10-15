@@ -14,7 +14,9 @@
       "Bash(bash tools/check.sh)",
       "Bash(git status)",
       "Bash(git add *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "WebSearch",
+      "WebFetch"
     ],
     "ask": [
       "Bash(git push *)",

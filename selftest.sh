@@ -62,8 +62,8 @@ missing=""
 for doc in "$src"/framework/.godot-director/rules.md "$src"/framework/.godot-director/procedures/*.md "$src"/project/TASKS.md; do
   for ref in $(grep -o '[a-z-]*\.md' "$doc" | sort -u); do
     case "$ref" in
-      rules.md|tasks.md) [ -f "$src/framework/.godot-director/$ref" ] || missing="$missing $(basename "$doc")→$ref" ;;
-      next-task.md|build.md|design.md|playtest.md|function-check.md|align.md|drift-reset.md|prune.md|review.md|refresh-model-sizing.md)
+      rules.md|tasks.md|research-domain.md) [ -f "$src/framework/.godot-director/$ref" ] || missing="$missing $(basename "$doc")→$ref" ;;
+      next-task.md|build.md|design.md|research.md|playtest.md|function-check.md|align.md|drift-reset.md|prune.md|review.md|refresh-model-sizing.md)
         [ -f "$src/framework/.godot-director/procedures/$ref" ] || missing="$missing $(basename "$doc")→$ref" ;;
     esac
   done
@@ -86,6 +86,35 @@ for agent in "$src"/framework/.claude/agents/*.md; do
   [ -n "$procedure" ] && [ -f "$src/framework/.godot-director/procedures/$procedure" ] || missing="$missing $(basename "$agent")"
 done
 [ -z "$missing" ] && ok "every subagent points to an existing procedure" || bad "subagents without procedures:$missing"
+# The research assistant: every piece exists and is wired in, and the researcher can read and search but not change anything.
+missing=""
+for file in framework/.godot-director/procedures/research.md framework/.godot-director/research-domain.md \
+    framework/.claude/agents/researcher.md framework/.claude/skills/research/SKILL.md \
+    project/design/research/README.md examples/market-day/design/research/README.md; do
+  [ -f "$src/$file" ] || missing="$missing $file"
+done
+[ -z "$missing" ] && ok "the research assistant's files exist" || bad "research assistant files missing:$missing"
+researcher="$src/framework/.claude/agents/researcher.md"
+settings="$src/framework/.claude/settings.json"
+if [ "$(sed -n 's/^tools: //p' "$researcher" | tr -d '\r')" = "Read, Grep, Glob, WebSearch, WebFetch" ] \
+    && grep -q '^model: inherit' "$researcher" \
+    && grep -Eq '^ *"WebSearch",?[[:space:]]*$' "$settings" && grep -Eq '^ *"WebFetch",?[[:space:]]*$' "$settings"; then
+  ok "the researcher has read, search and fetch tools only, and settings.json allows web search and fetch"
+else
+  bad "researcher.md must have exactly the tools Read, Grep, Glob, WebSearch, WebFetch (no edit, write or shell), and settings.json must allow WebSearch and WebFetch"
+fi
+wired=""
+proc="$src/framework/.godot-director"
+grep -q 'research-domain\.md' "$proc/procedures/research.md" || wired="$wired research.md>research-domain.md"
+grep -q 'researcher' "$proc/procedures/next-task.md" && grep -q 'Research items' "$proc/procedures/next-task.md" || wired="$wired next-task.md"
+grep -q 'research\.md' "$proc/procedures/design.md" && grep -q 'design/research/' "$proc/procedures/design.md" || wired="$wired design.md"
+grep -q 'R<n>' "$proc/tasks.md" && grep -q '^- \*\*Research\.\*\*' "$proc/tasks.md" || wired="$wired tasks.md"
+grep -q 'research' "$proc/procedures/align.md" || wired="$wired align.md"
+grep -q '/research' "$src/README.md" && grep -q '/research' "$src/ONBOARDING.md" || wired="$wired README.md/ONBOARDING.md"
+grep -q '^\*\*Next IDs:\*\* T[0-9]* · B[0-9]* · R[0-9]*$' "$src/project/TASKS.md" || wired="$wired project/TASKS.md(Next IDs)"
+grep -q '^\*\*Next IDs:\*\* T[0-9]* · B[0-9]* · R[0-9]*$' "$src/examples/market-day/TASKS.md" || wired="$wired market-day/TASKS.md(Next IDs)"
+[ -z "$wired" ] && ok "the research assistant is wired into the procedures, the item format, the seeds and the docs" \
+  || bad "the research assistant isn't wired into:$wired"
 # The old name (Claude4Godot, 2.x and earlier) is left only in history and in the 2.x migration.
 allowed=" CHANGELOG.md install.sh selftest.sh ONBOARDING.md framework/tools/check.gd framework/tools/check.sh framework/tools/setup-clone.sh "
 leftovers=""
@@ -121,6 +150,12 @@ if [ -f .godot-director/manifest ] && [ -f .godot-director/procedures/next-task.
   ok "copies the core and the Claude adapter, and writes the manifest"
 else
   bad "copies the core and the Claude adapter, and writes the manifest" "$out"
+fi
+if [ -f .godot-director/procedures/research.md ] && [ -f .godot-director/research-domain.md ] && [ -f .claude/agents/researcher.md ] \
+    && [ -f .claude/skills/research/SKILL.md ] && [ -f design/research/README.md ]; then
+  ok "installs the research assistant: procedure, domain file, researcher, skill and note folder"
+else
+  bad "installs the research assistant: procedure, domain file, researcher, skill and note folder" "$out"
 fi
 grep -q "Market Day" AGENTS.md && ok "keeps the project's own files" || bad "keeps the project's own files"
 [ -z "$(git status --porcelain)" ] && ok "adds no duplicate .gitignore/.gitattributes lines" || bad "adds no duplicate lines" "$(git status --porcelain)"
@@ -216,6 +251,12 @@ if [ ! -e "$core_only/.claude" ] && [ ! -e "$core_only/CLAUDE.md" ] && [ -f "$co
   ok "--tools none installs the tool-neutral core only"
 else
   bad "--tools none installs the tool-neutral core only" "$out"
+fi
+if [ -f "$core_only/.godot-director/procedures/research.md" ] && [ -f "$core_only/.godot-director/research-domain.md" ] \
+    && [ -f "$core_only/design/research/README.md" ] && grep -q '^\*\*Next IDs:\*\* T[0-9]* · B[0-9]* · R[0-9]*$' "$core_only/TASKS.md"; then
+  ok "a new game gets the research procedure and domain file, the note folder, and an R counter in TASKS.md, even with --tools none"
+else
+  bad "a new game gets the research procedure and domain file, the note folder, and an R counter in TASKS.md" "$out"
 fi
 # Installing from a Godot Director folder that is itself a git clone, or sits inside the game.
 gdir_clone="$work/gdir-clone"; cp -R "$src" "$gdir_clone"; rm -rf "$gdir_clone/.git"
@@ -380,6 +421,13 @@ out="$(git_q commit -qm "fine" 2>&1)"; expect_status "allows a commit that passe
 printf '# notes\n' > notes.md && git add notes.md
 out="$(git_q commit -qm "docs only" 2>&1)"; expect_status "allows a docs-only commit" 0 $? "$out"
 expect_no_output "doesn't run the check for a docs-only commit" "running the project check" "$out"
+# A research item changes no code: its note and the records commit without the check.
+mkdir -p design/research
+printf '# Which Web export options fit a 2D game\nR1 · Informs: (none) · Verified as of 2026-10-15 · Size: M\n' > design/research/2026-10-15-web-export.md
+git add design/research/2026-10-15-web-export.md
+out="$(git_q commit -qm "docs: research Web export (R1)" 2>&1)"; status=$?
+expect_status "allows a commit with only a research note" 0 "$status" "$out"
+expect_no_output "doesn't run the check for a research note" "running the project check" "$out"
 cp scenes/shop_screen.tscn "scenes/þorp.tscn" && git add "scenes/þorp.tscn"
 out="$(git_q commit -qm "non-ASCII scene" 2>&1)"; status=$?
 expect_output "runs the check for a non-ASCII file name" "running the project check" "$out"

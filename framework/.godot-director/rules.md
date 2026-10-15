@@ -3,8 +3,9 @@ AGENTS.md › Project rules, and win over these defaults. -->
 # Godot Director workflow rules
 
 These rules apply to any AI assistant working in this project. For each of these requests, follow the procedure in `.godot-director/procedures/`:
-- **next-task.md:** do the next task(s), or a named item (T12, B3). The build itself is `build.md`.
+- **next-task.md:** do the next task(s), or a named item (T12, B3, R2). The build itself is `build.md`.
 - **design.md:** brainstorm, open design questions, change the design.
+- **research.md:** research a question in a fresh context and save a dated note in `design/research/`, for a design call or a decision about plugins, assets, export or stores. It informs; the human decides. Domain reference: `.godot-director/research-domain.md`.
 - **playtest.md:** new playtest, process a playtest.
 - **function-check.md:** prepare or process a function check.
 - **align.md:** check the docs and tasks are aligned.
@@ -13,13 +14,14 @@ These rules apply to any AI assistant working in this project. For each of these
 - **review.md:** review a finished change.
 - **refresh-model-sizing.md:** scan available models and update the per-size model mapping in Project rules.
 
-In Claude Code these are also slash commands, and builds and reviews run as the `builder` and `reviewer` subagents.
+In Claude Code these are also slash commands, and builds, reviews and research run as the `builder`, `reviewer` and `researcher` subagents.
 
 ## The human decides
 - The human owns design, balance, art direction and priorities. You build, keep the records, and propose.
 - A design call is a mechanic, a rule, or anything the player feels that the GDD doesn't settle. For one, give 2-4 options with one recommendation and a one-line reason, then wait. Write down only what was chosen, following `design.md` › Record each decision. If you had to interpret the answer, say how you read it.
 - Never answer an item in GDD › Open Questions yourself. Work that depends on one gets a placeholder that names the question.
 - Something that seems to contradict a Design Pillar is flagged, never reinterpreted.
+- Research informs a design call and never makes it. The `researcher` records no decision, never edits the GDD or `design/decisions.md`, never answers an open question, and never asks the human; its recommendation is shown as one option with its reason.
 
 ## Protected space
 `director/` is the human's personal workspace: reference art, level sketches, audio stems, design notes, mood boards. Read files there for context when an item needs them, but never create, modify or delete anything inside it. If work depends on an asset the human owns, use the placeholder policy in AGENTS.md › Ownership instead of generating the real thing.
@@ -30,8 +32,9 @@ In Claude Code these are also slash commands, and builds and reviews run as the 
 | What the game should be | `design/gdd.md`. List its sections with `grep -n "^#" design/gdd.md` and read only the ones you need. |
 | What's undecided | GDD › Open Questions (`Q<n>`) |
 | Why a design decision was made | `design/decisions.md` (append-only) |
+| The evidence behind a design call | `design/research/`, one dated note per topic; the decision line links to it |
 | Which systems exist and what each owns | `AGENTS.md` › Architecture |
-| Work, bugs, milestones | `TASKS.md` (format: `.godot-director/tasks.md`; done items: `TASKS-archive.md`) |
+| Work, bugs, research, milestones | `TASKS.md` (format: `.godot-director/tasks.md`; done items: `TASKS-archive.md`) |
 | Tunable values | `.tres` files (folders in AGENTS.md › Layout) |
 | Whether it works | `bash tools/check.sh` |
 
@@ -73,4 +76,5 @@ Update the owning place in the same change that makes it untrue. Replace superse
 ## Reviews and model size
 - An `L` or `XL` item gets an independent review (`review.md`) before its commit. Fix the findings that are in scope. For `M` and smaller, the pre-commit hook and the builder's own testing are sufficient.
 - Exception: an `M` item that rewrites the save codec (the `to_dict`/`from_dict` pair) or touches more than three system boundaries also gets a review.
+- A research item (`R<n>`) gets no check run and no review: it changes no code. Its size picks the `researcher`'s model the same way.
 - **Model sizing** (requires subagent spawning and per-subagent model selection): each item size maps to its own build model, in one of five tiers: `XS` and `S` (smallest/fastest), `M` (balanced), and `L` and `XL` (most capable). Run `/refresh-model-sizing`: it checks whether your tool supports the feature and, if so, proposes a mapping and writes it to Project rules. A size without an entry uses the session model.
