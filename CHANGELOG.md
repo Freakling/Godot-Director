@@ -2,7 +2,7 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
-## Unreleased
+## 3.9.0 (2026-10-16)
 
 - **New: `/export` and an export step in onboarding** (`.godot-director/procedures/export.md`). Exporting is Godot's own word for producing a game's binaries, so the skill is `/export`.
   - **`/export` exports the game.** It reads the presets in `export_presets.cfg`, finds Godot through `tools/godot_bin.local`, checks that the export templates for the project's engine version are installed (and says how to install them when they aren't), runs `--export-release` (or `--export-debug` on request) headless for each preset, and reports the files it produced. Builds go to `builds/<preset>/`, which is gitignored. It commits nothing and changes no source file.
