@@ -44,11 +44,27 @@ plugin_version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1
 [ "$plugin_version" = "$(tr -d '\r\n' < "$src/VERSION")" ] && ok "plugin.json version matches VERSION" \
   || bad "plugin.json version ($plugin_version) matches VERSION ($(cat "$src/VERSION"))"
 installer="$src/skills/godot-director/SKILL.md"
-if [ -f "$installer" ] && grep -q '^name: godot-director$' "$installer" && grep -q '^description: ' "$installer"     && grep -q 'ONBOARDING.md' "$installer" && grep -q 'git clone' "$installer"     && [ "$(find "$src" -name SKILL.md -not -path "*/.git/*" -mindepth 2 -maxdepth 4 | wc -l)" -eq 1 ]; then
+if [ -f "$installer" ] && grep -q '^name: godot-director$' "$installer" && grep -q '^description: ' "$installer"     && grep -q 'ONBOARDING.md' "$installer" && grep -qE 'git .*clone ' "$installer"     && [ "$(find "$src" -name SKILL.md -not -path "*/.git/*" -mindepth 2 -maxdepth 4 | wc -l)" -eq 1 ]; then
   ok "the installer skill is the only one the skills CLI finds, and fetches Godot Director on its own"
 else
   bad "skills/godot-director/SKILL.md (name, description, self-contained fetch, only skill found by npx skills add)"
 fi
+# Every install path gets the latest release, tagged v<version>. The files that carry the version
+# must agree with VERSION: the skill's metadata.version and the release it clones, and the release
+# the marketplace pins the plugin to.
+version="$(tr -d '\r\n' < "$src/VERSION")"
+skill_version=""; branch=""; dashes=0
+while IFS= read -r line; do
+  [ "$line" = "---" ] && { dashes=$((dashes + 1)); continue; }
+  if [ "$dashes" -eq 1 ]; then case "$line" in "  version: "*) skill_version="${line#  version: }" ;; esac; fi
+  [[ $line =~ --branch[[:space:]]+v([0-9.]+) ]] && branch="${BASH_REMATCH[1]}"
+done < "$installer"
+[ "$skill_version" = "$version" ] && [ "$branch" = "$version" ] \
+  && ok "the installer skill's metadata.version and the release it clones match VERSION" \
+  || bad "skills/godot-director/SKILL.md: version '$skill_version', clones v$branch, VERSION is $version"
+pinned_ref="$(sed -n 's/.*"ref"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$src/.claude-plugin/marketplace.json")"
+[ "$pinned_ref" = "v$version" ] && ok "the marketplace pins the plugin to the release v<VERSION>" \
+  || bad "the marketplace pins the plugin to '$pinned_ref', VERSION is $version"
 cmp -s "$src/LICENSE" "$src/framework/.godot-director/LICENSE" && ok "the installed LICENSE copy matches LICENSE" \
   || bad "framework/.godot-director/LICENSE differs from LICENSE"
 missing=""

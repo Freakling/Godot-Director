@@ -39,7 +39,7 @@ Your game needs git (`git init` if it has none) and no uncommitted changes. You 
 npx skills add Freakling/Godot-Director
 ```
 
-That installs the skill for the assistant you choose in the prompt. In Claude Code it becomes a `/godot-director` command. The skill fetches Godot Director outside your game and runs onboarding.
+That installs the skill for the assistant you choose in the prompt. In Claude Code it becomes a `/godot-director` command. The skill fetches the latest Godot Director release outside your game and runs onboarding.
 
 **Option 2: the Claude Code plugin.** In Claude Code:
 
@@ -48,7 +48,7 @@ That installs the skill for the assistant you choose in the prompt. In Claude Co
 /plugin install godot-director@godot-director
 ```
 
-Then open a new Claude Code session in your game's folder (or run `/reload-plugins`), and run `/godot-director:godot-director`.
+The plugin installs the latest release. Then open a new Claude Code session in your game's folder (or run `/reload-plugins`), and run `/godot-director:godot-director`.
 
 **Option 3: manual install.** Put this repository in your game's root folder, next to `project.godot`, as a folder named `Godot-Director`. Either run `git clone https://github.com/Freakling/Godot-Director.git Godot-Director` there, or download the zip and rename the extracted `Godot-Director-main` folder. Then ask your assistant:
 
@@ -65,7 +65,7 @@ Afterwards, restart Claude Code so the new commands load. Each new clone of the 
 **With another AI assistant:** tell onboarding, and it installs the tool-neutral core only (`--tools none`); you can also keep the Claude adapter alongside. Your assistant reads `AGENTS.md`, which points it to `.godot-director/rules.md` and the procedures. The core is tool-neutral: rules, procedures, the check and the git pre-commit hook work the same everywhere. Fresh-context builds, the reviewer, model sizing and the hooks that block risky commands depend on your assistant supporting subagents and hooks.
 
 ### Upgrade
-- **Skill:** ask for the skill again (`/godot-director` in Claude Code); it fetches the latest Godot Director each time.
+- **Skill:** run `npx skills add Freakling/Godot-Director` again to get the skill of the latest release, then ask for it (`/godot-director` in Claude Code).
 - **Plugin:** run `/plugin marketplace update godot-director` and then `/plugin update godot-director@godot-director`. Start a new session in the game, and run `/godot-director:godot-director` again.
 - **Manual:** put the new Godot Director folder in the game, and ask for ONBOARDING.md again.
 
