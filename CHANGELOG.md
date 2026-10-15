@@ -5,10 +5,15 @@ Each entry lists what changed. **Upgrade steps** at the end of an entry cover bo
 ## Unreleased
 
 - **README: Part of Director-Driven Development.** A new section after the opening description links the method and its three frameworks: Godot-Director, App-Director and SaaSAllTheThings.
+- **One commit model, shared with App-Director and SaaSAllTheThings.** One task, one commit, with the pre-commit check as the gate.
+  - **A single `/next-task` pauses for your approval** of its commit (`next-task.md` step 7, which used to commit at once). The README and the behaviour scenarios already described it that way.
+  - **A run commits without pausing.** When you ask for one ("grab tasks until you're blocked", "work through the queue", "the next N tasks"), each task commits as soon as its check passes. The run stops when an item is blocked on you, a build fails, or you decline a commit, and the final report lists every commit.
+  - **`git commit` is allowed in `.claude/settings.json`** (it used to ask every time). Pushing, rebasing, restoring and `git config` still ask, and skipping the check with `--no-verify` is still denied.
+  - `rules.md` › Git notes that a run you asked for approves its commits in advance; the `/next-task` skill description and the README's day-to-day table name the new phrase; the scenarios gain one for a run.
 
 **Upgrade steps**
 
-No game-owned file changes are required.
+No game-owned file changes are required. `.claude/settings.json` is framework-owned, so it is replaced on upgrade. If you edited it, the new version arrives as `.claude/settings.json.gdir-new`; merge it, and make sure `Bash(git commit *)` is in `permissions.allow` and no longer in `permissions.ask` (an `ask` entry wins over `allow`, so the old entry would keep the prompt). Restart Claude Code afterwards so the changed skill description and permissions load.
 
 ## 3.5.0 (2026-10-09)
 
