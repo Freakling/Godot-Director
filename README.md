@@ -76,7 +76,7 @@ Only Godot Director's own files are replaced, and your edits to them are kept. W
 | Say | What happens |
 |---|---|
 | "Do the next task" (`/next-task`) | Builds the next ready item (high-severity bugs first), proves it with the check, updates the records, and asks you to approve the commit. |
-| "Do the next 3 tasks", "Work through the queue" | The same, item after item, until one needs you. |
+| "Do the next 3 tasks", "Work through the queue", "Grab tasks until you're blocked" | The same, item after item, committing each without pausing, until one needs you. |
 | "Which open questions block development?" (`/design questions`) | Ranks the open design questions by what they unblock, with options and a recommendation for each. |
 | "Let's brainstorm {topic}" (`/design {topic}`) | A design session. Your decisions become GDD text, decision-log lines and task items. |
 | "New playtest", "Process my playtest" (`/playtest`) | Creates a report from the template, or turns a filled-in one into bugs, score trends and design proposals. |

@@ -62,7 +62,7 @@ Update the owning place in the same change that makes it untrue. Replace superse
 
 ## Git
 - **One item, one commit.** The message is `<type>: <summary> (T12)`, with a body saying why; types are `feat fix refactor test docs data chore`. The item's paths are its code, tests, data, the `.uid` files Godot writes next to new scripts, and the records the item changed (TASKS.md, AGENTS.md, and the GDD and decisions for a decision made during the item). `git add` the new ones, then commit only those paths, `git commit -m "…" -- <paths>`, so another session's staged work stays out.
-- **Approval.** Commit only with the human's approval. An approval prompt from your tool counts; otherwise ask in the conversation, unless Project rules say otherwise. Push only when asked. Never get around the hooks (`--no-verify`, `core.hooksPath`).
+- **Approval.** Commit only with the human's approval. An approval prompt from your tool counts; otherwise ask in the conversation, unless Project rules say otherwise. A run the human asked for (`next-task.md` › Several items) approves its commits in advance. Push only when asked. Never get around the hooks (`--no-verify`, `core.hooksPath`).
 - **Destructive commands.** Anything that discards uncommitted work or rewrites history needs the human. For a history cleanup they ask for, note the current tip first, and use non-interactive forms only.
 
 ## Sessions, clones and context
