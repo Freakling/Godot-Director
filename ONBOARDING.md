@@ -155,6 +155,7 @@ If they want it:
 1. Create `director/` and `director/README.md` explaining what it is and that the agent won't touch it.
 2. Ask whether to gitignore it (for large binary assets) or commit it (for design docs and notes). Update `.gitignore` accordingly.
 3. Add a row to AGENTS.md › Ownership: `director/: human's workspace, read-only for the agent`.
+4. If they want to design screens by drawing over screenshots (`/ui-design`), also create `director/ui/` and an empty `director/.gdignore`, so the editor doesn't import the PNGs they export there.
 
 ### Workflow defaults
 - Commits: the agent proposes and the human approves. Pushes happen when the human asks, or never if there's no remote.

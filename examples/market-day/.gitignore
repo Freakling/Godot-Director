@@ -19,6 +19,7 @@
 /tools/ui_catalog.gd
 /tools/ui_lint.gd
 /tools/ui_overlay.gd
+/tools/ui_drawing.gd
 /playtesting/README.md
 
 # Godot Director

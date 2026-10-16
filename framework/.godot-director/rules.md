@@ -8,7 +8,7 @@ These rules apply to any AI assistant working in this project. For each of these
 - **research.md:** research a question in a fresh context and save a dated note in `design/research/`, for a design call or a decision about plugins, assets, export or stores. It informs; the human decides. Domain reference: `.godot-director/research-domain.md`.
 - **export.md:** export the game with Godot headless into `builds/` (`/export`), or set exports up: target platforms and where exports run. Setting up is a design session on the export open question.
 - **release.md:** release the game's builds (`/release`): run the human's own upload command per export preset to a platform's UAT branch, and promote to production only when asked; or set release up: the commands, and the CI secrets they need. Setting up is a design session on the release open question.
-- **ui-design.md:** capture the screens (`/ui-design`): a PNG per screen, state and size, with an element map, a numbered map image and layout lint; list the screens in the catalog.
+- **ui-design.md:** capture the screens (`/ui-design`): a PNG per screen, state and size, with an element map, a numbered map image, layout lint and a starter drawing; process the human's Excalidraw drawing of a screen into a screen spec and items; list the screens in the catalog.
 - **playtest.md:** new playtest, process a playtest.
 - **function-check.md:** prepare or process a function check.
 - **align.md:** check the docs and tasks are aligned.
@@ -37,6 +37,8 @@ In Claude Code these are also slash commands, and builds, reviews and research r
 | Why a design decision was made | `design/decisions.md` (append-only) |
 | The evidence behind a design call | `design/research/`, one dated note per topic; the decision line links to it |
 | Which systems exist and what each owns | `AGENTS.md` › Architecture |
+| How each screen is laid out | `design/ui/<screen>.md`, one spec per screen (`procedures/ui-design.md`) |
+| The human's screen drawings | `director/ui/` (Excalidraw files; read-only for you) |
 | Work, bugs, research, milestones | `TASKS.md` (format: `.godot-director/tasks.md`; done items: `TASKS-archive.md`) |
 | Tunable values | `.tres` files (folders in AGENTS.md › Layout) |
 | Whether it works | `bash tools/check.sh` |

@@ -188,7 +188,10 @@ out="$(cd "$work" && bash "$src/framework/tools/release.sh" uat 2>&1)"; expect_s
 missing=""
 for file in framework/.godot-director/procedures/ui-design.md framework/.claude/skills/ui-design/SKILL.md \
     framework/tools/ui_capture.sh framework/tools/ui_capture.gd framework/tools/ui_catalog.gd framework/tools/ui_lint.gd \
-    framework/tools/ui_overlay.gd project/tools/ui_screens.gd project/tools/ui_capture.cfg \
+    framework/tools/ui_overlay.gd framework/tools/ui_drawing.gd project/tools/ui_screens.gd project/tools/ui_capture.cfg \
+    project/design/ui/README.md examples/market-day/design/ui/README.md \
+    tests/ui-drawing/fixture.excalidraw tests/ui-drawing/fixture-scaled.excalidraw tests/ui-drawing/fixture.elements.json \
+    tests/ui-drawing/fixture.expected.json tests/ui-drawing/fixture.png tests/ui-drawing/starter.expected.excalidraw \
     examples/market-day/tools/ui_screens.gd examples/market-day/tools/ui_capture.cfg; do
   [ -f "$src/$file" ] || missing="$missing $file"
 done
@@ -203,6 +206,14 @@ grep -q 'ui_capture\.sh --list' "$uiproc" && grep -q 'design/ui/captures/' "$uip
 for rule in squeezed-text stretched-control off-screen overlap unreachable no-default-focus hard-coded-position; do
   grep -q "\"$rule\"" "$src/framework/tools/ui_lint.gd" && grep -q "\`$rule\`" "$uiproc" || wired="$wired lint($rule)"
 done
+grep -q 'process <screen>' "$src/framework/.claude/skills/ui-design/SKILL.md" || wired="$wired skills/ui-design(process)"
+grep -q '^- `process <screen>`' "$uiproc" && grep -q 'tools/ui_drawing\.gd' "$uiproc" && grep -q '\.drawing\.json' "$uiproc" \
+  && grep -q '\.starter\.excalidraw' "$uiproc" && grep -q 'Never read the raw' "$uiproc" && grep -q '^### The screen spec' "$uiproc" || wired="$wired ui-design.md(process, reader, spec)"
+grep -q '`design/ui/<screen>\.md`' "$proc/rules.md" && grep -q '`director/ui/`' "$proc/rules.md" || wired="$wired rules.md(one place)"
+grep -q '^- \*\*`UI:`\*\*' "$proc/tasks.md" || wired="$wired tasks.md(UI)"
+grep -q 'ui-design\.md' "$proc/procedures/design.md" || wired="$wired design.md"
+grep -q 'director/\.gdignore' "$src/ONBOARDING.md" || wired="$wired ONBOARDING.md(director/.gdignore)"
+grep -q 'Excalidraw' "$src/project/design/ui/README.md" && cmp -s "$src/project/design/ui/README.md" "$src/examples/market-day/design/ui/README.md" || wired="$wired design/ui/README.md seed"
 grep -q '"Bash(bash tools/ui_capture.sh \*)"' "$settings" || wired="$wired settings.json"
 grep -q '"/design/ui/captures/"' "$src/install.sh" && grep -q '^/design/ui/captures/$' "$src/examples/market-day/.gitignore" || wired="$wired captures gitignore line"
 grep -q '"/tools/ui_\*\.gd text eol=lf"' "$src/install.sh" || wired="$wired .gitattributes line"
@@ -261,7 +272,7 @@ if [ -f .godot-director/procedures/release.md ] && [ -f .godot-director/template
 else
   bad "installs /release: procedure, workflow template, skill and tools/release.sh" "$out"
 fi
-if [ -x tools/ui_capture.sh ] && [ -f tools/ui_capture.gd ] && [ -f tools/ui_lint.gd ] && [ -f .claude/skills/ui-design/SKILL.md ] \
+if [ -x tools/ui_capture.sh ] && [ -f tools/ui_capture.gd ] && [ -f tools/ui_lint.gd ] && [ -f tools/ui_drawing.gd ] && [ -f design/ui/README.md ] && [ -f .claude/skills/ui-design/SKILL.md ] \
     && grep -q '^/design/ui/captures/$' .gitignore && grep -q '"shop"' tools/ui_screens.gd; then
   ok "installs /ui-design: procedure, skill, capture tools and the captures gitignore line, keeping the game's catalog"
 else
@@ -828,6 +839,170 @@ cp "$work/saved-capture-cfg" tools/ui_capture.cfg
 out="$(bash tools/ui_capture.sh nowhere --no-images 2>&1)"; expect_output "refuses an unknown screen" "no screen 'nowhere'" "$out"
 cp "$work/saved-catalog" tools/ui_screens.gd; rm -rf ui_fixtures "$captures"
 
+# Drawings, headless. The fixture drawing (tests/ui-drawing/) has a green box with bound text and
+# click:, a blue box over an existing element, a red X over an element, an arrowed comment, a box
+# inside a box, a note outside the frame and a freehand squiggle; its expected reading was worked
+# out by hand. The scaled copy has the background image and everything over it moved and scaled to
+# 50% (the frame stays), so only a reading measured against the image gives the same numbers.
+fixtures="$src/tests/ui-drawing"
+mkdir -p drawing_fixtures/captures && cp "$fixtures"/fixture* drawing_fixtures/ && cp "$fixtures/starter.expected.excalidraw" drawing_fixtures/
+cp drawing_fixtures/fixture.elements.json 'drawing_fixtures/captures/hero_room@1000x500.elements.json'
+cat > tools/selftest_drawings.gd <<'EOF'
+extends SceneTree
+## compare <actual> <expected>: the same reading, apart from where it came from.
+## validate <starter> <screen> <W> <H>: the starter is valid Excalidraw (types.ts in excalidraw/excalidraw) and reads back empty.
+const UiDrawing := preload("res://tools/ui_drawing.gd")
+const TYPES: PackedStringArray = ["rectangle", "text", "image", "frame", "line", "arrow", "freedraw", "ellipse", "diamond"]
+const FILLS: PackedStringArray = ["hachure", "cross-hatch", "solid", "zigzag"]
+const STROKES: PackedStringArray = ["solid", "dashed", "dotted"]
+
+
+func _initialize() -> void:
+	var args: PackedStringArray = OS.get_cmdline_user_args()
+	quit(_compare(args[1], args[2]) if args[0] == "compare" else _validate(args[1], args[2], Vector2(float(args[3]), float(args[4]))))
+
+
+func _load(path: String) -> Variant:
+	return JSON.parse_string(FileAccess.get_file_as_string(path))
+
+
+func _compare(actual_path: String, expected_path: String) -> int:
+	var actual: Dictionary = _load(actual_path)
+	var expected: Dictionary = _load(expected_path)
+	for key: String in ["source", "sha1"]:
+		actual.erase(key)
+		expected.erase(key)
+	if actual == expected:
+		print("SAME")
+		return 0
+	print("actual:\n" + UiDrawing.dump(actual) + "\nexpected:\n" + UiDrawing.dump(expected))
+	return 1
+
+
+func _is_int(value: Variant) -> bool:
+	return (value is float or value is int) and floorf(float(value)) == float(value)
+
+
+func _validate(path: String, screen: String, size: Vector2) -> int:
+	var problems: PackedStringArray = PackedStringArray()
+	var document: Variant = _load(path)
+	if not (document is Dictionary):
+		print("not JSON")
+		return 1
+	var doc: Dictionary = document
+	if doc.get("type") != "excalidraw" or not _is_int(doc.get("version")) or int(doc["version"]) != 2:
+		problems.append("type excalidraw, version 2")
+	if not (doc.get("elements") is Array) or not (doc.get("appState") is Dictionary) or not (doc.get("files") is Dictionary):
+		print("elements, appState and files are required")
+		return 1
+	var files: Dictionary = doc["files"]
+	for key: String in files:
+		var file: Dictionary = files[key]
+		if str(file.get("id")) != key or file.get("mimeType") != "image/png" or not str(file.get("dataURL")).begins_with("data:image/png;base64,") or not (file.get("created") is float):
+			problems.append("file " + key)
+	var ids: Dictionary = {}
+	var frames: Array[String] = []
+	var previous: String = ""
+	for item: Variant in (doc["elements"] as Array):
+		var e: Dictionary = item
+		var id: String = str(e.get("id", ""))
+		if id.is_empty() or ids.has(id):
+			problems.append("id '%s' is empty or repeated" % id)
+		ids[id] = e
+		if e.get("type") == "frame":
+			frames.append(id)
+		if not TYPES.has(str(e.get("type"))):
+			problems.append(id + ": type")
+		for number: String in ["x", "y", "width", "height", "angle", "strokeWidth", "roughness", "opacity", "updated"]:
+			if not (e.get(number) is float):
+				problems.append("%s: %s must be a number" % [id, number])
+		for number: String in ["seed", "version", "versionNonce"]:
+			if not _is_int(e.get(number)):
+				problems.append("%s: %s must be an integer" % [id, number])
+		for string: String in ["strokeColor", "backgroundColor", "index"]:
+			if not (e.get(string) is String):
+				problems.append("%s: %s must be a string" % [id, string])
+		if not FILLS.has(str(e.get("fillStyle"))) or not STROKES.has(str(e.get("strokeStyle"))):
+			problems.append(id + ": fillStyle or strokeStyle")
+		if not (e.get("groupIds") is Array) or not (e.get("isDeleted") is bool) or not (e.get("locked") is bool):
+			problems.append(id + ": groupIds, isDeleted or locked")
+		for nullable: String in ["frameId", "roundness", "boundElements", "link"]:
+			if not e.has(nullable):
+				problems.append("%s: %s is missing (null is fine)" % [id, nullable])
+		if str(e.get("index", "")) <= previous:
+			problems.append(id + ": index must grow with the array order")
+		previous = str(e.get("index", ""))
+		match str(e.get("type")):
+			"text":
+				for string: String in ["text", "originalText"]:
+					if not (e.get(string) is String):
+						problems.append("%s: %s" % [id, string])
+				if not (e.get("fontSize") is float) or not (e.get("fontFamily") is float) or not (e.get("lineHeight") is float) or not (e.get("autoResize") is bool):
+					problems.append(id + ": fontSize, fontFamily, lineHeight or autoResize")
+				if not ["left", "center", "right"].has(e.get("textAlign")) or not ["top", "middle", "bottom"].has(e.get("verticalAlign")) or not e.has("containerId"):
+					problems.append(id + ": textAlign, verticalAlign or containerId")
+			"image":
+				if not files.has(str(e.get("fileId"))) or e.get("status") != "saved" or not (e.get("scale") is Array) or (e["scale"] as Array).size() != 2 or not e.has("crop"):
+					problems.append(id + ": fileId, status, scale or crop")
+			"frame":
+				if not (e.get("name") is String):
+					problems.append(id + ": name")
+	if frames.size() != 1:
+		problems.append("one frame is expected")
+	else:
+		var frame: Dictionary = ids[frames[0]]
+		var background: Dictionary = ids.get("ddd-background", {})
+		if frame.get("name") != screen or float(frame["width"]) != size.x or float(frame["height"]) != size.y:
+			problems.append("the frame is named after the screen and is the size of the capture")
+		if background.is_empty() or background.get("type") != "image" or background.get("locked") != true or background.get("frameId") != frames[0] \
+				or float(background["width"]) != size.x or float(background["height"]) != size.y:
+			problems.append("the screenshot is a locked image filling the frame")
+		for id: String in ids:
+			var e: Dictionary = ids[id]
+			if e.get("type") != "frame" and e.get("frameId") != frames[0] and id != "ddd-legend":
+				problems.append(id + ": frameId")
+			if str(e.get("id")).begins_with("ddd-existing") and (e.get("locked") != true or float(e["opacity"]) != 25.0 or e.get("groupIds") != ["ddd-existing"]):
+				problems.append(id + ": the existing group is locked, at 25% opacity")
+		if ids.has("ddd-legend") and (ids["ddd-legend"] as Dictionary).get("frameId") != null:
+			problems.append("the legend is outside the frame")
+	var read: Dictionary = UiDrawing.read_drawing(FileAccess.get_file_as_string(path), path, "", screen, path.get_base_dir().path_join("captures"))
+	if read.has("error"):
+		problems.append("reading it back: " + str(read["error"]))
+	else:
+		var back: Dictionary = ((read["drawing"] as Dictionary)["frames"] as Array)[0]
+		if not (back["boxes"] as Array).is_empty() or not (back["unparsed"] as Array).is_empty() or not (back["notes"] as Array).is_empty() or not (back["removed"] as Array).is_empty():
+			problems.append("saving the starter unchanged and reading it back must give no boxes, notes or unparsed entries")
+	if problems.is_empty():
+		print("VALID")
+		return 0
+	print("\n".join(problems))
+	return 1
+EOF
+reader() { # reader <drawing> <output name>
+  "$godot" --headless --path . --script tools/ui_drawing.gd -- "drawing_fixtures/$1" "drawing_fixtures/$2/hero_room.drawing.json" 2>&1
+}
+for variant in fixture:read fixture-scaled:moved; do
+  mkdir -p "drawing_fixtures/${variant#*:}"; cp drawing_fixtures/fixture.elements.json "drawing_fixtures/${variant#*:}/hero_room@1000x500.elements.json"
+  out="$(reader "${variant%%:*}.excalidraw" "${variant#*:}")"; expect_status "the reader reads ${variant%%:*}.excalidraw" 0 $? "$out"
+  out="$("$godot" --headless --path . --script tools/selftest_drawings.gd -- compare "drawing_fixtures/${variant#*:}/hero_room.drawing.json" drawing_fixtures/fixture.expected.json 2>&1)"
+  case "${variant%%:*}" in
+    fixture) expect_output "the fixture drawing gives exactly the expected boxes, intents, parent, comment, removal, note and one unparsed entry, to 0.1%" "^SAME" "$out" ;;
+    *) expect_output "the same drawing with the background image moved and scaled 50% gives the same percentages" "^SAME" "$out" ;;
+  esac
+done
+out="$(reader nowhere.excalidraw read)"; expect_status "the reader refuses a missing drawing" 1 $? "$out"
+printf '{ not json' > drawing_fixtures/broken.excalidraw
+out="$(reader broken.excalidraw read)"; expect_status "the reader refuses invalid JSON" 1 $? "$out"; expect_output "and says so" "isn't valid JSON" "$out"
+printf '{"type":"excalidraw","version":2,"elements":[],"files":{}}' > drawing_fixtures/empty.excalidraw
+out="$(reader empty.excalidraw read)"; expect_status "the reader refuses a drawing with no frame" 1 $? "$out"; expect_output "and says so" "has no frame" "$out"
+out="$("$godot" --headless --path . --script tools/ui_drawing.gd -- starter drawing_fixtures/fixture drawing_fixtures/hero_room.starter.excalidraw 2>&1)"
+expect_status "the starter drawing is written from a capture's files" 0 $? "$out"
+cmp -s drawing_fixtures/hero_room.starter.excalidraw drawing_fixtures/starter.expected.excalidraw && ok "the starter matches the hand-checked fixture (a frame named hero_room, the screenshot locked inside)" \
+  || bad "the starter matches the hand-checked fixture" "$(diff drawing_fixtures/hero_room.starter.excalidraw drawing_fixtures/starter.expected.excalidraw | head -n 10)"
+out="$("$godot" --headless --path . --script tools/selftest_drawings.gd -- validate drawing_fixtures/hero_room.starter.excalidraw hero_room 1000 500 2>&1)"
+expect_output "the starter is valid Excalidraw, and saved unchanged it reads back with no boxes and no unparsed entries" "^VALID" "$out"
+rm -rf drawing_fixtures
+
 # The example's screens with a display: every state and size, nothing in user://, repeatable.
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) user_data="$(cygpath -u "$APPDATA")/Godot/app_userdata/Market Day" ;;
@@ -849,6 +1024,8 @@ else
     done
   done
   [ -z "$missing" ] && ok "writes a PNG, element map, map image and lint file per screen, state and size" || bad "capture outputs missing:$missing" "$out"
+  [ "$(/usr/bin/find "$captures" -name '*.starter.excalidraw' | wc -l | tr -d ' ')" = "1" ] && [ -f "$captures/shop.starter.excalidraw" ] \
+    && ok "writes one starter drawing, for the default state at the default size" || bad "writes one starter drawing, for the default state at the default size" "$(ls "$captures")"
   [ "$(od -An -tu1 -j16 -N8 "$captures/shop@2560x1080.png" | tr -s ' ' | sed 's/^ //')" = "0 0 10 0 0 0 4 56" ] \
     && ok "a capture has the requested size (2560x1080)" || bad "a capture has the requested size (2560x1080)"
   [ -z "$(cat "$captures"/shop*.lint.txt)" ] && ok "the example's screens are lint-clean" || bad "the example's screens are lint-clean" "$(cat "$captures"/shop*.lint.txt)"
@@ -868,10 +1045,16 @@ else
   out="$("$godot" --headless --path . --script tools/ui_overlay.gd -- map "$captures/shop@1280x720" 2>&1)"
   cmp -s "$captures/shop@1280x720.map.png" "$work/first-map-image" && ok "ui_overlay.gd redraws the same map image headless" \
     || bad "ui_overlay.gd redraws the same map image headless" "$out"
+  mkdir -p drawing_fixtures/captures && cp "$captures/shop.starter.excalidraw" drawing_fixtures/ && cp "$captures/shop@1920x1080.elements.json" drawing_fixtures/captures/
+  out="$("$godot" --headless --path . --script tools/selftest_drawings.gd -- validate drawing_fixtures/shop.starter.excalidraw shop 1920 1080 2>&1)"
+  expect_output "a captured starter drawing is valid Excalidraw and reads back empty" "^VALID" "$out"
+  rm -rf drawing_fixtures
   write_fixtures; rm -rf "$captures"
   out="$(bash tools/ui_capture.sh --all --size 1280x720 2>&1)"; expect_status "captures the lint fixtures with a display" 0 $? "$out"
   lint_fixtures "with a display"
   cp "$work/saved-catalog" tools/ui_screens.gd; rm -rf ui_fixtures "$captures"
 fi
+
+rm -f tools/selftest_drawings.gd tools/selftest_drawings.gd.uid
 
 finish

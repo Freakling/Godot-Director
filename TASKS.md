@@ -4,9 +4,16 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T8 · B2
+**Next IDs:** T9 · B2
 
 ## Queue
+
+### T8 · /ui-design: drawings and screen specs · done · M · agent
+- Depends on: T7
+- Touches: framework/tools/ui_drawing.gd (new), framework/tools/ui_capture.gd, framework/.godot-director/procedures/ui-design.md, framework/.godot-director/procedures/design.md, framework/.godot-director/tasks.md, framework/.godot-director/rules.md, framework/.claude/skills/ui-design/SKILL.md, project/design/ui/README.md (new), examples/market-day/design/ui/README.md (new), ONBOARDING.md, tests/ui-drawing/ (new), selftest.sh, CHANGELOG.md
+- Done when: `capture` writes a starter drawing, a valid Excalidraw file with the screenshot locked in a frame named after the screen, which saved unchanged and read back gives no boxes and nothing unparsed (test) · the reader gives exactly the expected `drawing.json` for a fixture drawing (a green box with bound text and `click:`, a blue box over an existing element, a red X, an arrowed comment, a nested box, a note outside the frame, a freehand squiggle), and the same percentages when the background image is moved and scaled 50% (test) · `/ui-design process` reads a drawing through `drawing.json`, confirms its reading, settles open points and records the screen spec, decisions and items with the `UI:` field (check)
+- GDD: (none)
+- Source: Director-Driven-Development T82
 
 ### T7 · /ui-design: screen capture, catalog and lint · done · L · agent
 - Touches: framework/tools/ui_capture.sh (new), framework/tools/ui_capture.gd (new), framework/tools/ui_catalog.gd (new), framework/tools/ui_lint.gd (new), framework/tools/ui_overlay.gd (new), project/tools/ui_screens.gd (new), project/tools/ui_capture.cfg (new), framework/.godot-director/procedures/ui-design.md (new), framework/.claude/skills/ui-design/SKILL.md (new), framework/.godot-director/rules.md, framework/.claude/settings.json, install.sh, examples/market-day/tools/ui_screens.gd (new), examples/market-day/tools/ui_capture.cfg (new), examples/market-day/.gitignore, examples/market-day/.gitattributes, examples/market-day/scripts/ui/shop_screen.gd, selftest.sh, CHANGELOG.md

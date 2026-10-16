@@ -8,7 +8,9 @@ extends SceneTree
 ## catalog (res://tools/ui_screens.gd), state and size, it writes to design/ui/captures/
 ## `<id>[.<state>]@<W>x<H>` .png (the screenshot), .elements.json (the element map), .map.png
 ## (the screenshot with every element outlined and numbered) and .lint.txt (layout lint findings,
-## empty when clean). Settings: res://tools/ui_capture.cfg.
+## empty when clean). The default state at the default size (the first of [sizes] list) also gets
+## `<id>.starter.excalidraw`, the drawing the human draws over (tools/ui_drawing.gd).
+## Settings: res://tools/ui_capture.cfg.
 ##
 ## Arguments after `--`: <screen id> or --all, --state <name>, --size <W>x<H>, --no-images (the
 ## element maps and lint only, headless), --list (print the catalog). --size may name a size that
@@ -18,6 +20,7 @@ extends SceneTree
 ## Exit codes: 0 done · 1 a screen failed · 3 couldn't run (no display).
 
 const UiLint := preload("res://tools/ui_lint.gd")
+const UiDrawing := preload("res://tools/ui_drawing.gd")
 const UiOverlay := preload("res://tools/ui_overlay.gd")
 const CATALOG_PATH: String = "res://tools/ui_screens.gd"
 const CONFIG_PATH: String = "res://tools/ui_capture.cfg"
@@ -26,6 +29,7 @@ const CHECK_META: StringName = &"godot_director_check"
 const CAPTURE_META: StringName = &"godot_director_capture"
 
 var _sizes: Array[Vector2i] = [Vector2i(1920, 1080), Vector2i(2560, 1080), Vector2i(1280, 720)]
+var _default_size: Vector2i = Vector2i(1920, 1080)
 var _seed: int = 12345
 var _settle_frames: int = 6
 var _max_elements: int = 200
@@ -153,6 +157,8 @@ func _read_config() -> PackedStringArray:
 				problems.append("tools/ui_capture.cfg › [sizes] list: '%s' isn't WxH" % item)
 			else:
 				_sizes.append(size)
+	if not _sizes.is_empty():
+		_default_size = _sizes[0]
 	_seed = int(config.get_value("capture", "seed", _seed))
 	_settle_frames = maxi(1, int(config.get_value("capture", "settle_frames", _settle_frames)))
 	_max_elements = maxi(1, int(config.get_value("capture", "max_elements", _max_elements)))
@@ -376,6 +382,8 @@ func _capture(catalog: RefCounted, entry: Dictionary, state: String, setup: Call
 	if image != null:
 		_save(image, path + ".png")
 		_save(UiOverlay.draw_map(image, lint.elements + lint.pickables_3d), path + ".map.png")
+		if state == "default" and size == _default_size:
+			_write(OUT_DIR.path_join(id + ".starter.excalidraw"), UiDrawing.starter_text(id, size, FileAccess.get_file_as_bytes(path + ".png"), lint.elements))
 	paused = false
 	_captures += 1
 	if not findings.is_empty():
