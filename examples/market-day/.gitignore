@@ -13,6 +13,7 @@
 /tools/check.gd
 /tools/test_case.gd
 /tools/setup-clone.sh
+/tools/release.sh
 /playtesting/README.md
 
 # Godot Director

@@ -131,6 +131,7 @@ Finally, search the documents for leftovers and fix them. Use `git grep -n -e �
 - **`tools/check.cfg`:** set `[screens] dirs` to the real UI folders, and `known` as in step 5. Use `allow_writes_to` only for an autoload a screen legitimately edits, such as Settings, and ask the human first. Put third-party folders in `[scan] skip`.
 - **`project.godot`:** it has `untyped_declaration` (step 5).
 - **Exports.** Offer the export step: the target platforms and where exports run (this machine, a build container, or a hosted service such as GitHub Actions). Follow `.godot-director/procedures/export.md` › Set up exports, in its voice: short rounds, options with a recommendation. Skip what the project already answers: an existing `export_presets.cfg` and the platforms in the GDD. The human can skip the step. A skip adds the open question and the "Set up exports" item that `export.md` › "When the human skips it" describes, so `/design Q<n>` runs the step later and `/next-task` builds the setup.
+- **Release.** Offer the release step once exports are set up: the command that uploads each preset's build to a platform's UAT branch or channel, the command for production, and the names of the CI secrets the commands need (values are never written in the repo or the chat). Follow `.godot-director/procedures/release.md` › Set up release, in its voice. The human can skip the step. A skip adds the open question and the "Set up release" item that `release.md` › "When the human skips it" describes.
 
 ## 7. Ownership and project rules
 

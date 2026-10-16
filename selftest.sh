@@ -150,6 +150,40 @@ grep -q 'Q<n>' "$proc/tasks.md" && grep -q 'Open Questions' "$proc/procedures/ne
 grep -q '"/builds/"' "$src/install.sh" && grep -q '^/builds/$' "$src/examples/market-day/.gitignore" || wired="$wired /builds/ gitignore line"
 [ -z "$wired" ] && ok "export is wired into the rules, the skill, the docs, the onboarding skip path and the gitignore" \
   || bad "export isn't wired into:$wired"
+# Release: the procedure, skill, workflow template and script exist and are wired in, and
+# tools/release.sh runs the configured commands, with no network, templates or real credentials.
+missing=""
+for file in framework/.godot-director/procedures/release.md framework/.claude/skills/release/SKILL.md \
+    framework/.godot-director/templates/release-workflow.yml framework/tools/release.sh; do
+  [ -f "$src/$file" ] || missing="$missing $file"
+done
+[ -z "$missing" ] && ok "the release procedure, skill, workflow template and script exist" || bad "release files missing:$missing"
+wired=""
+releaseproc="$proc/procedures/release.md"
+grep -q 'release\.md' "$proc/rules.md" || wired="$wired rules.md"
+grep -q 'release\.md' "$src/framework/.claude/skills/release/SKILL.md" || wired="$wired skills/release"
+grep -q '/release' "$src/README.md" || wired="$wired README.md"
+grep -q 'release\.md' "$src/ONBOARDING.md" && grep -q 'Set up release' "$src/ONBOARDING.md" || wired="$wired ONBOARDING.md"
+grep -q 'release\.cfg' "$releaseproc" && grep -q 'tools/release\.sh' "$releaseproc" && grep -q 'when the human asks to promote' "$releaseproc" || wired="$wired release.md(config, script, production gate)"
+grep -q 'When the human skips it' "$releaseproc" && grep -q 'Depends on: Q<n>' "$releaseproc" && grep -q 'GDD › Open Questions' "$releaseproc" || wired="$wired release.md(skip path)"
+grep -q 'environment: production' "$proc/templates/release-workflow.yml" && grep -q 'tools/release\.sh uat' "$proc/templates/release-workflow.yml" || wired="$wired release-workflow.yml"
+[ -z "$wired" ] && ok "release is wired into the rules, the skill, the docs, the onboarding skip path and the workflow template" \
+  || bad "release isn't wired into:$wired"
+rel="$work/release"
+mkdir -p "$rel/builds/Web" "$rel/builds/Empty"
+printf 'x\n' > "$rel/builds/Web/index.html"
+printf '[Web]\nuat = echo uploading-uat $RELEASE_TEST_TARGET\nproduction = echo uploading-production\nsecrets = RELEASE_TEST_SECRET\n[Empty]\nuat = echo never\n' > "$rel/release.cfg"
+out="$(cd "$rel" && bash "$src/framework/tools/release.sh" uat Web 2>&1)"; expect_status "release.sh stops when a named secret is unset" 2 $? "$out"
+expect_output "release.sh names the missing secret" "secret RELEASE_TEST_SECRET is not set" "$out"
+expect_no_output "release.sh runs nothing before that" "uploading-uat" "$out"
+out="$(cd "$rel" && bash "$src/framework/tools/release.sh" uat Web --dry-run 2>&1)"; expect_status "release.sh --dry-run needs no secrets" 0 $? "$out"
+expect_output "release.sh --dry-run lists the command and uploads nothing" "dry run, nothing uploaded" "$out"
+out="$(cd "$rel" && RELEASE_TEST_SECRET=hunter2 RELEASE_TEST_TARGET=here bash "$src/framework/tools/release.sh" uat Web 2>&1)"; expect_status "release.sh runs the uat command" 0 $? "$out"
+expect_output "release.sh ran it with the environment" "^uploading-uat here$" "$out"
+expect_no_output "release.sh never prints a secret value" "hunter2" "$out"
+out="$(cd "$rel" && RELEASE_TEST_SECRET=x bash "$src/framework/tools/release.sh" production Web 2>&1)"; expect_output "release.sh runs the production command only when asked for it" "^uploading-production$" "$out"
+out="$(cd "$rel" && RELEASE_TEST_SECRET=x bash "$src/framework/tools/release.sh" uat 2>&1)"; expect_status "release.sh refuses a preset with no build" 2 $? "$out"
+out="$(cd "$work" && bash "$src/framework/tools/release.sh" uat 2>&1)"; expect_status "release.sh needs release.cfg" 2 $? "$out"
 # The old name (Claude4Godot, 2.x and earlier) is left only in history and in the 2.x migration.
 allowed=" CHANGELOG.md install.sh selftest.sh ONBOARDING.md framework/tools/check.gd framework/tools/check.sh framework/tools/setup-clone.sh "
 leftovers=""
@@ -196,6 +230,11 @@ if [ -f .godot-director/procedures/export.md ] && [ -f .claude/skills/export/SKI
   ok "installs /export: procedure, skill and the builds/ gitignore line"
 else
   bad "installs /export: procedure, skill and the builds/ gitignore line" "$out"
+fi
+if [ -f .godot-director/procedures/release.md ] && [ -f .godot-director/templates/release-workflow.yml ] && [ -f .claude/skills/release/SKILL.md ] && [ -x tools/release.sh ]; then
+  ok "installs /release: procedure, workflow template, skill and tools/release.sh"
+else
+  bad "installs /release: procedure, workflow template, skill and tools/release.sh" "$out"
 fi
 grep -q "Market Day" AGENTS.md && ok "keeps the project's own files" || bad "keeps the project's own files"
 [ -z "$(git status --porcelain)" ] && ok "adds no duplicate .gitignore/.gitattributes lines" || bad "adds no duplicate lines" "$(git status --porcelain)"
