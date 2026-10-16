@@ -13,8 +13,13 @@ extends SceneTree
 ## Settings: res://tools/ui_capture.cfg.
 ##
 ## Arguments after `--`: <screen id> or --all, --state <name>, --size <W>x<H>, --no-images (the
-## element maps and lint only, headless), --list (print the catalog). --size may name a size that
-## tools/ui_capture.cfg doesn't list.
+## element maps and lint only, headless), --list (print the catalog), --missing (list the scenes
+## whose root script is in a screen folder but that the catalog doesn't cover). --size may name a
+## size that tools/ui_capture.cfg doesn't list. --check is what tools/check.sh runs when
+## tools/ui_capture.cfg › [lint] check_in_check is true: headless, the screens in [lint] enforce at
+## the default size, findings printed as GDIR-FAIL lines (a hard-coded-position warning as a note).
+## A catalog entry's `overlays` (HUDs and other layers an autoload draws) are shown in the screen's
+## viewport for the shot, so a capture shows what a player sees.
 ## While it runs, Engine.has_meta("godot_director_check") and ("godot_director_capture") are true,
 ## so autoloads skip reading and writing player data, as during the check.
 ## Exit codes: 0 done · 1 a screen failed · 3 couldn't run (no display).
@@ -24,7 +29,7 @@ const UiDrawing := preload("res://tools/ui_drawing.gd")
 const UiOverlay := preload("res://tools/ui_overlay.gd")
 const CATALOG_PATH: String = "res://tools/ui_screens.gd"
 const CONFIG_PATH: String = "res://tools/ui_capture.cfg"
-const OUT_DIR: String = "res://design/ui/captures"
+const CHECK_CONFIG_PATH: String = "res://tools/check.cfg"
 const CHECK_META: StringName = &"godot_director_check"
 const CAPTURE_META: StringName = &"godot_director_capture"
 
@@ -43,6 +48,12 @@ var _state: String = ""
 var _size_filter: String = ""
 var _images: bool = true
 var _list: bool = false
+var _list_missing: bool = false
+var _check: bool = false           # the lint inside the check
+var _enforce: PackedStringArray = PackedStringArray()
+var _out_dir: String = "res://design/ui/captures"
+var _fail_tag: String = "GDIR-UI-FAIL: "
+var _borrowed: Array[Dictionary] = []   # nodes moved into the screen's viewport as overlays
 
 var _config_problems: PackedStringArray = PackedStringArray()
 var _failed: bool = false
@@ -83,9 +94,17 @@ func _run() -> void:
 	problems.append_array(_read_args())
 	if not problems.is_empty():
 		for problem: String in problems:
-			printerr("GDIR-UI-FAIL: " + problem)
+			printerr(_fail_tag + problem)
 		_stop("", 1)
 		return
+	if _check:
+		_fail_tag = "GDIR-FAIL: ui lint: "
+		_out_dir = "res://.godot/godot-director/ui-lint"
+		_size_filter = "%dx%d" % [_default_size.x, _default_size.y]
+		if not ResourceLoader.exists(CATALOG_PATH):
+			print("GDIR-NOTE: ui lint: no tools/ui_screens.gd, so there are no screens to lint")
+			_stop("", 0)
+			return
 	var catalog_script: GDScript = ResourceLoader.load(CATALOG_PATH) as GDScript
 	if catalog_script == null or not catalog_script.can_instantiate():
 		_stop("%s is missing or doesn't compile" % CATALOG_PATH.trim_prefix("res://"), 1)
@@ -97,10 +116,13 @@ func _run() -> void:
 	var checked: Array = catalog.call("checked_screens")
 	var entries: Array = checked[0]
 	for error: String in (checked[1] as PackedStringArray):
-		printerr("GDIR-UI-FAIL: " + error)
+		printerr(_fail_tag + error)
 		_failed = true
 	if _list:
-		_print_list(entries)
+		if _list_missing:
+			_print_missing(entries)
+		else:
+			_print_list(entries)
 		_stop("", 1 if _failed else 0)
 		return
 	var selected: Array[Dictionary] = _select(entries)
@@ -109,8 +131,8 @@ func _run() -> void:
 	if _images and DisplayServer.get_name() == "headless":
 		_stop("needs a display; this Godot has none (--no-images maps and lints without one)", 3)
 		return
-	if not DirAccess.dir_exists_absolute(OUT_DIR) and DirAccess.make_dir_recursive_absolute(OUT_DIR) != OK:
-		_stop("can't create %s" % OUT_DIR.trim_prefix("res://"), 1)
+	if not DirAccess.dir_exists_absolute(_out_dir) and DirAccess.make_dir_recursive_absolute(_out_dir) != OK:
+		_stop("can't create %s" % _out_dir.trim_prefix("res://"), 1)
 		return
 	_make_host(catalog)
 	if not _size_filter.is_empty():
@@ -123,18 +145,22 @@ func _run() -> void:
 			for state: String in states:
 				if _state.is_empty() or _state == state:
 					await _capture(catalog, entry, state, states[state] as Callable, size)
+	if _check:
+		print("GDIR-NOTE: ui lint: %d screen%s linted at %dx%d (tools/ui_capture.cfg › [lint] enforce)" % [
+			_captures, "" if _captures == 1 else "s", _default_size.x, _default_size.y])
 	print("GDIR-UI: %d capture%s in %s · %d with lint findings%s" % [
-		_captures, "" if _captures == 1 else "s", OUT_DIR.trim_prefix("res://"), _with_findings,
+		_captures, "" if _captures == 1 else "s", _out_dir.trim_prefix("res://"), _with_findings,
 		" · some screens failed" if _failed else ""])
 	_stop("", 1 if _failed else 0)
 
 
 func _stop(message: String, code: int) -> void:
+	_restore_overlays()
 	if not message.is_empty():
 		if code == 3:
 			printerr("GDIR-UI-SKIP: " + message)
 		else:
-			printerr("GDIR-UI-FAIL: " + message)
+			printerr(_fail_tag + message)
 	_done = true
 	paused = false
 	quit(code)
@@ -169,6 +195,10 @@ func _read_config() -> PackedStringArray:
 			_skip.append(str(item))
 	_min_label_chars = int(config.get_value("lint", "min_label_chars", _min_label_chars))
 	_max_button_height_ratio = float(config.get_value("lint", "max_button_height_ratio", _max_button_height_ratio))
+	var enforce: Variant = config.get_value("lint", "enforce", [])
+	if enforce is Array:
+		for item: Variant in enforce:
+			_enforce.append(str(item))
 	return problems
 
 
@@ -185,6 +215,12 @@ func _read_args() -> PackedStringArray:
 				_images = false
 			"--list":
 				_list = true
+			"--missing":
+				_list = true
+				_list_missing = true
+			"--check":
+				_check = true
+				_images = false
 			"--state", "--size":
 				if index + 1 >= args.size():
 					problems.append("%s needs a value" % arg)
@@ -218,6 +254,8 @@ func _select(entries: Array) -> Array[Dictionary]:
 		var id: String = str(entry["id"])
 		if not _screen.is_empty() and id != _screen:
 			continue
+		if _check and not (_enforce.has("*") or _enforce.has(id)):
+			continue
 		if _skip.has(id):
 			print("GDIR-UI-NOTE: %s is in tools/ui_capture.cfg › [capture] skip" % id)
 			continue
@@ -245,6 +283,104 @@ func _print_list(entries: Array) -> void:
 			" · skipped (tools/ui_capture.cfg)" if _skip.has(id) else ""])
 	if entries.is_empty():
 		print("GDIR-UI-LIST: (the catalog lists no screens)")
+
+
+## The scenes whose root script is in a screen folder (tools/check.cfg › [screens] dirs) that no
+## catalog entry opens and that tools/ui_capture.cfg › [capture] skip doesn't name (by scene path
+## or file name without extension). It never fails: it lists.
+func _print_missing(entries: Array) -> void:
+	var dirs: PackedStringArray = PackedStringArray()
+	var skipped: PackedStringArray = PackedStringArray(["addons", "script_templates"])
+	var config: ConfigFile = ConfigFile.new()
+	if config.load(CHECK_CONFIG_PATH) == OK:
+		dirs = _strings(config.get_value("screens", "dirs", []))
+		skipped = _strings(config.get_value("scan", "skip", Array(skipped)))
+	else:
+		for candidate: String in ["scripts/ui", "scripts/screens", "ui", "screens"]:
+			if DirAccess.dir_exists_absolute("res://" + candidate):
+				dirs.append(candidate)
+	if dirs.is_empty():
+		print("GDIR-UI-NOTE: no screen folders set (tools/check.cfg › [screens] dirs), so the scenes that are screens can't be told")
+		return
+	var scenes: Array[String] = []
+	_collect_scenes("res://", skipped, scenes)
+	scenes.sort()
+	var covered: PackedStringArray = PackedStringArray()
+	for entry: Dictionary in entries:
+		covered.append(str(entry["scene"]))
+	var screens: int = 0
+	var missing: int = 0
+	for scene: String in scenes:
+		var script: String = _root_script(scene)
+		if script.is_empty() or not _in_folders(script, dirs):
+			continue
+		screens += 1
+		if covered.has(scene) or _skip.has(scene) or _skip.has(scene.get_file().get_basename()):
+			continue
+		missing += 1
+		print("GDIR-UI-MISSING: %s · script %s" % [scene.trim_prefix("res://"), script.trim_prefix("res://")])
+	print("GDIR-UI-NOTE: %d screen scene%s found, %d without a catalog entry or a skip" % [screens, "" if screens == 1 else "s", missing])
+
+
+func _strings(value: Variant) -> PackedStringArray:
+	var result: PackedStringArray = PackedStringArray()
+	if value is Array or value is PackedStringArray:
+		for item: Variant in value:
+			if not str(item).strip_edges().is_empty():
+				result.append(str(item).strip_edges())
+	return result
+
+
+func _in_folders(path: String, folders: PackedStringArray) -> bool:
+	for folder: String in folders:
+		if path.trim_prefix("res://").begins_with(folder.trim_prefix("res://").trim_suffix("/") + "/"):
+			return true
+	return false
+
+
+func _collect_scenes(dir_path: String, skipped: PackedStringArray, out: Array[String]) -> void:
+	if FileAccess.file_exists(dir_path.path_join(".gdignore")):
+		return
+	var dir: DirAccess = DirAccess.open(dir_path)
+	if dir == null:
+		return
+	for sub: String in dir.get_directories():
+		var sub_path: String = dir_path.path_join(sub)
+		if not sub.begins_with(".") and not _in_folders(sub_path + "/", skipped):
+			_collect_scenes(sub_path, skipped, out)
+	for file: String in dir.get_files():
+		if file.get_extension() == "tscn":
+			out.append(dir_path.path_join(file))
+
+
+## The script attached to a scene's root node, read from the .tscn text; "" when there is none.
+func _root_script(scene: String) -> String:
+	var paths: Dictionary = {}
+	var in_root: bool = false
+	var script_id: String = ""
+	var path_pattern: RegEx = RegEx.create_from_string(r'path="([^"]+)"')
+	var id_pattern: RegEx = RegEx.create_from_string(r'\bid="([^"]+)"')
+	var script_pattern: RegEx = RegEx.create_from_string(r'^script\s*=\s*ExtResource\("([^"]+)"\)')
+	var seen_root: bool = false
+	for line: String in FileAccess.get_file_as_string(scene).replace("\r", "").split("\n"):
+		if line.begins_with("[ext_resource"):
+			var path: RegExMatch = path_pattern.search(line)
+			var id: RegExMatch = id_pattern.search(line)
+			if path != null and id != null:
+				paths[id.get_string(1)] = path.get_string(1)
+		elif line.begins_with("[node "):
+			if seen_root:
+				break
+			seen_root = true
+			in_root = not line.contains("parent=")
+			if not in_root:
+				break
+		elif in_root:
+			var found: RegExMatch = script_pattern.search(line)
+			if found != null:
+				script_id = found.get_string(1)
+				break
+	return str(paths.get(script_id, ""))
 
 
 # --- capture ------------------------------------------------------------------------------------
@@ -334,7 +470,7 @@ func _stretch_for(size: Vector2i) -> Dictionary:
 func _capture(catalog: RefCounted, entry: Dictionary, state: String, setup: Callable, size: Vector2i) -> void:
 	var id: String = str(entry["id"])
 	var base: String = "%s%s@%dx%d" % [id, "" if state == "default" else "." + state, size.x, size.y]
-	var path: String = OUT_DIR.path_join(base)
+	var path: String = _out_dir.path_join(base)
 	await _clear(catalog)
 	print("GDIR-UI: begin " + base)
 	seed(_seed)
@@ -349,7 +485,7 @@ func _capture(catalog: RefCounted, entry: Dictionary, state: String, setup: Call
 	while not bool(result["done"]):
 		if Time.get_ticks_msec() - started > _setup_timeout * 1000:
 			var message: String = "error: the setup didn't finish within %d seconds ([capture] setup_timeout)" % _setup_timeout
-			printerr("GDIR-UI-FAIL: %s: %s" % [base, message.trim_prefix("error: ")])
+			printerr(_fail_tag + "%s: %s" % [base, message.trim_prefix("error: ")])
 			_write(path + ".lint.txt", message + "\n")
 			for extension: String in [".png", ".elements.json", ".map.png"]:
 				DirAccess.remove_absolute(ProjectSettings.globalize_path(path + extension))
@@ -362,6 +498,7 @@ func _capture(catalog: RefCounted, entry: Dictionary, state: String, setup: Call
 	if view != null and not view.is_inside_tree():
 		_host.add_child(view)
 	_adopt(catalog)
+	var overlay_errors: PackedStringArray = _show_overlays(entry["overlays"] as Array, base)
 	paused = bool(entry["pause"])
 	await _frames(_settle_frames)
 	var image: Image = null
@@ -378,12 +515,23 @@ func _capture(catalog: RefCounted, entry: Dictionary, state: String, setup: Call
 	var findings: PackedStringArray = lint.findings()
 	var source: String = view.scene_file_path if view != null and not view.scene_file_path.is_empty() else str(entry["scene"])
 	_write(path + ".elements.json", _element_map(lint, id, state, size, source))
-	_write(path + ".lint.txt", "" if findings.is_empty() else "\n".join(findings) + "\n")
+	var top: String = ""
+	for line: String in overlay_errors:
+		top += "error: " + line + "\n"
+	_write(path + ".lint.txt", top + ("" if findings.is_empty() else "\n".join(findings) + "\n"))
+	if _check:
+		for finding: String in findings:
+			if finding.begins_with("hard-coded-position "):
+				print("GDIR-NOTE: ui lint (a warning): %s: %s" % [base, finding])
+			else:
+				printerr(_fail_tag + "%s: %s" % [base, finding])
+				_failed = true
 	if image != null:
 		_save(image, path + ".png")
 		_save(UiOverlay.draw_map(image, lint.elements + lint.pickables_3d), path + ".map.png")
 		if state == "default" and size == _default_size:
-			_write(OUT_DIR.path_join(id + ".starter.excalidraw"), UiDrawing.starter_text(id, size, FileAccess.get_file_as_bytes(path + ".png"), lint.elements))
+			_write(_out_dir.path_join(id + ".starter.excalidraw"), UiDrawing.starter_text(id, size, FileAccess.get_file_as_bytes(path + ".png"), lint.elements))
+	_restore_overlays()
 	paused = false
 	_captures += 1
 	if not findings.is_empty():
@@ -391,6 +539,48 @@ func _capture(catalog: RefCounted, entry: Dictionary, state: String, setup: Call
 	print("GDIR-UI: end %s · %d element%s · %d lint finding%s" % [
 		base, lint.elements.size(), "" if lint.elements.size() == 1 else "s",
 		findings.size(), "" if findings.size() == 1 else "s"])
+
+
+## Shows a catalog entry's overlays in the screen's viewport: a scene is instanced there, and a
+## node in the scene tree (an autoload's HUD) is moved there until _restore_overlays() puts it
+## back. Returns what couldn't be shown; the screen is still captured.
+func _show_overlays(overlays: Array, base: String) -> PackedStringArray:
+	var errors: PackedStringArray = PackedStringArray()
+	for item: Variant in overlays:
+		var overlay: String = str(item)
+		var problem: String = ""
+		if overlay.begins_with("res://"):
+			var scene: PackedScene = ResourceLoader.load(overlay) as PackedScene
+			var copy: Node = scene.instantiate() if scene != null and scene.can_instantiate() else null
+			if copy == null:
+				problem = "the overlay scene %s doesn't load" % overlay
+			else:
+				_host.add_child(copy)
+		else:
+			var node: Node = root.get_node_or_null(NodePath(overlay))
+			if node == null or node == _host or _host.is_ancestor_of(node) or node == root:
+				problem = "the overlay %s isn't in the scene tree (name an autoload's node path, such as /root/Hud, or a scene)" % overlay
+			else:
+				var parent: Node = node.get_parent()
+				_borrowed.append({"node": node, "parent": parent, "index": node.get_index()})
+				node.reparent(_host, false)
+		if not problem.is_empty():
+			errors.append(problem)
+			printerr(_fail_tag + "%s: %s" % [base, problem])
+			_failed = true
+	return errors
+
+
+## Puts the nodes _show_overlays() borrowed back where they were.
+func _restore_overlays() -> void:
+	for index: int in range(_borrowed.size() - 1, -1, -1):
+		var item: Dictionary = _borrowed[index]
+		var node: Node = item["node"] as Node
+		var parent: Node = item["parent"] as Node
+		if is_instance_valid(node) and is_instance_valid(parent) and node.get_parent() != parent:
+			node.reparent(parent, false)
+			parent.move_child(node, mini(int(item["index"]), parent.get_child_count() - 1))
+	_borrowed.clear()
 
 
 ## Moves what a setup put on the scene tree's root (the game's own navigation) into the capture's
@@ -466,7 +656,7 @@ func _json_rows(rows: Array[Dictionary]) -> String:
 func _write(path: String, text: String) -> void:
 	var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
 	if file == null:
-		printerr("GDIR-UI-FAIL: can't write %s" % path.trim_prefix("res://"))
+		printerr(_fail_tag + "can't write %s" % path.trim_prefix("res://"))
 		_failed = true
 		return
 	file.store_string(text)
@@ -475,5 +665,5 @@ func _write(path: String, text: String) -> void:
 
 func _save(image: Image, path: String) -> void:
 	if image.save_png(ProjectSettings.globalize_path(path)) != OK:
-		printerr("GDIR-UI-FAIL: can't write %s" % path.trim_prefix("res://"))
+		printerr(_fail_tag + "can't write %s" % path.trim_prefix("res://"))
 		_failed = true

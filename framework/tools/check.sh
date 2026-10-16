@@ -32,8 +32,8 @@ fingerprint() {
   local paths
   paths="$( {
     git -c core.quotePath=false ls-files -z -c -o --exclude-standard -- '*.gd' '*.tscn' '*.scn' \
-      '*.tres' '*.res' '*.gdshader' '*.gdshaderinc' project.godot tools/check.cfg tools/check.sh \
-      tools/check.local.sh 2>/dev/null | tr '\0' '\n'
+      '*.tres' '*.res' '*.gdshader' '*.gdshaderinc' project.godot tools/check.cfg tools/ui_capture.cfg \
+      tools/check.sh tools/check.local.sh 2>/dev/null | tr '\0' '\n'
     echo tools/godot_bin.local
     echo tools/check.ignore
   } | while IFS= read -r path; do [ -f "$path" ] && printf '%s\n' "$path"; done )"
@@ -163,12 +163,43 @@ scan() { # scan <extended regex> <log files…>
 errors="$(scan '^[ \t]*(ERROR|SCRIPT ERROR|USER ERROR|USER SCRIPT ERROR|GDIR-FAIL):|Parse Error' "$state_dir/import.log" "$state_dir/check.log")"
 warnings="$(scan '^[ \t]*(WARNING|SCRIPT WARNING|USER WARNING):' "$state_dir/import.log" "$state_dir/check.log")"
 
+# --- 3b. layout lint of the screens (opt in) ----------------------------------------------------
+# tools/ui_capture.cfg > [lint] check_in_check = true runs the lint on the screens in `enforce` (the
+# default size, headless; "*" is all), but only when everything above was clean: a screen's setup
+# runs the game's own code, which a broken project can send into a loop. A missing file or key reads
+# as off, and then nothing here costs anything.
+ui_log="$state_dir/ui_lint.log"
+rm -f "$ui_log"
+ui_status=0; ui_ran=0
+if [ "$failed" -eq 0 ] && [ -z "$errors" ] && [ -f tools/ui_capture.cfg ] && [ -f tools/ui_capture.gd ] && [ -f tools/ui_screens.gd ]; then
+  ui_on="$(awk '/^\[/ { in_lint = ($0 ~ /^\[lint\]/); next }
+    in_lint && /^[ \t]*check_in_check[ \t]*=/ { v = $0; sub(/^[^=]*=[ \t]*/, "", v); sub(/[ \t\r;].*$/, "", v); print v; exit }' tools/ui_capture.cfg)"
+  if [ "$ui_on" = "true" ]; then
+    ui_ran=1
+    run_godot "$ui_log" --headless --path . --script tools/ui_capture.gd -- --check
+    ui_status=$?
+    if [ "$ui_status" -eq 124 ]; then echo "check: the layout lint timed out after ${limit}s"; failed=1; fi
+    ui_errors="$(scan '^[ \t]*(ERROR|SCRIPT ERROR|USER ERROR|USER SCRIPT ERROR|GDIR-FAIL):|Parse Error' "$ui_log")"
+    if [ -n "$ui_errors" ]; then errors="$ui_errors"; fi
+    ui_warnings="$(scan '^[ \t]*(WARNING|SCRIPT WARNING|USER WARNING):' "$ui_log")"
+    if [ -n "$ui_warnings" ]; then warnings="${warnings:+$warnings
+}$ui_warnings"; fi
+  fi
+fi
+
 summary="$(clean "$state_dir/check.log" | grep -E '^GDIR(-NOTE)?:')"
 if [ -n "$summary" ]; then
   printf '%s\n' "$summary" | sed 's/^GDIR: /check: /; s/^GDIR-NOTE: /check: note: /'
 else
   echo "check: tools/check.gd didn't finish (see $state_dir/check.log)"
   failed=1
+fi
+if [ "$ui_ran" -eq 1 ]; then
+  clean "$ui_log" | sed -n 's/^GDIR-NOTE: ui lint/check: note: ui lint/p'
+  if [ "$ui_status" -ne 0 ] && [ -z "$(clean "$ui_log" | grep -E '^[[:space:]]*(GDIR-FAIL|ERROR|SCRIPT ERROR):')" ]; then
+    echo "check: the layout lint stopped early (see $ui_log)"
+    failed=1
+  fi
 fi
 hooks_dir="$(git rev-parse --git-path hooks 2>/dev/null)"
 if [ -n "$hooks_dir" ] && ! grep -qs "Godot Director" "$hooks_dir/pre-commit"; then

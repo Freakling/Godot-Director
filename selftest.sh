@@ -220,6 +220,31 @@ grep -q '"/tools/ui_\*\.gd text eol=lf"' "$src/install.sh" || wired="$wired .git
 grep -q '^extends "res://tools/ui_catalog\.gd"$' "$src/project/tools/ui_screens.gd" || wired="$wired ui_screens.gd seed"
 [ -z "$wired" ] && ok "ui-design is wired into the rules, the skill, the settings, the lint and the installer's lines" \
   || bad "ui-design isn't wired into:$wired"
+# UI design, part 3: verify, the workflow hooks, the lint in the check and overlays.
+wired=""
+[ -f "$src/framework/tools/ui_verify.gd" ] || wired="$wired tools/ui_verify.gd"
+grep -q '^- `verify <screen>`' "$uiproc" && grep -q '^## verify' "$uiproc" && grep -q 'ui_capture\.sh <id> --verify' "$uiproc" \
+  && grep -q 'tools/ui_overlay\.gd -- compare' "$uiproc" && grep -q 'compare@<W>x<H>\.png' "$uiproc" || wired="$wired ui-design.md(verify)"
+grep -q "^## If you can't view images" "$uiproc" && grep -q 'ui_capture\.sh --missing' "$uiproc" || wired="$wired ui-design.md(text paths, --missing)"
+grep -q '^## The lint in the check' "$uiproc" && grep -q 'check_in_check' "$uiproc" && grep -q 'enforce' "$uiproc" || wired="$wired ui-design.md(lint in the check)"
+grep -q '"overlays": \["/root/Hud"\]' "$uiproc" && ! grep -q "isn't in it" "$uiproc" || wired="$wired ui-design.md(overlays)"
+grep -q '"overlays"' "$src/framework/tools/ui_catalog.gd" && grep -q '_show_overlays' "$src/framework/tools/ui_capture.gd" || wired="$wired overlays in capture"
+grep -q '^5\. \*\*Screens\*\*' "$proc/procedures/build.md" && grep -q '^   Screen: ' "$proc/procedures/build.md" && grep -q -- '--verify' "$proc/procedures/build.md" || wired="$wired build.md"
+grep -q '^3\. \*\*Screens\*\*' "$proc/procedures/review.md" && grep -q 'compare@' "$proc/procedures/review.md" || wired="$wired review.md"
+grep -q 'compare@' "$proc/procedures/function-check.md" && grep -q -- '--verify' "$proc/procedures/function-check.md" || wired="$wired function-check.md"
+grep -q 'ui_capture\.sh --missing' "$proc/procedures/align.md" && grep -q 'sha1' "$proc/procedures/align.md" && grep -q '`UI:`' "$proc/procedures/align.md" || wired="$wired align.md"
+grep -q 'tools/check.cfg tools/ui_capture.cfg' "$src/framework/tools/check.sh" && grep -q 'check_in_check' "$src/framework/tools/check.sh" || wired="$wired check.sh(fingerprint, lint)"
+grep -q '^check_in_check=true$' "$src/project/tools/ui_capture.cfg" && grep -q '^enforce=\["\*"\]$' "$src/project/tools/ui_capture.cfg" \
+  && grep -q '^tolerance_pct=4.0$' "$src/project/tools/ui_capture.cfg" && cmp -s "$src/project/tools/ui_capture.cfg" "$src/examples/market-day/tools/ui_capture.cfg" || wired="$wired ui_capture.cfg seed"
+grep -q 'check_in_check=false' "$src/install.sh" || wired="$wired install.sh(upgrade writes the lint off)"
+grep -q 'director designs (director/ui/), agent builds' "$src/project/AGENTS.md" && grep -q '`design/ui/`' "$src/project/AGENTS.md" || wired="$wired AGENTS.md template"
+grep -q '`design/ui/`' "$src/examples/market-day/AGENTS.md" && grep -q '^/tools/ui_verify\.gd$' "$src/examples/market-day/.gitignore" || wired="$wired example AGENTS.md, .gitignore"
+grep -q 'director designs (director/ui/), agent builds' "$src/ONBOARDING.md" && grep -q 'ui_capture\.sh --missing' "$src/ONBOARDING.md" \
+  && grep -q 'check_in_check=false' "$src/ONBOARDING.md" || wired="$wired ONBOARDING.md"
+grep -q '(`/ui-design`)' "$src/README.md" && grep -q 'tools/ui_screens\.gd' "$src/README.md" && grep -q 'director/ui/' "$src/README.md" || wired="$wired README.md"
+grep -q 'verify <screen>' "$src/framework/.claude/skills/ui-design/SKILL.md" || wired="$wired skills/ui-design(verify)"
+[ -z "$wired" ] && ok "ui-design verify, the build, review, function check and align hooks, the lint in the check and overlays are wired in" \
+  || bad "ui-design verify and the hooks aren't wired into:$wired"
 # The old name (Claude4Godot, 2.x and earlier) is left only in history and in the 2.x migration.
 allowed=" CHANGELOG.md install.sh selftest.sh ONBOARDING.md framework/tools/check.gd framework/tools/check.sh framework/tools/setup-clone.sh "
 leftovers=""
@@ -365,6 +390,48 @@ grep -q "^# Godot Director: runs" "$(git rev-parse --git-path hooks)/pre-commit"
   && ok "updates the clone's 2.x pre-commit shim and drops the old runtime folder" \
   || bad "updates the clone's 2.x pre-commit shim and drops the old runtime folder" "$out"
 cd "$game" || exit 1
+
+# Upgrading from the last release, v3.10.0 (taken from git history; skipped where the tag isn't there):
+# the new files and seeds arrive, the game keeps its own AGENTS.md and check.cfg, the layout lint in
+# the check ends up off, and align lists the screens the catalog doesn't cover without failing.
+if git -C "$src" rev-parse -q --verify 'v3.10.0^{commit}' >/dev/null 2>&1; then
+  old_release="$work/v3.10.0"; mkdir -p "$old_release"
+  git -C "$src" archive v3.10.0 | (cd "$old_release" && tar -xf -)
+  upgraded="$work/upgraded"
+  cp -R "$old_release/examples/market-day" "$upgraded"
+  (cd "$upgraded" && git init -q && git config core.autocrlf false && git add -A && git_q commit -qm "example") || exit 1
+  bash "$old_release/install.sh" "$upgraded" >/dev/null 2>&1
+  (cd "$upgraded" && git add -A && { git_q commit -qm "install 3.10.0" >/dev/null 2>&1 || true; } && cp AGENTS.md "$work/up-agents" && cp tools/check.cfg "$work/up-check-cfg")
+  out="$(bash "$src/install.sh" "$upgraded" 2>&1)"; expect_status "upgrades a game from v3.10.0" 0 $? "$out"
+  if [ -f "$upgraded/tools/ui_screens.gd" ] && [ -f "$upgraded/tools/ui_capture.cfg" ] && [ -f "$upgraded/design/ui/README.md" ] \
+      && grep -q '^/design/ui/captures/$' "$upgraded/.gitignore" && grep -q 'tools/ui_verify\.gd$' "$upgraded/.godot-director/manifest" \
+      && grep -q 'procedures/ui-design\.md$' "$upgraded/.godot-director/manifest" && grep -q 'skills/ui-design/SKILL\.md$' "$upgraded/.godot-director/manifest"; then
+    ok "the upgrade adds the stubs, the captures .gitignore line and the manifest entries"
+  else
+    bad "the upgrade adds the stubs, the captures .gitignore line and the manifest entries" "$out"
+  fi
+  cmp -s "$upgraded/AGENTS.md" "$work/up-agents" && cmp -s "$upgraded/tools/check.cfg" "$work/up-check-cfg" \
+    && ok "the upgrade keeps the game's own AGENTS.md and tools/check.cfg" || bad "the upgrade keeps the game's own AGENTS.md and tools/check.cfg"
+  if grep -q '^check_in_check=false$' "$upgraded/tools/ui_capture.cfg" && grep -q '^enforce=\[\]$' "$upgraded/tools/ui_capture.cfg"; then
+    ok "the upgrade writes the layout lint in the check off (check_in_check=false, enforce=[])"
+  else
+    bad "the upgrade writes the layout lint in the check off" "$(cat "$upgraded/tools/ui_capture.cfg")"
+  fi
+  if [ -n "$godot" ]; then
+    cp "$upgraded/scenes/shop_screen.tscn" "$upgraded/scenes/extra_screen.tscn"
+    out="$(cd "$upgraded" && GODOT_BIN="$godot" bash tools/ui_capture.sh --missing 2>&1)"; expect_status "align's screen listing doesn't fail" 0 $? "$out"
+    if printf '%s\n' "$out" | grep -q '^missing: scenes/extra_screen\.tscn' && ! printf '%s\n' "$out" | grep -q '^missing: scenes/shop_screen\.tscn'; then
+      ok "align lists a screen scene the catalog doesn't cover, and not the one it does"
+    else
+      bad "align lists a screen scene the catalog doesn't cover, and not the one it does" "$out"
+    fi
+    rm -f "$upgraded/scenes/extra_screen.tscn" "$upgraded/scenes/extra_screen.tscn.uid"
+    out="$(cd "$upgraded" && GODOT_BIN="$godot" bash tools/check.sh 2>&1)"; expect_status "the upgraded game's check passes with the lint off" 0 $? "$out"
+    expect_no_output "and runs no layout lint" "ui lint" "$out"
+  fi
+else
+  echo "  skip  upgrade from v3.10.0: no v3.10.0 tag in this checkout"
+fi
 
 core_only="$work/core-only"; new_repo "$core_only"
 out="$(bash "$src/install.sh" --tools none "$core_only" 2>&1)"
@@ -588,6 +655,40 @@ expect_output "lists each screen with its states and scene" "^shop · Shop scree
 cp tools/ui_screens.gd "$work/saved-catalog"
 write_fixtures() {
   mkdir -p ui_fixtures
+  # A HUD an autoload draws, and a scene a screen can name as an overlay.
+  cat > ui_fixtures/hud.gd <<'EOF'
+extends CanvasLayer
+## Selftest fixture: a HUD on a CanvasLayer, owned by an autoload.
+
+
+func _ready() -> void:
+	layer = 5
+	var label: Label = Label.new()
+	label.name = "HudLabel"
+	label.text = "HUD"
+	label.position = Vector2(8, 8)
+	add_child(label)
+	label.owner = self
+	label.unique_name_in_owner = true
+EOF
+  cat > ui_fixtures/toast.tscn <<'EOF'
+[gd_scene format=3]
+
+[node name="Toast" type="Control"]
+layout_mode = 3
+anchors_preset = 0
+
+[node name="ToastLabel" type="Label" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 8.0
+offset_top = 40.0
+offset_right = 120.0
+offset_bottom = 64.0
+text = "Saved"
+EOF
+  cp project.godot "$work/saved-project"
+  awk '{ print } /^RunState=/ { print "Hud=\"*res://ui_fixtures/hud.gd\"" }' "$work/saved-project" > project.godot
   cat > ui_fixtures/hard_coded.tscn <<'EOF'
 [gd_scene format=3]
 
@@ -625,6 +726,13 @@ func screens() -> Array[Dictionary]:
 		{"id": "hardcoded", "title": "Hard-coded position", "scene": "res://ui_fixtures/hard_coded.tscn", "setup": _hardcoded},
 		{"id": "pickable", "title": "3D pickable", "setup": _pickable},
 		{"id": "rows", "title": "Rows built in code", "setup": _rows},
+		{"id": "withhud", "title": "With the HUD", "setup": _clean, "overlays": ["/root/Hud"]},
+		{"id": "withhud2", "title": "With the HUD, again", "setup": _clean, "overlays": ["/root/Hud"]},
+		{"id": "nohud", "title": "Without the HUD", "setup": _clean},
+		{"id": "withtoast", "title": "With a toast scene", "setup": _clean, "overlays": ["res://ui_fixtures/toast.tscn"]},
+		{"id": "specfix", "title": "Spec fixture", "setup": _spec_fixture.bind(0.0)},
+		{"id": "specmoved", "title": "Spec fixture, Gear moved 10%", "setup": _spec_fixture.bind(-0.1)},
+		{"id": "specdrawn", "title": "Spec fixture, Gear moved, drawn", "setup": _spec_fixture.bind(-0.1)},
 	]
 
 
@@ -765,8 +873,37 @@ func _rows() -> Node:
 		box.add_child(label)
 	focus_default(_button(box, "Done"))
 	return page
+
+
+## Three controls placed by their anchors alone, with unique names a screen spec can list. Moving
+## Gear by shift (a fraction of the screen) is the deviation verify must find.
+func _spec_fixture(shift: float) -> Node:
+	var page: Control = _page()
+	_placed(page, "Sheet", Panel.new(), Rect2(0.01, 0.11, 0.20, 0.70))
+	_placed(page, "Gear", Panel.new(), Rect2(0.62 + shift, 0.12, 0.34, 0.60))
+	var go: Button = Button.new()
+	go.text = "Go"
+	_placed(page, "Go", go, Rect2(0.62, 0.80, 0.18, 0.08))
+	focus_default(go)
+	return page
+
+
+func _placed(page: Control, node_name: String, control: Control, area: Rect2) -> void:
+	control.name = node_name
+	page.add_child(control)
+	control.owner = page
+	control.unique_name_in_owner = true
+	control.anchor_left = area.position.x
+	control.anchor_top = area.position.y
+	control.anchor_right = area.end.x
+	control.anchor_bottom = area.end.y
+	control.offset_left = 0.0
+	control.offset_top = 0.0
+	control.offset_right = 0.0
+	control.offset_bottom = 0.0
 EOF
 }
+remove_fixtures() { rm -rf ui_fixtures; [ -f "$work/saved-project" ] && cp "$work/saved-project" project.godot; }
 write_fixtures
 lint_fixtures() { # lint_fixtures <how>: each broken fixture gets exactly its own rule; the clean one nothing
   local rule file found
@@ -791,6 +928,84 @@ out="$(bash tools/ui_capture.sh rows --no-images --size 1280x720 2>&1)"
 cmp -s "$captures/rows@1280x720.elements.json" "$work/rows-all" && ok "a screen built in code maps the same alone as in --all" \
   || bad "a screen built in code maps the same alone as in --all" "$(diff "$work/rows-all" "$captures/rows@1280x720.elements.json")"
 
+# Overlays: what an autoload draws is in the screen's shot, and is back where it was afterwards (the
+# second screen with the HUD finds it again), and a scene an entry names is instanced in the shot.
+out="$(bash tools/ui_capture.sh --all --no-images --size 1280x720 2>&1)"; expect_status "the HUD is moved in and put back after each capture, so --all captures every screen" 0 $? "$out"
+if grep -q '"id":"HudLabel","stable":true' "$captures/withhud@1280x720.elements.json" 2>/dev/null \
+    && grep -q '"id":"HudLabel","stable":true' "$captures/withhud2@1280x720.elements.json" 2>/dev/null; then
+  ok "a capture shows the HUD an autoload draws, when the entry names it in overlays"
+else
+  bad "a capture shows the HUD an autoload draws, when the entry names it in overlays" "$(head -n 6 "$captures/withhud@1280x720.elements.json" 2>&1)"
+fi
+grep -q 'HudLabel' "$captures/nohud@1280x720.elements.json" 2>/dev/null && bad "a screen that doesn't name the HUD doesn't show it" \
+  || ok "a screen that doesn't name the HUD doesn't show it"
+grep -q '"id":"ToastLabel","stable":true' "$captures/withtoast@1280x720.elements.json" 2>/dev/null \
+  && ok "an overlay scene is instanced in the screen's viewport" || bad "an overlay scene is instanced in the screen's viewport" "$(head -n 6 "$captures/withtoast@1280x720.elements.json" 2>&1)"
+grep -q 'HudLabel' "$captures/nohud@1280x720.elements.json" 2>/dev/null && bad "the HUD stays out of a later screen that doesn't name it" \
+  || ok "the HUD stays out of a later screen that doesn't name it"
+
+# verify: the Layout table of the spec against the capture, headless. specfix is built as its spec
+# says; specmoved has Gear 10% of the screen to the left; specdrawn is the same, with a drawing in
+# which a box was drawn over Gear where the spec says it is.
+mkdir -p design/ui
+spec_table='| # | Element | Name | Where (x, y, w, h %) | Shows | Does | Size |
+|---|---|---|---|---|---|---|
+| 1 | Hero sheet | %Sheet | 1, 11, 20, 70 | - | - | fill |
+| 2 | Gear list | %Gear | 62, 12, 34, 60 | - | - | fill |
+| 3 | Go | %Go | 62, 80, 18, 8 | - | click | fit |'
+printf '# Spec fixture\n\n## Layout (at 1280x720)\n%s\n' "$spec_table" > design/ui/specfix.md
+cp design/ui/specfix.md design/ui/specmoved.md
+printf '# Spec fixture\n\n## Layout (at 1280x720)\n%s\n' "$(printf '%s\n' "$spec_table" | grep -v '%Gear')" > design/ui/specdrawn.md
+out="$(bash tools/ui_capture.sh specfix --verify --no-images --size 1280x720 2>&1)"; expect_status "verify: a screen built as its spec says" 0 $? "$out"
+expect_output "reports no deviations" "3 elements checked, 0 deviations" "$out"
+out="$(bash tools/ui_capture.sh specmoved --verify --no-images --size 1280x720 2>&1)"; expect_status "verify: a screen with one element moved 10% exits 1" 1 $? "$out"
+expect_output "reports exactly one deviation" "3 elements checked, 1 deviation$" "$out"
+if printf '%s\n' "$out" | grep -q '^| Gear list | %Gear | 62, 12, 34, 60 | 52, .* | moved: ' && [ "$(printf '%s\n' "$out" | grep -c '| ok |$')" -eq 2 ]; then
+  ok "and it is that element, with what the spec says and what the capture shows; the other two are ok"
+else
+  bad "and it is that element, with what the spec says and what the capture shows; the other two are ok" "$out"
+fi
+printf '{"schema":1,"source":"director/ui/specdrawn.excalidraw","frames":[{"name":"specdrawn","state":"default","size":[1280,720],"boxes":[{"id":"b1","label":"Gear list","intent":"keep","rect_pct":[62,12,34,60],"overlaps":[{"n":2,"name":"Gear","iou":1}]}]}]}\n' \
+  > "$captures/specdrawn.drawing.json"
+out="$(bash tools/ui_capture.sh specdrawn --verify --no-images --size 1280x720 2>&1)"; expect_status "verify: a drawn box whose element moved away is a deviation" 1 $? "$out"
+expect_output "and both rectangles are reported" "moved from the drawing: %Gear, box b1 \(Gear list\) was drawn at 62, 12, 34, 60 and is now at 52, " "$out"
+expect_output "and an element the spec doesn't list is named" "not in the spec: %Gear " "$out"
+out="$(bash tools/ui_capture.sh clean --verify --no-images --size 1280x720 2>&1)"; expect_status "verify: a screen with no spec exits 3" 3 $? "$out"
+expect_output "and says where the spec goes" "no spec at design/ui/clean\.md" "$out"
+out="$(bash tools/ui_capture.sh --all --verify 2>&1)"; expect_status "verify takes one screen" 1 $? "$out"
+
+# The lint in the check (tools/ui_capture.cfg › [lint]): a screen under enforce with a finding fails
+# the check, one without passes, and with the lint off (or the keys missing) the check is unchanged.
+cp tools/ui_capture.cfg "$work/saved-lint-cfg"
+set_lint() { # set_lint <check_in_check> <enforce as JSON>
+  sed -e "s/^check_in_check=.*/check_in_check=$1/" -e "s/^enforce=.*/enforce=$2/" "$work/saved-lint-cfg" > tools/ui_capture.cfg
+}
+set_lint true '["squeezed"]'
+out="$(bash tools/check.sh 2>&1)"; expect_status "check_in_check with a screen under enforce fails on its lint finding" 1 $? "$out"
+expect_output "and names the screen, size and rule" "GDIR-FAIL: ui lint: squeezed@1920x1080: squeezed-text element" "$out"
+set_lint true '["clean"]'
+out="$(bash tools/check.sh 2>&1)"; expect_status "the same lint passes for a clean screen under enforce" 0 $? "$out"
+expect_output "and says what it linted" "ui lint: 1 screen linted at 1920x1080" "$out"
+set_lint true '["hardcoded"]'
+out="$(bash tools/check.sh 2>&1)"; expect_status "a warning (hard-coded-position) under enforce doesn't fail the check" 0 $? "$out"
+set_lint true '[]'
+out="$(bash tools/check.sh 2>&1)"; expect_status "enforce left empty lints nothing" 0 $? "$out"
+set_lint false '["squeezed"]'
+rm -f .godot/godot-director/ui_lint.log
+out="$(bash tools/check.sh 2>&1)"; expect_status "with check_in_check=false the same finding doesn't fail the check" 0 $? "$out"
+if ! printf '%s' "$out" | grep -q 'ui lint' && [ ! -e .godot/godot-director/ui_lint.log ]; then
+  ok "and the check runs no lint: no extra Godot run, no mention of it"
+else
+  bad "and the check runs no lint: no extra Godot run, no mention of it" "$out"
+fi
+grep -v -e '^check_in_check=' -e '^enforce=' "$work/saved-lint-cfg" > tools/ui_capture.cfg
+out="$(bash tools/check.sh 2>&1)"; expect_status "with the keys missing the lint reads as off" 0 $? "$out"
+expect_no_output "and the check says nothing about it" "ui lint" "$out"
+fp_before="$(bash tools/check.sh --fingerprint)"
+set_lint false '[]'
+[ "$fp_before" != "$(bash tools/check.sh --fingerprint)" ] && ok "the check's fingerprint covers tools/ui_capture.cfg" || bad "the check's fingerprint covers tools/ui_capture.cfg"
+cp "$work/saved-lint-cfg" tools/ui_capture.cfg
+
 # A catalog with problems: each is named, the good screen is still captured, exit 1.
 cat > tools/ui_screens.gd <<'EOF'
 extends "res://tools/ui_catalog.gd"
@@ -805,6 +1020,8 @@ func screens() -> Array[Dictionary]:
 		{"id": "broken", "title": "Broken", "setup": _broken},
 		{"id": "stuck", "title": "Stuck", "setup": _stuck},
 		{"id": "after", "title": "After", "setup": _good},
+		{"id": "lost", "title": "Lost overlay", "setup": _good, "overlays": ["/root/Nowhere"]},
+		{"id": "badoverlay", "title": "Bad overlay", "setup": _good, "overlays": ["Hud"]},
 	]
 
 
@@ -832,12 +1049,16 @@ expect_output "names the screen whose setup errors" "FAIL: broken@1280x720: its 
 head -n 1 "$captures/broken@1280x720.lint.txt" 2>/dev/null | grep -q '^error: SCRIPT ERROR' \
   && ok "puts the setup's error at the top of its lint file" || bad "puts the setup's error at the top of its lint file"
 [ -f "$captures/good@1280x720.elements.json" ] && ok "goes on with the other screens" || bad "goes on with the other screens" "$out"
+expect_output "names an overlay that isn't a node path or a scene" "entry 9 \(badoverlay\): overlay 'Hud' must be a node path" "$out"
+expect_output "fails a screen whose overlay isn't in the scene tree" "FAIL: lost@1280x720: the overlay /root/Nowhere isn't in the scene tree" "$out"
+head -n 1 "$captures/lost@1280x720.lint.txt" 2>/dev/null | grep -q "^error: the overlay /root/Nowhere" && [ -f "$captures/lost@1280x720.elements.json" ] \
+  && ok "and still captures it, with the error at the top of its lint file" || bad "and still captures it, with the error at the top of its lint file"
 expect_output "fails a setup that doesn't finish" "FAIL: stuck@1280x720: the setup didn't finish within 2 seconds" "$out"
 grep -q "^error: the setup didn't finish" "$captures/stuck@1280x720.lint.txt" 2>/dev/null && [ -f "$captures/after@1280x720.elements.json" ] \
   && ok "writes that to its lint file and goes on" || bad "writes that to its lint file and goes on" "$out"
 cp "$work/saved-capture-cfg" tools/ui_capture.cfg
 out="$(bash tools/ui_capture.sh nowhere --no-images 2>&1)"; expect_output "refuses an unknown screen" "no screen 'nowhere'" "$out"
-cp "$work/saved-catalog" tools/ui_screens.gd; rm -rf ui_fixtures "$captures"
+cp "$work/saved-catalog" tools/ui_screens.gd; remove_fixtures; rm -rf "$captures"
 
 # Drawings, headless. The fixture drawing (tests/ui-drawing/) has a green box with bound text and
 # click:, a blue box over an existing element, a red X over an element, an arrowed comment, a box
@@ -1052,9 +1273,25 @@ else
   write_fixtures; rm -rf "$captures"
   out="$(bash tools/ui_capture.sh --all --size 1280x720 2>&1)"; expect_status "captures the lint fixtures with a display" 0 $? "$out"
   lint_fixtures "with a display"
-  cp "$work/saved-catalog" tools/ui_screens.gd; rm -rf ui_fixtures "$captures"
+  if cmp -s "$captures/withhud@1280x720.png" "$captures/nohud@1280x720.png"; then
+    bad "the HUD an overlay names is in the image"
+  elif cmp -s "$captures/withhud@1280x720.png" "$captures/withhud2@1280x720.png"; then
+    ok "the HUD an overlay names is in the image, the same each time it is moved in and put back"
+  else
+    bad "the HUD an overlay names is in the image, the same each time it is moved in and put back"
+  fi
+  # verify with a drawing: the compare image holds the drawing's screenshot beside the new capture.
+  mkdir -p drawing_fixtures
+  "$godot" --headless --path . --script tools/ui_drawing.gd -- starter "$captures/specfix@1280x720" drawing_fixtures/specfix.excalidraw >/dev/null 2>&1
+  "$godot" --headless --path . --script tools/ui_drawing.gd -- drawing_fixtures/specfix.excalidraw "$captures/specfix.drawing.json" specfix >/dev/null 2>&1
+  out="$(bash tools/ui_capture.sh specfix --verify --size 1280x720 2>&1)"; expect_status "verify with a display and a drawing" 0 $? "$out"
+  expect_output "it names the compare image" "compare image: design/ui/captures/specfix\.compare@1280x720\.png" "$out"
+  [ "$(od -An -tu1 -j16 -N8 "$captures/specfix.compare@1280x720.png" 2>/dev/null | tr -s ' ' | sed 's/^ //')" = "0 0 10 8 0 0 2 208" ] \
+    && ok "and writes it: the drawing's screenshot and the capture side by side (2568x720)" || bad "and writes the compare image: the drawing's screenshot and the capture side by side (2568x720)" "$out"
+  rm -rf drawing_fixtures
+  cp "$work/saved-catalog" tools/ui_screens.gd; remove_fixtures; rm -rf "$captures"
 fi
 
-rm -f tools/selftest_drawings.gd tools/selftest_drawings.gd.uid
+rm -f tools/selftest_drawings.gd tools/selftest_drawings.gd.uid design/ui/spec*.md
 
 finish

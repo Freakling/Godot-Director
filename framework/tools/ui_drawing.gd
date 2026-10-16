@@ -647,6 +647,52 @@ static func starter_text(screen: String, size: Vector2i, png: PackedByteArray, m
 	return dump(document) + "\n"
 
 
+## The screenshot a drawing was made over: the background image of the frame for the given screen
+## and state, decoded. null when the frame or its image isn't there.
+static func background_image(text: String, screen: String, state: String) -> Image:
+	var parsed: Variant = JSON.parse_string(text)
+	if not (parsed is Dictionary) or not ((parsed as Dictionary).get("elements") is Array):
+		return null
+	var document: Dictionary = parsed
+	var files: Dictionary = {}
+	if document.get("files") is Dictionary:
+		files = document["files"]
+	var frame: Dictionary = {}
+	var images: Array[Dictionary] = []
+	for item: Variant in (document["elements"] as Array):
+		if not (item is Dictionary) or bool((item as Dictionary).get("isDeleted", false)):
+			continue
+		var element: Dictionary = item
+		var kind: String = _text(element, "type")
+		if kind == "frame":
+			var named: Dictionary = _frame_name(_text(element, "name"))
+			if frame.is_empty() and str(named["screen"]) == screen and str(named["state"]) == state:
+				frame = element
+		elif kind == "image" and files.has(_text(element, "fileId")):
+			images.append(element)
+	if frame.is_empty():
+		return null
+	var frame_rect: Rect2 = _bounds(frame)
+	var best: Dictionary = {}
+	for element: Dictionary in images:
+		var inside: bool = _text(element, "frameId") == _text(frame, "id") or frame_rect.has_point(_bounds(element).get_center())
+		if not inside:
+			continue
+		if best.is_empty() or _ours(element) == "background" or (_ours(best) != "background" and _bounds(element).get_area() > _bounds(best).get_area()):
+			best = element
+	if best.is_empty():
+		return null
+	var url: String = str((files[_text(best, "fileId")] as Dictionary).get("dataURL", ""))
+	var marker: int = url.find(";base64,")
+	if marker < 0:
+		return null
+	var bytes: PackedByteArray = Marshalls.base64_to_raw(url.substr(marker + 8))
+	var image: Image = Image.new()
+	if image.load_png_from_buffer(bytes) != OK and image.load_jpg_from_buffer(bytes) != OK:
+		return null
+	return image
+
+
 ## The fields every Excalidraw element has (types.ts › _ExcalidrawElementBase).
 static func _base(id: String, type: String, index: int, x: int, y: int, width: int, height: int, frame_id: String) -> Dictionary:
 	return {

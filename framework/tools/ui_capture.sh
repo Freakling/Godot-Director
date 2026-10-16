@@ -4,8 +4,12 @@
 #   bash tools/ui_capture.sh [<screen>|--all] [--state <name>] [--size <W>x<H>]   capture (default --all)
 #   bash tools/ui_capture.sh ... --no-images    element maps and lint only; needs no display
 #   bash tools/ui_capture.sh --list             the screens in the catalog
-# Exit codes: 0 = done (lint findings don't count) · 1 = a screen failed · 3 = couldn't run (no
-# Godot, Godot older than 4.3, or no display)
+#   bash tools/ui_capture.sh --missing          the screen scenes the catalog doesn't cover (never fails)
+#   bash tools/ui_capture.sh <screen> --verify  capture the screen, then check it against its spec
+#                                               (design/ui/<screen>.md) and write the compare images
+# Exit codes: 0 = done (lint findings don't count) · 1 = a screen failed, or --verify found
+# deviations · 3 = couldn't run (no Godot, Godot older than 4.3, or no display), or --verify had no
+# spec or capture to check
 #
 # For every screen in tools/ui_screens.gd, state and size in tools/ui_capture.cfg, it writes
 # <id>[.<state>]@<W>x<H> .png, .elements.json, .map.png and .lint.txt to design/ui/captures/
@@ -24,14 +28,26 @@ state_dir=".godot/godot-director"
 out_dir="design/ui/captures"
 limit="${CAPTURE_TIMEOUT:-600}"
 
-images=1; list=0
-for arg in "$@"; do
+images=1; list=0; verify=0; screen_arg=""
+count=$#
+while [ "$count" -gt 0 ]; do   # --verify is ours; everything else goes to tools/ui_capture.gd
+  arg="$1"; shift; count=$((count - 1))
   case "$arg" in
+    --verify) verify=1; continue ;;
     --no-images) images=0 ;;
-    --list) list=1 ;;
-    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
+    --list|--missing) list=1 ;;
+    --state|--size)
+      if [ "$count" -gt 0 ]; then set -- "$@" "$arg" "$1"; shift; count=$((count - 1)); continue; fi ;;
+    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    -*) ;;
+    *) screen_arg="$arg" ;;
   esac
+  set -- "$@" "$arg"
 done
+if [ "$verify" -eq 1 ] && { [ -z "$screen_arg" ] || [ "$screen_arg" = "all" ] || [ "$list" -eq 1 ]; }; then
+  echo "ui_capture: --verify takes one screen: bash tools/ui_capture.sh <screen> --verify" >&2
+  exit 1
+fi
 
 # --- find Godot (as tools/check.sh does) --------------------------------------------------------
 godot="${GODOT_BIN:-}"
@@ -139,7 +155,7 @@ if [ "$status" -ne 0 ] && ! printf '%s\n' "$log" | grep -q '^GDIR-UI' \
   exit 3
 fi
 if [ "$list" -eq 1 ]; then
-  printf '%s\n' "$log" | sed -n 's/^GDIR-UI-LIST: //p'
+  printf '%s\n' "$log" | sed -n -e 's/^GDIR-UI-LIST: //p' -e 's/^GDIR-UI-MISSING: /missing: /p' -e 's/^GDIR-UI-NOTE: /note: /p'
   printf '%s\n' "$log" | sed -n 's/^GDIR-UI-FAIL: /ui_capture: FAIL: /p'
   exit "$([ "$status" -eq 0 ] && echo 0 || echo 1)"
 fi
@@ -183,5 +199,15 @@ fi
 if [ "$failed" -eq 0 ] && ! printf '%s\n' "$log" | grep -q '^GDIR-UI: [0-9]* capture'; then
   echo "ui_capture: tools/ui_capture.gd didn't finish (see $state_dir/ui_capture.log)"
   failed=1
+fi
+if [ "$verify" -eq 1 ] && [ "$failed" -eq 0 ]; then
+  # Reads the spec and the element maps and lint files just written; headless, it also writes the
+  # compare images (it draws with Image operations only).
+  run_godot "$state_dir/ui_verify.log" "" --headless --path . --script tools/ui_verify.gd -- "$@"
+  status=$?
+  vlog="$(tr -d '\r' < "$state_dir/ui_verify.log" | sed "s/${esc}\[[0-9;]*m//g")"
+  printf '%s\n' "$vlog" | sed -n -e 's/^GDIR-UI-VERIFY: //p' -e 's/^GDIR-UI-FAIL: /ui_capture: FAIL: /p'
+  if [ "$status" -eq 3 ]; then exit 3; fi
+  if [ "$status" -ne 0 ]; then failed=1; fi
 fi
 exit "$failed"

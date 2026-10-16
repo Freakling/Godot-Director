@@ -4,9 +4,16 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T9 · B2
+**Next IDs:** T10 · B2
 
 ## Queue
+
+### T9 · /ui-design: verify and the workflow hooks · done · M · agent
+- Depends on: T8
+- Touches: framework/tools/ui_verify.gd (new), framework/tools/ui_overlay.gd, framework/tools/ui_drawing.gd, framework/tools/ui_capture.gd, framework/tools/ui_capture.sh, framework/tools/ui_catalog.gd, framework/tools/check.sh, framework/.godot-director/procedures/ui-design.md, framework/.godot-director/procedures/build.md, framework/.godot-director/procedures/review.md, framework/.godot-director/procedures/function-check.md, framework/.godot-director/procedures/align.md, framework/.godot-director/rules.md, framework/.claude/skills/ui-design/SKILL.md, project/tools/ui_capture.cfg, project/AGENTS.md, examples/market-day/tools/ui_capture.cfg, examples/market-day/AGENTS.md, examples/market-day/.gitignore, install.sh, README.md, ONBOARDING.md, selftest.sh, CHANGELOG.md
+- Done when: `/ui-design verify` captures a screen, lists its deviations from the spec in a table and writes compare images, and on a fixture built as its spec says reports none, while moving one node 10% reports exactly that element (test) · the build, review, function check and align procedures use the screen spec, and align lists screens missing from the catalog without failing (check) · `check.sh` with `check_in_check=true` and a screen under `enforce` fails on a lint finding and passes otherwise, and with the defaults the check is unchanged (test) · a project upgraded from v3.10.0 gets the stubs, the `.gitignore` line and the manifest entries, keeps its own AGENTS.md and check.cfg, and ends with the lint off (test) · a catalog entry's `overlays` put a HUD an autoload draws into the capture (test) · every step of the procedure has a text path for a tool that can't view images (check)
+- GDD: (none)
+- Source: Director-Driven-Development T83
 
 ### T8 · /ui-design: drawings and screen specs · done · M · agent
 - Depends on: T7

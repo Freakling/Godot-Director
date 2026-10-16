@@ -10,7 +10,8 @@
 # - framework/ is framework-owned and is copied on every run. A file you changed locally stays as
 #   it is. If this version changes that file too, the new version is written next to it as
 #   <file>.gdir-new for you to merge.
-# - project/ holds project-owned seeds, copied only when missing. They're yours from then on.
+# - project/ holds project-owned seeds, copied only when missing. They're yours from then on. (On an
+#   upgrade, a new tools/ui_capture.cfg is written with the layout lint in the check off.)
 # - Framework files an earlier version installed but this one no longer ships are deleted, unless
 #   you changed them.
 # - .gitignore and .gitattributes get the lines Godot Director needs.
@@ -244,6 +245,14 @@ done <<EOF
 $(list_files "$src/project")
 EOF
 copy_list "$src/project" "$dest" "$tmp/seeds"
+# The seed of tools/ui_capture.cfg turns the layout lint in the check on, for new projects. On an
+# upgrade it would turn it on for a game that never asked for it: write it off, and leave the
+# decision (which screens to enforce) to the human.
+if [ -n "$old_version" ] && grep -qx 'tools/ui_capture.cfg' "$tmp/seeds"; then
+  sed -e 's/^check_in_check=.*/check_in_check=false/' -e 's/^enforce=.*/enforce=[]/' "$dest/tools/ui_capture.cfg" > "$tmp/ui_capture.cfg"
+  cat "$tmp/ui_capture.cfg" > "$dest/tools/ui_capture.cfg"
+  seeded="$seeded$nl      (with the layout lint in the check off: check_in_check=false)"
+fi
 
 # Scripts must be executable (git ignores a hook that isn't, on macOS and Linux).
 set --

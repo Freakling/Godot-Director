@@ -14,6 +14,10 @@ extends RefCounted
 ##   states  Dictionary of state name to Callable, instead of setup (for example "default", "empty")
 ##   pause   bool, default true: pause the tree before the screenshot, which also stops Tweens and
 ##           AnimationPlayers. Set false for a screen that must keep processing to look right.
+##   overlays  Array of String: what the screen shows that it doesn't draw itself, such as a HUD or
+##           a toast layer an autoload owns. A node path in the scene tree ("/root/Hud") is moved into
+##           the screen's viewport for the shot and put back afterwards; a scene ("res://...tscn") is
+##           instanced there. Without it, a capture leaves out whatever an autoload draws.
 ## A setup builds its state through the game's public APIs, fixtures and debug hooks, never player
 ## data. It returns the node to show (open_view() returns one already on screen; a node that isn't
 ## in the tree yet is added to screen_root()), or opens the screen through the game's own
@@ -23,7 +27,7 @@ extends RefCounted
 ## offscreen with the project's stretch settings, so any size captures on any monitor. A node a
 ## setup adds to the scene tree's root is moved there. Outside a capture, screen_root() is the root.
 
-const KEYS: PackedStringArray = ["id", "title", "scene", "setup", "states", "pause"]
+const KEYS: PackedStringArray = ["id", "title", "scene", "setup", "states", "pause", "overlays"]
 const DEFAULT_STATE: String = "default"
 
 ## The viewport screens are shown in during a capture; set by tools/ui_capture.gd.
@@ -97,7 +101,7 @@ func tree() -> SceneTree:
 	return Engine.get_main_loop() as SceneTree
 
 
-## The entries, checked: [entries, errors]. Each entry is {id, title, scene, states, pause}, with
+## The entries, checked: [entries, errors]. Each entry is {id, title, scene, states, pause, overlays}, with
 ## states a Dictionary of state name to Callable. An entry with an error is left out.
 func checked_screens() -> Array:
 	var entries: Array[Dictionary] = []
@@ -146,6 +150,19 @@ func checked_screens() -> Array:
 			states[DEFAULT_STATE] = open_view.bind(scene)
 		if raw.has("pause") and not (raw["pause"] is bool):
 			problems.append("pause must be true or false")
+		var overlays: Array[String] = []
+		if raw.has("overlays"):
+			if not (raw["overlays"] is Array):
+				problems.append("overlays must be an Array of node paths (\"/root/Hud\") and scenes (\"res://...tscn\")")
+			else:
+				for overlay: Variant in (raw["overlays"] as Array):
+					var text: String = str(overlay)
+					if not (overlay is String) or not (text.begins_with("/root/") or text.begins_with("res://")):
+						problems.append("overlay '%s' must be a node path from /root or a scene under res://" % text)
+					elif text.begins_with("res://") and not ResourceLoader.exists(text):
+						problems.append("the overlay scene %s doesn't exist" % text)
+					else:
+						overlays.append(text)
 		if not id.is_empty() and not seen.has(id):
 			seen[id] = index
 		if not problems.is_empty():
@@ -154,7 +171,7 @@ func checked_screens() -> Array:
 			continue
 		entries.append({
 			"id": id, "title": str(raw["title"]), "scene": scene, "states": states,
-			"pause": bool(raw.get("pause", true)),
+			"pause": bool(raw.get("pause", true)), "overlays": overlays,
 		})
 	return [entries, errors]
 

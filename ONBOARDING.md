@@ -47,8 +47,9 @@ Run `bash "$GDIR/install.sh" --tools <claude|none> .` for a first install. For a
   1. Read the entries in `$GDIR/CHANGELOG.md` newer than the old version (the install report names it). Carry out each **Upgrade steps** section in order. From 2.x that includes 3.0.0.
   2. If full, carry out steps 4-8.
   3. Run step 3 only if `bash tools/check.sh` exits 3 (fast) or run it again now (full).
-  4. Summarise what changed, using the CHANGELOG and `git diff --stat`.
-  5. Go to step 9.
+  4. **Screens.** Run `bash tools/ui_capture.sh --missing` (the Screens checks of `.godot-director/procedures/align.md`) and tell the human which screens the catalog doesn't cover yet. It lists them; it never fails the upgrade. Offer to add the entries now or leave them for the next item that touches a screen. An upgrade keeps the game's own `AGENTS.md` and `tools/check.cfg`, and the installer writes a new `tools/ui_capture.cfg` with the layout lint in the check off (`check_in_check=false`, `enforce=[]`); tell the human they can turn it on a screen at a time, in `enforce`, once the screen's capture is lint-clean.
+  5. Summarise what changed, using the CHANGELOG and `git diff --stat`.
+  6. Go to step 9.
 
 ## 3. Godot for this clone
 Run `bash tools/setup-clone.sh --skip-hook`, adding the Godot path if the human gave one. It finds Godot 4.3+ and saves the path in `tools/godot_bin.local`, which is gitignored and never committed. If it exits 3, ask the human where Godot is and rerun it with the path. On Windows, prefer the `*_console.exe` build.
@@ -141,12 +142,19 @@ For each area below, state the default and ask the human whether they want to ow
 | Area | Default | Agent placeholder when human owns it |
 |---|---|---|
 | **GDScript / game code** | agent | stubbed function or empty class with `## PLACEHOLDER` comment |
-| **UI / screen layout** | agent | minimal functional screen, commented for redesign |
+| **UI / screen layout** | agent, or `director designs (director/ui/), agent builds` | minimal functional screen, commented for redesign |
 | **Art / sprites / textures** | human | `ColorRect` under a node named `Visual`, labelled with what goes there |
 | **Audio / music / SFX** | human | `AudioStreamPlayer` node, no stream assigned, comment naming the audio |
 | **Scene / level design** | shared | grey-box scene with placeholder geometry; human finishes the layout |
 | **Tunable values (`data/`)** | human | `## PLACEHOLDER` default in the schema; human sets final values in `.tres` |
 | **Player-facing text** | agent | `"[PLACEHOLDER: describe the text]"` string constant |
+
+### Designing screens by drawing
+Ask once, in the UI row of the table above: do they want to design screens by drawing over screenshots of the running game (`/ui-design`; free Excalidraw, no account)?
+- **Yes:** the row becomes `director designs (director/ui/), agent builds`, with the same placeholder. Offer `director/` (below) with `director/ui/` and an empty `director/.gdignore`, and tell them the loop: `/ui-design capture` writes a starter drawing per screen, they draw and save it as `director/ui/<screen>.excalidraw`, and `/ui-design process <screen>` turns it into the screen's spec.
+- **No:** the row stays `agent` and nothing else changes. Capture, the layout lint and the catalog still work. No open question and no item is added: drawing is optional, never a prerequisite.
+
+For a new game, the catalog (`tools/ui_screens.gd`) starts with the main scene; the Layout table in AGENTS.md lists `design/ui/`. A new game starts with the layout lint in the check on (`tools/ui_capture.cfg` › `[lint]` `check_in_check=true`, `enforce=["*"]`).
 
 ### Protected workspace
 If the human owns any area, or wants a space the agent will never touch, offer to create `director/`. The agent reads files there for context (reference art, sketches, audio, notes) but never creates, modifies or deletes anything inside it.
@@ -192,7 +200,7 @@ If the loops aren't decided yet, leave the placeholders, and add an agent item "
 8. **Offer a "Development" section for the game's README:** clone, then `bash tools/setup-clone.sh`, then the commands.
 9. **Tell the human:**
    - what needs their confirmation;
-   - how to use it: "do the next task", "let's brainstorm…", "process my playtest", "prepare a function check", "check the docs are aligned", "research how other games handle…", "export the game", and, when a pillar has been built two ways, "reset the design drift" (in Claude Code also `/next-task`, `/design`, `/research`, `/export`, `/playtest`, `/function-check`, `/align`, `/drift-reset`, `/prune`). Align often, reset when you have to;
+   - how to use it: "do the next task", "let's brainstorm…", "process my playtest", "prepare a function check", "check the docs are aligned", "research how other games handle…", "export the game", "capture the screens", and, when a pillar has been built two ways, "reset the design drift" (in Claude Code also `/next-task`, `/design`, `/research`, `/export`, `/ui-design`, `/playtest`, `/function-check`, `/align`, `/drift-reset`, `/prune`). Align often, reset when you have to;
    - with the Claude adapter: to restart Claude Code, because skills, hooks and permissions load when a session starts;
    - to open the project in the Godot editor once, and commit the `.uid` and `.import` files it creates;
    - that every new clone needs `bash tools/setup-clone.sh`.
