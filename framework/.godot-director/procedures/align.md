@@ -22,7 +22,11 @@ A consistency pass across the GDD, decisions, TASKS.md, AGENTS.md, project setti
    - Every row points at something that exists.
    - List screens that depend on other screens, and systems that depend on screens.
    - Every file listed under `tools/check.cfg` › `[screens] known` has an open item that removes it from the list.
-6. **Decisions.** Spot-check that recent lines in `design/decisions.md` are reflected in the GDD, and that no older text contradicts them.
+6. **Brief against reality.** For this step only, read the whole GDD, not sections by heading.
+   - Read `design/gdd.md` from its first line to its last.
+   - For every statement of state, check it against what exists: the built game, the done items (`TASKS.md` and `TASKS-archive.md`) and, where the project tracks them, the latest releases (the game's exports and their UAT or production uploads, which `release.md` records in its report). A statement of state is a section marked later or planned, a count, a list of what exists, a line saying work waits on something, and "once X exists". Fix a stale statement as mechanical drift when the fact is settled (the item is done, the page exists). Report it to the human when the fix is a design call.
+   - Check every line added to `design/decisions.md` since the last `docs: align` commit (`git log --grep="^docs: align"` for the last one; all lines if there is none) against the GDD, one by one and not a sample. Each is reflected in it, and no older text contradicts it.
+   - Report what was fixed and what needs the human, naming each stale statement, so the next align can tell a repeat.
 7. **Balance placeholders.** Count them with `git grep -n "## PLACEHOLDER" -- "*.gd"`, and write the number into the Content & balance milestone row.
 8. **Setup.**
    - `bash tools/check.sh` passes and prints no `note:` about typing or hooks.
