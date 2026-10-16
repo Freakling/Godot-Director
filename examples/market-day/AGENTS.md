@@ -18,6 +18,7 @@ Instructions for AI assistants working on this game. The workflow is Godot Direc
 | `scenes/` | scenes |
 | `data/` | `.tres` content: the values the human tunes |
 | `tests/` | rule tests (`test_*.gd`) |
+| `design/ui/` | screen specs (one per screen) and `captures/` (gitignored); the director's drawings are in `director/ui/` |
 
 ## Architecture
 One row per system: what it owns and where its boundary is. Screens depend on systems, never the other way round.

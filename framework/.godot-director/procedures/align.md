@@ -26,5 +26,11 @@ A consistency pass across the GDD, decisions, TASKS.md, AGENTS.md, project setti
 7. **Balance placeholders.** Count them with `git grep -n "## PLACEHOLDER" -- "*.gd"`, and write the number into the Content & balance milestone row.
 8. **Setup.**
    - `bash tools/check.sh` passes and prints no `note:` about typing or hooks.
-   - The `.gitignore` and `.gitattributes` lines that install.sh adds are still there. If any are missing, rerun the installer.
-9. **Report.** Say what you fixed and what needs the human. Recommend a drift reset (`drift-reset.md`) when a conflict comes back that `design/decisions.md` shows was already settled, or one conflict involves several Design Pillars; patching those one place at a time makes them worse. Only the human starts one. Commit the fixes as `docs: align` after the human approves; during onboarding they go into the install commit instead.
+   - The `.gitignore` and `.gitattributes` lines that install.sh adds are still there (among them `/design/ui/captures/`). If any are missing, rerun the installer.
+9. **Screens** (skip it when the game has no `tools/ui_screens.gd`). Report what is missing; none of it fails the pass.
+   - `bash tools/ui_capture.sh --missing` lists the screen scenes (a root script in `tools/check.cfg` › `[screens] dirs`) with no catalog entry and not in `tools/ui_capture.cfg` › `[capture] skip`. With no screen folders set it says so, and nothing is listed.
+   - Every `design/ui/<screen>.md` names a scene or catalog entry that exists, and every unique name its Layout table lists (`%GearList`) is in that scene or in the script that builds it.
+   - Every `director/ui/<screen>.excalidraw` has a spec whose recorded sha1 matches the file (`sha1sum`, or `shasum` on macOS). A newer drawing: report "drawing changed since it was processed".
+   - Every item's `UI:` points at an existing spec.
+   - On an upgrade, this is the check that lists the game's screens the catalog doesn't cover yet.
+10. **Report.** Say what you fixed and what needs the human. Recommend a drift reset (`drift-reset.md`) when a conflict comes back that `design/decisions.md` shows was already settled, or one conflict involves several Design Pillars; patching those one place at a time makes them worse. Only the human starts one. Commit the fixes as `docs: align` after the human approves; during onboarding they go into the install commit instead.

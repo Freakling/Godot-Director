@@ -14,6 +14,7 @@ func _ready() -> void:
 	_sell.pressed.connect(_on_sell_pressed)
 	_next_day.pressed.connect(_on_next_day_pressed)
 	_refresh()
+	_buy.grab_focus()   # keyboard and controller players start on Buy
 
 
 func _refresh() -> void:

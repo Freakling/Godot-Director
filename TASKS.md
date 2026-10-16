@@ -4,9 +4,29 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T7 · B2
+**Next IDs:** T10 · B2
 
 ## Queue
+
+### T9 · /ui-design: verify and the workflow hooks · done · M · agent
+- Depends on: T8
+- Touches: framework/tools/ui_verify.gd (new), framework/tools/ui_overlay.gd, framework/tools/ui_drawing.gd, framework/tools/ui_capture.gd, framework/tools/ui_capture.sh, framework/tools/ui_catalog.gd, framework/tools/check.sh, framework/.godot-director/procedures/ui-design.md, framework/.godot-director/procedures/build.md, framework/.godot-director/procedures/review.md, framework/.godot-director/procedures/function-check.md, framework/.godot-director/procedures/align.md, framework/.godot-director/rules.md, framework/.claude/skills/ui-design/SKILL.md, project/tools/ui_capture.cfg, project/AGENTS.md, examples/market-day/tools/ui_capture.cfg, examples/market-day/AGENTS.md, examples/market-day/.gitignore, install.sh, README.md, ONBOARDING.md, selftest.sh, CHANGELOG.md
+- Done when: `/ui-design verify` captures a screen, lists its deviations from the spec in a table and writes compare images, and on a fixture built as its spec says reports none, while moving one node 10% reports exactly that element (test) · the build, review, function check and align procedures use the screen spec, and align lists screens missing from the catalog without failing (check) · `check.sh` with `check_in_check=true` and a screen under `enforce` fails on a lint finding and passes otherwise, and with the defaults the check is unchanged (test) · a project upgraded from v3.10.0 gets the stubs, the `.gitignore` line and the manifest entries, keeps its own AGENTS.md and check.cfg, and ends with the lint off (test) · a catalog entry's `overlays` put a HUD an autoload draws into the capture (test) · every step of the procedure has a text path for a tool that can't view images (check)
+- GDD: (none)
+- Source: Director-Driven-Development T83
+
+### T8 · /ui-design: drawings and screen specs · done · M · agent
+- Depends on: T7
+- Touches: framework/tools/ui_drawing.gd (new), framework/tools/ui_capture.gd, framework/.godot-director/procedures/ui-design.md, framework/.godot-director/procedures/design.md, framework/.godot-director/tasks.md, framework/.godot-director/rules.md, framework/.claude/skills/ui-design/SKILL.md, project/design/ui/README.md (new), examples/market-day/design/ui/README.md (new), ONBOARDING.md, tests/ui-drawing/ (new), selftest.sh, CHANGELOG.md
+- Done when: `capture` writes a starter drawing, a valid Excalidraw file with the screenshot locked in a frame named after the screen, which saved unchanged and read back gives no boxes and nothing unparsed (test) · the reader gives exactly the expected `drawing.json` for a fixture drawing (a green box with bound text and `click:`, a blue box over an existing element, a red X, an arrowed comment, a nested box, a note outside the frame, a freehand squiggle), and the same percentages when the background image is moved and scaled 50% (test) · `/ui-design process` reads a drawing through `drawing.json`, confirms its reading, settles open points and records the screen spec, decisions and items with the `UI:` field (check)
+- GDD: (none)
+- Source: Director-Driven-Development T82
+
+### T7 · /ui-design: screen capture, catalog and lint · done · L · agent
+- Touches: framework/tools/ui_capture.sh (new), framework/tools/ui_capture.gd (new), framework/tools/ui_catalog.gd (new), framework/tools/ui_lint.gd (new), framework/tools/ui_overlay.gd (new), project/tools/ui_screens.gd (new), project/tools/ui_capture.cfg (new), framework/.godot-director/procedures/ui-design.md (new), framework/.claude/skills/ui-design/SKILL.md (new), framework/.godot-director/rules.md, framework/.claude/settings.json, install.sh, examples/market-day/tools/ui_screens.gd (new), examples/market-day/tools/ui_capture.cfg (new), examples/market-day/.gitignore, examples/market-day/.gitattributes, examples/market-day/scripts/ui/shop_screen.gd, selftest.sh, CHANGELOG.md
+- Done when: `/ui-design list` prints the catalog and `capture` writes a PNG, element map, map image and lint file per catalog screen, state and size, exit 0, with nothing in `user://`, at any size whatever the monitor (check) · the lint catches each of its seven rules on a fixture screen built to break it and reports nothing on a clean one (test) · a screen whose setup errors fails with exit 1 while the others are captured, and capture exits 3 when it can't run (test) · the selftest checks the wiring and the install (test)
+- GDD: (none)
+- Source: Director-Driven-Development T81
 
 ### T6 · CI export and CD release · done · M · agent
 - Touches: framework/.godot-director/procedures/release.md (new), framework/.claude/skills/release/SKILL.md (new), framework/.godot-director/templates/release-workflow.yml (new), framework/tools/release.sh (new), framework/.godot-director/rules.md, ONBOARDING.md, README.md, examples/scenarios.md, examples/market-day/.gitignore, framework/tools/release.sh (new), selftest.sh, CHANGELOG.md

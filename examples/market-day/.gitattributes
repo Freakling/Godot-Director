@@ -6,4 +6,5 @@
 /.claude/** text eol=lf
 /tools/check.gd text eol=lf
 /tools/test_case.gd text eol=lf
+/tools/ui_*.gd text eol=lf
 /playtesting/README.md text eol=lf

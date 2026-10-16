@@ -44,6 +44,7 @@ Then ask: "Anything I've missed, or shall we begin?"
    - Suggest reorders; don't make them.
 5. **Numbers** stay placeholders. Say what a value is for and how it should feel; the human tunes it in the `.tres`.
 6. **Pillars:** if an idea contradicts a Design Pillar, stop and ask which gives way, the pillar or the idea.
+7. **Layout:** where things sit on a screen goes to `ui-design.md`. A design session settles what a screen is for, not where its elements are.
 
 ## Finish
 - Summarise what was decided, what's still open, and the next most useful question.

@@ -8,6 +8,7 @@ These rules apply to any AI assistant working in this project. For each of these
 - **research.md:** research a question in a fresh context and save a dated note in `design/research/`, for a design call or a decision about plugins, assets, export or stores. It informs; the human decides. Domain reference: `.godot-director/research-domain.md`.
 - **export.md:** export the game with Godot headless into `builds/` (`/export`), or set exports up: target platforms and where exports run. Setting up is a design session on the export open question.
 - **release.md:** release the game's builds (`/release`): run the human's own upload command per export preset to a platform's UAT branch, and promote to production only when asked; or set release up: the commands, and the CI secrets they need. Setting up is a design session on the release open question.
+- **ui-design.md:** capture the screens (`/ui-design`): a PNG per screen, state and size, with an element map, a numbered map image, layout lint and a starter drawing; process the human's Excalidraw drawing of a screen into a screen spec and items; verify a built screen against its spec and write compare images; list the screens in the catalog.
 - **playtest.md:** new playtest, process a playtest.
 - **function-check.md:** prepare or process a function check.
 - **align.md:** check the docs and tasks are aligned.
@@ -36,6 +37,8 @@ In Claude Code these are also slash commands, and builds, reviews and research r
 | Why a design decision was made | `design/decisions.md` (append-only) |
 | The evidence behind a design call | `design/research/`, one dated note per topic; the decision line links to it |
 | Which systems exist and what each owns | `AGENTS.md` › Architecture |
+| How each screen is laid out | `design/ui/<screen>.md`, one spec per screen (`procedures/ui-design.md`) |
+| The human's screen drawings | `director/ui/` (Excalidraw files; read-only for you) |
 | Work, bugs, research, milestones | `TASKS.md` (format: `.godot-director/tasks.md`; done items: `TASKS-archive.md`) |
 | Tunable values | `.tres` files (folders in AGENTS.md › Layout) |
 | Whether it works | `bash tools/check.sh` |
@@ -47,7 +50,7 @@ Update the owning place in the same change that makes it untrue. Replace superse
 - **Screens.** Screens show state and call system methods. They never roll random numbers or assign to autoload variables; the check fails if they do (screen folders are set in `tools/check.cfg`). Cosmetic randomness, such as screen shake or tips, goes in a helper outside the screen folders.
 - **Tunables.** Tunables are `@export` fields on a Resource schema. A new one gets a placeholder default marked in the schema, `@export var drain_rate: float = 1.0 ## PLACEHOLDER`, and is never hand-picked as final. Don't put labels inside `.tres` files; Godot rewrites them on save.
 - **Saves and settings.** They're plain data: `to_dict()`/`from_dict()` as JSON in `user://` (JSON numbers come back as floats; cast them). Never load `.tres`/`.res`, `ConfigFile` or `str_to_var` data from `user://` or any file a player can edit: those formats can instantiate scripts. The check runs autoloads, so an autoload must not read or write player data while `Engine.has_meta("godot_director_check")` is true.
-- **UI.** Use Containers and anchors; no hard-coded pixel positions for Controls.
+- **UI.** Use Containers and anchors; no hard-coded pixel positions for Controls. Every screen has an entry in the catalog, `tools/ui_screens.gd`; add or update it whenever you add or change a view. Elements a screen spec names get a unique node name (`%GearList`) that the spec, element maps and tests share. A capture (`tools/ui_capture.sh`) sets both `godot_director_check` and `godot_director_capture`, so an autoload that honours the check's meta (Saves and settings) also reads and writes no player data during a capture.
 - **Placeholder art.** Use Godot primitives and flat colours under a node named `Visual`, so production art replaces it without restructuring the scene. No external models, textures or audio unless the human asks.
 - **Debug-only tools.** Gate them on `OS.is_debug_build() or OS.has_feature("dev_tools")`. Release export presets don't set `dev_tools` and exclude the tools' folder. To see live state, use the editor's Remote scene tree instead of building an inspector.
 - **GDScript.** Godot 4 and statically typed (`untyped_declaration` is an error). Use only Godot 4 forms: `@export`, `@onready`, `await`, `super()`, `signal hit(damage: int)`, `hit.connect(_on_hit)`, `CharacterBody2D`. Never `export var`, `onready var`, `yield`, `KinematicBody` or `connect("hit", self, "_on_hit")`.

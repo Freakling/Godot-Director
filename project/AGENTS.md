@@ -19,6 +19,7 @@ Instructions for AI assistants working on this game. The workflow is Godot Direc
 | `scenes/` | scenes |
 | `data/` | `.tres` content: the values the human tunes |
 | `tests/` | rule tests (`test_*.gd`) |
+| `design/ui/` | screen specs (one per screen) and `captures/` (gitignored); the director's drawings are in `director/ui/` |
 
 ## Architecture
 One row per system: what it owns and where its boundary is. Screens depend on systems, never the other way round.
@@ -35,6 +36,7 @@ Owner: agent | human | shared. For human-owned areas, the agent uses the placeho
 <!-- | Art / sprites / textures | human | `ColorRect` under `Visual` node, labelled | -->
 <!-- | Audio / music / SFX     | human | `AudioStreamPlayer`, no stream, named     | -->
 <!-- | director/               | human | read-only for the agent                   | -->
+<!-- | UI / screen layout      | director designs (director/ui/), agent builds | minimal functional screen, commented for redesign | -->
 
 ## Project rules
 <!-- Only where this project differs from the Godot Director defaults, as agreed with the human.
