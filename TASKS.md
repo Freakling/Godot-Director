@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T12 · B3
+**Next IDs:** T13 · B3 · R1
 
 ## Queue
+
+### T12 · The repository's own queue has a research counter · done · XS · agent
+- Touches: TASKS.md
+- Done when: `Next IDs` carries the `R` counter that `align.md` asks for, `· R1` (check)
+- GDD: (none)
+- Source: Director-Driven-Development T119
 
 ### T10 · The repository ignores OS metadata files · done · XS · agent
 - Touches: .gitignore, CHANGELOG.md
