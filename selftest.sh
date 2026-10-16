@@ -495,6 +495,37 @@ for cmd in 'git status --short' 'git commit -m "feat: x (T12)" -- a.gd' 'git com
   guard 0 "$cmd"
 done
 
+# --- protected-space guard (Claude Code PreToolUse hook) ----------------------------------------
+# Claude Code sends the path as given: relative, absolute POSIX, or Windows (JSON-escaped). The
+# project root is $CLAUDE_PROJECT_DIR (the Windows cases pass a made-up root; the hook only reads text).
+echo "protected-space guard"
+guard_write() { # guard_write <expected exit> <what> <file_path as sent (JSON-escaped)> [project dir]
+  local out got
+  out="$(printf '{"session_id":"s","tool_name":"Write","tool_input":{"file_path":"%s","content":"x"}}' "$3" \
+    | CLAUDE_PROJECT_DIR="${4:-$game}" bash .claude/hooks/guard-protected.sh 2>&1)"
+  got=$?
+  if [ "$got" -eq "$1" ]; then ok "$([ "$1" -eq 2 ] && echo blocks || echo allows): $2"; else bad "guard-protected exit $got, expected $1: $2" "$out"; fi
+}
+guard_write 2 "relative director/x" 'director/x'
+guard_write 2 "./director/x" './director/x'
+guard_write 2 "x/../director/y" 'x/../director/y'
+guard_write 2 "absolute POSIX <root>/director/x" "$game/director/x"
+guard_write 2 "Windows C:\\...\\director\\x (escaped backslashes)" 'C:\\git\\Proj\\director\\x' 'C:\git\Proj'
+guard_write 2 "Windows C:/.../director/x" 'C:/git/Proj/director/x' 'C:\git\Proj'
+guard_write 2 "Git Bash /c/.../director/x" '/c/git/Proj/director/x' 'C:\git\Proj'
+guard_write 2 "Windows path, project root given in Git Bash form" 'C:\\git\\Proj\\director\\x' '/c/git/Proj'
+guard_write 0 "relative docs/director-notes.md" 'docs/director-notes.md'
+guard_write 0 "absolute <root>/docs/director-notes.md" "$game/docs/director-notes.md"
+guard_write 0 "relative src/director/x.gd (nested folder)" 'src/director/x.gd'
+guard_write 0 "absolute <root>/src/director/x.gd (nested folder)" "$game/src/director/x.gd"
+guard_write 0 "outside the project root" '/nonexistent/elsewhere/director/x'
+guard_write 0 "Windows path outside the project root" 'D:\\other\\director\\x' 'C:\git\Proj'
+guard_write 0 "Windows sibling folder with the root's name as a prefix" 'C:\\git\\Proj-old\\director\\x' 'C:\git\Proj'
+guard_write 0 "../director/x (outside the project root)" '../director/x'
+out="$(printf '%s' '{"tool_name":"Edit","tool_input":{"file_path":"director/x"}}' | env -u CLAUDE_PROJECT_DIR bash .claude/hooks/guard-protected.sh 2>&1)"
+got=$?
+if [ "$got" -eq 2 ]; then ok "blocks a relative path against the current directory when CLAUDE_PROJECT_DIR is unset"; else bad "guard-protected without CLAUDE_PROJECT_DIR exit $got, expected 2" "$out"; fi
+
 if [ -z "$godot" ]; then
   echo "check and hooks: skipped (pass the path to Godot 4.3+ to test them)"
   finish
