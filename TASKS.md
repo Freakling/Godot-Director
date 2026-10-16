@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T7 · B2
+**Next IDs:** T8 · B2
 
 ## Queue
+
+### T7 · /ui-design: screen capture, catalog and lint · done · L · agent
+- Touches: framework/tools/ui_capture.sh (new), framework/tools/ui_capture.gd (new), framework/tools/ui_catalog.gd (new), framework/tools/ui_lint.gd (new), framework/tools/ui_overlay.gd (new), project/tools/ui_screens.gd (new), project/tools/ui_capture.cfg (new), framework/.godot-director/procedures/ui-design.md (new), framework/.claude/skills/ui-design/SKILL.md (new), framework/.godot-director/rules.md, framework/.claude/settings.json, install.sh, examples/market-day/tools/ui_screens.gd (new), examples/market-day/tools/ui_capture.cfg (new), examples/market-day/.gitignore, examples/market-day/.gitattributes, examples/market-day/scripts/ui/shop_screen.gd, selftest.sh, CHANGELOG.md
+- Done when: `/ui-design list` prints the catalog and `capture` writes a PNG, element map, map image and lint file per catalog screen, state and size, exit 0, with nothing in `user://`, at any size whatever the monitor (check) · the lint catches each of its seven rules on a fixture screen built to break it and reports nothing on a clean one (test) · a screen whose setup errors fails with exit 1 while the others are captured, and capture exits 3 when it can't run (test) · the selftest checks the wiring and the install (test)
+- GDD: (none)
+- Source: Director-Driven-Development T81
 
 ### T6 · CI export and CD release · done · M · agent
 - Touches: framework/.godot-director/procedures/release.md (new), framework/.claude/skills/release/SKILL.md (new), framework/.godot-director/templates/release-workflow.yml (new), framework/tools/release.sh (new), framework/.godot-director/rules.md, ONBOARDING.md, README.md, examples/scenarios.md, examples/market-day/.gitignore, framework/tools/release.sh (new), selftest.sh, CHANGELOG.md

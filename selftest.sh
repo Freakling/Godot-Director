@@ -79,7 +79,7 @@ for doc in "$src"/framework/.godot-director/rules.md "$src"/framework/.godot-dir
   for ref in $(grep -o '[a-z-]*\.md' "$doc" | sort -u); do
     case "$ref" in
       rules.md|tasks.md|research-domain.md) [ -f "$src/framework/.godot-director/$ref" ] || missing="$missing $(basename "$doc")→$ref" ;;
-      next-task.md|build.md|design.md|research.md|playtest.md|function-check.md|align.md|drift-reset.md|prune.md|review.md|refresh-model-sizing.md)
+      next-task.md|build.md|design.md|research.md|playtest.md|function-check.md|align.md|drift-reset.md|prune.md|review.md|refresh-model-sizing.md|ui-design.md)
         [ -f "$src/framework/.godot-director/procedures/$ref" ] || missing="$missing $(basename "$doc")→$ref" ;;
     esac
   done
@@ -184,6 +184,31 @@ expect_no_output "release.sh never prints a secret value" "hunter2" "$out"
 out="$(cd "$rel" && RELEASE_TEST_SECRET=x bash "$src/framework/tools/release.sh" production Web 2>&1)"; expect_output "release.sh runs the production command only when asked for it" "^uploading-production$" "$out"
 out="$(cd "$rel" && RELEASE_TEST_SECRET=x bash "$src/framework/tools/release.sh" uat 2>&1)"; expect_status "release.sh refuses a preset with no build" 2 $? "$out"
 out="$(cd "$work" && bash "$src/framework/tools/release.sh" uat 2>&1)"; expect_status "release.sh needs release.cfg" 2 $? "$out"
+# UI design: the procedure, skill, capture tools and seeds exist and are wired in.
+missing=""
+for file in framework/.godot-director/procedures/ui-design.md framework/.claude/skills/ui-design/SKILL.md \
+    framework/tools/ui_capture.sh framework/tools/ui_capture.gd framework/tools/ui_catalog.gd framework/tools/ui_lint.gd \
+    framework/tools/ui_overlay.gd project/tools/ui_screens.gd project/tools/ui_capture.cfg \
+    examples/market-day/tools/ui_screens.gd examples/market-day/tools/ui_capture.cfg; do
+  [ -f "$src/$file" ] || missing="$missing $file"
+done
+[ -z "$missing" ] && ok "the ui-design procedure, skill, capture tools and seeds exist" || bad "ui-design files missing:$missing"
+wired=""
+uiproc="$proc/procedures/ui-design.md"
+grep -q 'ui-design\.md' "$proc/rules.md" || wired="$wired rules.md(procedure)"
+grep -q 'tools/ui_screens\.gd' "$proc/rules.md" && grep -q 'godot_director_capture' "$proc/rules.md" || wired="$wired rules.md(UI)"
+grep -q 'ui-design\.md' "$src/framework/.claude/skills/ui-design/SKILL.md" || wired="$wired skills/ui-design"
+grep -q 'ui_capture\.sh --list' "$uiproc" && grep -q 'design/ui/captures/' "$uiproc" && grep -q 'Exit 3' "$uiproc" \
+  && grep -q '\.elements\.json' "$uiproc" && grep -q '\.map\.png' "$uiproc" && grep -q '\.lint\.txt' "$uiproc" || wired="$wired ui-design.md(list, capture, outputs)"
+for rule in squeezed-text stretched-control off-screen overlap unreachable no-default-focus hard-coded-position; do
+  grep -q "\"$rule\"" "$src/framework/tools/ui_lint.gd" && grep -q "\`$rule\`" "$uiproc" || wired="$wired lint($rule)"
+done
+grep -q '"Bash(bash tools/ui_capture.sh \*)"' "$settings" || wired="$wired settings.json"
+grep -q '"/design/ui/captures/"' "$src/install.sh" && grep -q '^/design/ui/captures/$' "$src/examples/market-day/.gitignore" || wired="$wired captures gitignore line"
+grep -q '"/tools/ui_\*\.gd text eol=lf"' "$src/install.sh" || wired="$wired .gitattributes line"
+grep -q '^extends "res://tools/ui_catalog\.gd"$' "$src/project/tools/ui_screens.gd" || wired="$wired ui_screens.gd seed"
+[ -z "$wired" ] && ok "ui-design is wired into the rules, the skill, the settings, the lint and the installer's lines" \
+  || bad "ui-design isn't wired into:$wired"
 # The old name (Claude4Godot, 2.x and earlier) is left only in history and in the 2.x migration.
 allowed=" CHANGELOG.md install.sh selftest.sh ONBOARDING.md framework/tools/check.gd framework/tools/check.sh framework/tools/setup-clone.sh "
 leftovers=""
@@ -235,6 +260,12 @@ if [ -f .godot-director/procedures/release.md ] && [ -f .godot-director/template
   ok "installs /release: procedure, workflow template, skill and tools/release.sh"
 else
   bad "installs /release: procedure, workflow template, skill and tools/release.sh" "$out"
+fi
+if [ -x tools/ui_capture.sh ] && [ -f tools/ui_capture.gd ] && [ -f tools/ui_lint.gd ] && [ -f .claude/skills/ui-design/SKILL.md ] \
+    && grep -q '^/design/ui/captures/$' .gitignore && grep -q '"shop"' tools/ui_screens.gd; then
+  ok "installs /ui-design: procedure, skill, capture tools and the captures gitignore line, keeping the game's catalog"
+else
+  bad "installs /ui-design: procedure, skill, capture tools and the captures gitignore line, keeping the game's catalog" "$out"
 fi
 grep -q "Market Day" AGENTS.md && ok "keeps the project's own files" || bad "keeps the project's own files"
 [ -z "$(git status --porcelain)" ] && ok "adds no duplicate .gitignore/.gitattributes lines" || bad "adds no duplicate lines" "$(git status --porcelain)"
@@ -332,10 +363,10 @@ else
   bad "--tools none installs the tool-neutral core only" "$out"
 fi
 if [ -f "$core_only/.godot-director/procedures/research.md" ] && [ -f "$core_only/.godot-director/research-domain.md" ] \
-    && [ -f "$core_only/design/research/README.md" ] && grep -q '^\*\*Next IDs:\*\* T[0-9]* · B[0-9]* · R[0-9]*$' "$core_only/TASKS.md"; then
-  ok "a new game gets the research procedure and domain file, the note folder, and an R counter in TASKS.md, even with --tools none"
+    && [ -f "$core_only/design/research/README.md" ] && [ -f "$core_only/tools/ui_screens.gd" ] && [ -f "$core_only/tools/ui_capture.cfg" ] && grep -q '^\*\*Next IDs:\*\* T[0-9]* · B[0-9]* · R[0-9]*$' "$core_only/TASKS.md"; then
+  ok "a new game gets the research procedure and domain file, the note folder, the screen catalog and capture settings, and an R counter in TASKS.md, even with --tools none"
 else
-  bad "a new game gets the research procedure and domain file, the note folder, and an R counter in TASKS.md" "$out"
+  bad "a new game gets the research procedure and domain file, the note folder, the screen catalog and capture settings, and an R counter in TASKS.md" "$out"
 fi
 # Installing from a Godot Director folder that is itself a git clone, or sits inside the game.
 gdir_clone="$work/gdir-clone"; cp -R "$src" "$gdir_clone"; rm -rf "$gdir_clone/.git"
@@ -533,5 +564,314 @@ bash "$src/install.sh" "$no_project" >/dev/null 2>&1
 (cd "$no_project" && printf '%s\n' "$godot" > tools/godot_bin.local && bash tools/setup-clone.sh >/dev/null 2>&1 \
   && git add -A && git_q commit -qm "install" >/dev/null 2>&1)
 expect_status "commits in a repository without project.godot yet" 0 $?
+
+# --- screen capture (/ui-design) ----------------------------------------------------------------
+echo "ui capture"
+captures=design/ui/captures
+out="$(GODOT_BIN=/nonexistent/godot bash tools/ui_capture.sh --all 2>&1)"; expect_status "capture exits 3 without Godot" 3 $? "$out"
+[ ! -e "$captures" ] && ok "and writes nothing" || bad "capture without Godot wrote $captures"
+out="$(bash tools/ui_capture.sh --list 2>&1)"; expect_status "lists the catalog" 0 $? "$out"
+expect_output "lists each screen with its states and scene" "^shop · Shop screen · states: default, closed · opens res://scenes/shop_screen\.tscn · drawing: no · spec: no$" "$out"
+
+# Lint fixtures: a screen built to break each rule, and a clean one. Headless, so no display needed.
+cp tools/ui_screens.gd "$work/saved-catalog"
+write_fixtures() {
+  mkdir -p ui_fixtures
+  cat > ui_fixtures/hard_coded.tscn <<'EOF'
+[gd_scene format=3]
+
+[node name="HardCoded" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="Column" type="VBoxContainer" parent="."]
+layout_mode = 0
+offset_right = 200.0
+offset_bottom = 120.0
+
+[node name="Placed" type="Button" parent="Column"]
+layout_mode = 2
+offset_left = 120.0
+offset_top = 40.0
+text = "Placed"
+EOF
+  cat > tools/ui_screens.gd <<'EOF'
+extends "res://tools/ui_catalog.gd"
+## Selftest fixtures: one screen per lint rule, built to break it, and a clean one.
+
+
+func screens() -> Array[Dictionary]:
+	return [
+		{"id": "clean", "title": "Clean", "setup": _clean},
+		{"id": "squeezed", "title": "Squeezed label", "setup": _squeezed},
+		{"id": "stretched", "title": "Stretched button", "setup": _stretched},
+		{"id": "offscreen", "title": "Off-screen button", "setup": _offscreen},
+		{"id": "overlap", "title": "Overlapping buttons", "setup": _overlap},
+		{"id": "unreachable", "title": "Unreachable button", "setup": _unreachable},
+		{"id": "nofocus", "title": "No default focus", "setup": _nofocus},
+		{"id": "hardcoded", "title": "Hard-coded position", "scene": "res://ui_fixtures/hard_coded.tscn", "setup": _hardcoded},
+		{"id": "pickable", "title": "3D pickable", "setup": _pickable},
+		{"id": "rows", "title": "Rows built in code", "setup": _rows},
+	]
+
+
+func _page() -> Control:
+	var page: Control = Control.new()
+	page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	screen_root().add_child(page)
+	return page
+
+
+func _centred(page: Control, box: Container) -> Container:
+	var center: CenterContainer = CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	page.add_child(center)
+	center.add_child(box)
+	return box
+
+
+func _button(parent: Node, text: String) -> Button:
+	var button: Button = Button.new()
+	button.text = text
+	parent.add_child(button)
+	return button
+
+
+func _clean() -> Node:
+	var page: Control = _page()
+	var box: Container = _centred(page, VBoxContainer.new())
+	var label: Label = Label.new()
+	label.text = "A clean screen"
+	box.add_child(label)
+	var small: Label = Label.new()
+	small.text = "Small print, in its own label settings"
+	small.label_settings = LabelSettings.new()
+	small.label_settings.font_size = 8
+	box.add_child(small)
+	focus_default(_button(box, "Start"))
+	_button(box, "Quit")
+	return page
+
+
+func _squeezed() -> Node:
+	var page: Control = _page()
+	var box: Container = _centred(page, HBoxContainer.new())
+	var label: Label = Label.new()
+	label.text = "Belt: Simple"
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(label)
+	var equip: Button = _button(box, "Equip")
+	equip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	focus_default(equip)
+	return page
+
+
+func _stretched() -> Node:
+	var page: Control = _page()
+	var box: Container = _centred(page, HBoxContainer.new())
+	var portrait: ColorRect = ColorRect.new()
+	portrait.custom_minimum_size = Vector2(100, 300)
+	box.add_child(portrait)
+	focus_default(_button(box, "Repair"))
+	return page
+
+
+func _offscreen() -> Node:
+	var page: Control = _page()
+	var far: Button = _button(page, "Far away")
+	far.position = Vector2(page.get_viewport_rect().size.x - 20, 20)
+	focus_default(far)
+	return page
+
+
+func _overlap() -> Node:
+	var page: Control = _page()
+	var under: Button = _button(page, "Under")
+	under.position = Vector2(100, 100)
+	under.size = Vector2(120, 40)
+	var over: Button = _button(page, "Over")
+	over.position = Vector2(150, 110)
+	over.size = Vector2(120, 40)
+	focus_default(under)
+	return page
+
+
+func _unreachable() -> Node:
+	var page: Control = _page()
+	var box: Container = _centred(page, VBoxContainer.new())
+	var one: Button = _button(box, "One")
+	var two: Button = _button(box, "Two")
+	_button(box, "Three")
+	for pair: Array in [[one, two], [two, one]]:
+		var from: Button = pair[0]
+		var to: NodePath = from.get_path_to(pair[1] as Node)
+		var stay: NodePath = from.get_path_to(from)
+		from.focus_next = to
+		from.focus_previous = to
+		from.focus_neighbor_top = to
+		from.focus_neighbor_bottom = to
+		from.focus_neighbor_left = stay
+		from.focus_neighbor_right = stay
+	focus_default(one)
+	return page
+
+
+func _nofocus() -> Node:
+	var page: Control = _page()
+	_button(_centred(page, VBoxContainer.new()), "Start")
+	return page
+
+
+func _hardcoded() -> Node:
+	var view: Node = open_view("res://ui_fixtures/hard_coded.tscn")
+	focus_default(view)
+	return view
+
+
+func _pickable() -> Node:
+	var world: Node3D = Node3D.new()
+	var camera: Camera3D = Camera3D.new()
+	camera.position = Vector3(0, 0, 5)
+	world.add_child(camera)
+	var area: Area3D = Area3D.new()
+	area.name = "Chest"
+	var shape: CollisionShape3D = CollisionShape3D.new()
+	shape.shape = BoxShape3D.new()
+	area.add_child(shape)
+	world.add_child(area)
+	return world
+
+
+## Rows added at runtime, with names Godot picks; their ids must not depend on what ran before.
+func _rows() -> Node:
+	var page: Control = _page()
+	var box: Container = _centred(page, VBoxContainer.new())
+	for row: int in 3:
+		var label: Label = Label.new()
+		label.text = "Row %d" % row
+		box.add_child(label)
+	focus_default(_button(box, "Done"))
+	return page
+EOF
+}
+write_fixtures
+lint_fixtures() { # lint_fixtures <how>: each broken fixture gets exactly its own rule; the clean one nothing
+  local rule file found
+  [ ! -s "$captures/clean@1280x720.lint.txt" ] && [ -f "$captures/clean@1280x720.lint.txt" ] \
+    && ok "lint reports nothing on a clean screen ($1)" || bad "lint on the clean fixture ($1)" "$(cat "$captures/clean@1280x720.lint.txt" 2>&1)"
+  for rule in squeezed-text:squeezed stretched-control:stretched off-screen:offscreen overlap:overlap unreachable:unreachable \
+      no-default-focus:nofocus hard-coded-position:hardcoded; do
+    file="$captures/${rule#*:}@1280x720.lint.txt"
+    found="$(cut -d ' ' -f 1 "$file" 2>/dev/null | tr '\n' ' ')"
+    [ "$found" = "${rule%%:*} " ] && ok "lint catches ${rule%%:*} ($1)" || bad "lint on the ${rule#*:} fixture ($1): found '$found'" "$(cat "$file" 2>&1)"
+  done
+}
+out="$(bash tools/ui_capture.sh --all --no-images --size 1280x720 2>&1)"; expect_status "--no-images maps and lints the fixtures headless" 0 $? "$out"
+lint_fixtures "headless"
+grep -q '"id":"Chest","path":"Node3D#[0-9]*/Chest","kind":"Area3D"' "$captures/pickable@1280x720.elements.json" 2>/dev/null \
+  && ok "maps a clickable 3D object through the camera" || bad "maps a clickable 3D object through the camera" "$(cat "$captures/pickable@1280x720.elements.json" 2>&1)"
+[ ! -e "$captures/clean@1280x720.png" ] && ok "--no-images writes no images" || bad "--no-images writes no images"
+grep -q '"id":"Label#1","stable":false,"path":"Control#[0-9]*/CenterContainer#0/VBoxContainer#0/Label#1"' "$captures/rows@1280x720.elements.json" 2>/dev/null \
+  && ok "names a node Godot named by its class and place" || bad "names a node Godot named by its class and place" "$(head -n 8 "$captures/rows@1280x720.elements.json" 2>&1)"
+cp "$captures/rows@1280x720.elements.json" "$work/rows-all"
+out="$(bash tools/ui_capture.sh rows --no-images --size 1280x720 2>&1)"
+cmp -s "$captures/rows@1280x720.elements.json" "$work/rows-all" && ok "a screen built in code maps the same alone as in --all" \
+  || bad "a screen built in code maps the same alone as in --all" "$(diff "$work/rows-all" "$captures/rows@1280x720.elements.json")"
+
+# A catalog with problems: each is named, the good screen is still captured, exit 1.
+cat > tools/ui_screens.gd <<'EOF'
+extends "res://tools/ui_catalog.gd"
+
+
+func screens() -> Array[Dictionary]:
+	return [
+		{"id": "good", "title": "Good", "setup": _good},
+		{"id": "good", "title": "Twice", "setup": _good},
+		{"id": "typo", "title": "Typo", "scen": "res://scenes/shop_screen.tscn"},
+		{"id": "missing", "title": "Missing", "scene": "res://nowhere.tscn"},
+		{"id": "broken", "title": "Broken", "setup": _broken},
+		{"id": "stuck", "title": "Stuck", "setup": _stuck},
+		{"id": "after", "title": "After", "setup": _good},
+	]
+
+
+func _good() -> Node:
+	return open_view("res://scenes/shop_screen.tscn")
+
+
+func _broken() -> Node:
+	var nothing: Node = null
+	nothing.get_name()
+	return null
+
+
+func _stuck() -> Node:
+	await tree().create_timer(600.0).timeout
+	return null
+EOF
+cp tools/ui_capture.cfg "$work/saved-capture-cfg"
+sed 's/^setup_timeout=.*/setup_timeout=2/' "$work/saved-capture-cfg" > tools/ui_capture.cfg
+out="$(bash tools/ui_capture.sh --all --no-images --size 1280x720 2>&1)"; expect_status "fails when a screen fails" 1 $? "$out"
+expect_output "names a duplicate id" "entry 2 \(good\): duplicate id" "$out"
+expect_output "names an unknown key" "entry 3 \(typo\): unknown key 'scen'" "$out"
+expect_output "names a missing scene" "entry 4 \(missing\): the scene res://nowhere\.tscn doesn't exist" "$out"
+expect_output "names the screen whose setup errors" "FAIL: broken@1280x720: its setup printed errors" "$out"
+head -n 1 "$captures/broken@1280x720.lint.txt" 2>/dev/null | grep -q '^error: SCRIPT ERROR' \
+  && ok "puts the setup's error at the top of its lint file" || bad "puts the setup's error at the top of its lint file"
+[ -f "$captures/good@1280x720.elements.json" ] && ok "goes on with the other screens" || bad "goes on with the other screens" "$out"
+expect_output "fails a setup that doesn't finish" "FAIL: stuck@1280x720: the setup didn't finish within 2 seconds" "$out"
+grep -q "^error: the setup didn't finish" "$captures/stuck@1280x720.lint.txt" 2>/dev/null && [ -f "$captures/after@1280x720.elements.json" ] \
+  && ok "writes that to its lint file and goes on" || bad "writes that to its lint file and goes on" "$out"
+cp "$work/saved-capture-cfg" tools/ui_capture.cfg
+out="$(bash tools/ui_capture.sh nowhere --no-images 2>&1)"; expect_output "refuses an unknown screen" "no screen 'nowhere'" "$out"
+cp "$work/saved-catalog" tools/ui_screens.gd; rm -rf ui_fixtures "$captures"
+
+# The example's screens with a display: every state and size, nothing in user://, repeatable.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) user_data="$(cygpath -u "$APPDATA")/Godot/app_userdata/Market Day" ;;
+  Darwin) user_data="$HOME/Library/Application Support/Godot/app_userdata/Market Day" ;;
+  *) user_data="${XDG_DATA_HOME:-$HOME/.local/share}/godot/app_userdata/Market Day" ;;
+esac
+mkdir -p "$user_data" && : > "$work/before-capture" && sleep 1
+out="$(bash tools/ui_capture.sh --all 2>&1)"; status=$?
+if [ "$status" -eq 3 ]; then
+  echo "  skip  capture with a display: $(printf '%s' "$out" | tail -n 1)"
+else
+  expect_status "captures every screen in the example's catalog" 0 "$status" "$out"
+  missing=""
+  for base in shop shop.closed; do
+    for size in 1920x1080 2560x1080 1280x720; do
+      for ext in png elements.json map.png lint.txt; do
+        [ -f "$captures/$base@$size.$ext" ] || missing="$missing $base@$size.$ext"
+      done
+    done
+  done
+  [ -z "$missing" ] && ok "writes a PNG, element map, map image and lint file per screen, state and size" || bad "capture outputs missing:$missing" "$out"
+  [ "$(od -An -tu1 -j16 -N8 "$captures/shop@2560x1080.png" | tr -s ' ' | sed 's/^ //')" = "0 0 10 0 0 0 4 56" ] \
+    && ok "a capture has the requested size (2560x1080)" || bad "a capture has the requested size (2560x1080)"
+  [ -z "$(cat "$captures"/shop*.lint.txt)" ] && ok "the example's screens are lint-clean" || bad "the example's screens are lint-clean" "$(cat "$captures"/shop*.lint.txt)"
+  out="$(bash tools/ui_capture.sh shop --state default --size 7680x4320 2>&1)"; expect_status "captures a size larger than any usual monitor (7680x4320)" 0 $? "$out"
+  [ "$(od -An -tu1 -j16 -N8 "$captures/shop@7680x4320.png" | tr -s ' ' | sed 's/^ //')" = "0 0 30 0 0 0 16 224" ] \
+    && ok "at that size" || bad "the 7680x4320 capture has that size"
+  grep -q '"id":"Buy","stable":true,"path":"ShopScreen/Center/Layout/Buy","kind":"Button"' "$captures/shop@1920x1080.elements.json" \
+    && grep -q '"schema": 1, "adapter": "godot"' "$captures/shop@1920x1080.elements.json" \
+    && ok "the element map lists the unique-named controls" || bad "the element map lists the unique-named controls" "$(head -n 8 "$captures/shop@1920x1080.elements.json")"
+  [ -z "$(/usr/bin/find "$user_data" -type f -newer "$work/before-capture" 2>/dev/null)" ] && ok "writes nothing in user://" \
+    || bad "writes nothing in user://" "$(/usr/bin/find "$user_data" -type f -newer "$work/before-capture")"
+  cp "$captures/shop@1280x720.elements.json" "$work/first-map"; cp "$captures/shop@1280x720.map.png" "$work/first-map-image"
+  out="$(bash tools/ui_capture.sh shop --state default --size 1280x720 2>&1)"
+  cmp -s "$captures/shop@1280x720.elements.json" "$work/first-map" && ok "a second capture gives the same element map" \
+    || bad "a second capture gives the same element map" "$out"
+  rm -f "$captures/shop@1280x720.map.png"
+  out="$("$godot" --headless --path . --script tools/ui_overlay.gd -- map "$captures/shop@1280x720" 2>&1)"
+  cmp -s "$captures/shop@1280x720.map.png" "$work/first-map-image" && ok "ui_overlay.gd redraws the same map image headless" \
+    || bad "ui_overlay.gd redraws the same map image headless" "$out"
+  write_fixtures; rm -rf "$captures"
+  out="$(bash tools/ui_capture.sh --all --size 1280x720 2>&1)"; expect_status "captures the lint fixtures with a display" 0 $? "$out"
+  lint_fixtures "with a display"
+  cp "$work/saved-catalog" tools/ui_screens.gd; rm -rf ui_fixtures "$captures"
+fi
 
 finish

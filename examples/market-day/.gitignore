@@ -14,6 +14,11 @@
 /tools/test_case.gd
 /tools/setup-clone.sh
 /tools/release.sh
+/tools/ui_capture.sh
+/tools/ui_capture.gd
+/tools/ui_catalog.gd
+/tools/ui_lint.gd
+/tools/ui_overlay.gd
 /playtesting/README.md
 
 # Godot Director
@@ -21,3 +26,4 @@
 /.claude/settings.local.json
 *.gdir-new
 /builds/
+/design/ui/captures/
