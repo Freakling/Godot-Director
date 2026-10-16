@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T10 · B2
+**Next IDs:** T10 · B3
 
 ## Queue
+
+### B2 · The protected-space guard blocks absolute paths · done · S · agent · high
+- Touches: framework/.claude/hooks/guard-protected.sh, selftest.sh
+- Repro: with the project at `<root>`, Claude Code writes to `<root>/director/x` (absolute), or `C:\\...\\director\\x` on Windows → expected: the hook blocks it / actual: the hook allows it, because it matched `director/*` only against the path as written
+- Found in: Director-Driven-Development T85
+- GDD: (none)
 
 ### T9 · /ui-design: verify and the workflow hooks · done · M · agent
 - Depends on: T8
