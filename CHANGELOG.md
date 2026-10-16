@@ -2,7 +2,7 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
-## Unreleased
+## 3.13.0 (2026-10-16)
 
 - **Align checks the GDD against reality.** `align.md`'s item 6 is now "Brief against reality", in place of the Decisions spot-check. It reads the whole GDD, checks every statement of state (a section marked later or planned, a count, a list of what exists, a line saying work waits on something, "once X exists") against the built game, the done items and the latest releases, and checks every decision line since the last `docs: align` commit one by one, not a sample. Mechanical drift gets fixed; design calls are reported with the stale statement named.
   - **Upgrade steps:** none. The procedure is framework-owned and arrives on upgrade.
