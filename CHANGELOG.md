@@ -2,7 +2,7 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
-## Unreleased
+## 3.10.0 (2026-10-16)
 
 - **New: `/release` and a release step in onboarding** (`.godot-director/procedures/release.md`). CI exports on every change; CD uploads builds to a platform's UAT branch or channel and, when you ask, promotes them to production.
   - **You supply the upload commands; Godot Director knows no store.** `release.cfg` in the project root has one section per export preset with a `uat` command, an optional `production` command, and `secrets`, the names of the environment variables the commands read. It is committed; only names are in it, never values.
