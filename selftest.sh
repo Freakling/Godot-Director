@@ -131,6 +131,20 @@ grep -q '^\*\*Next IDs:\*\* T[0-9]* · B[0-9]* · R[0-9]*$' "$src/project/TASKS.
 grep -q '^\*\*Next IDs:\*\* T[0-9]* · B[0-9]* · R[0-9]*$' "$src/examples/market-day/TASKS.md" || wired="$wired market-day/TASKS.md(Next IDs)"
 [ -z "$wired" ] && ok "the research assistant is wired into the procedures, the item format, the seeds and the docs" \
   || bad "the research assistant isn't wired into:$wired"
+# The human-written GDD: the template ships as a seed (and in the example), is the director's own
+# structure, and onboarding and the README present it.
+wired=""
+for file in project/design/director-gdd.md examples/market-day/design/director-gdd.md; do
+  grep -q '^# Game Design Document (GDD): ' "$src/$file" && grep -q '^\* \*\*Elevator Pitch:\*\*' "$src/$file" \
+    && grep -q '^## 7\. Milestone Roadmap' "$src/$file" || wired="$wired $file"
+done
+cmp -s "$src/project/design/director-gdd.md" "$src/examples/market-day/design/director-gdd.md" || wired="$wired example copy differs from the seed"
+grep -q 'design/director-gdd\.md' "$src/ONBOARDING.md" && grep -q '(from your document)' "$src/ONBOARDING.md" \
+  && grep -q '(inferred, please confirm)' "$src/ONBOARDING.md" && grep -q 'alternative to the chat interview or an addition to it' "$src/ONBOARDING.md" \
+  && grep -q 'sets the stage for later development' "$src/ONBOARDING.md" || wired="$wired ONBOARDING.md"
+grep -q 'design/director-gdd\.md' "$src/README.md" || wired="$wired README.md"
+[ -z "$wired" ] && ok "the human-written GDD template ships as a seed and in the example, and onboarding and the README present it" \
+  || bad "the human-written GDD isn't wired into:$wired"
 # Export: the procedure and skill exist and are wired in, the skipped-step path writes a question
 # and a gated setup item, and nothing here needs export templates or a Godot run.
 missing=""
@@ -403,12 +417,12 @@ if git -C "$src" rev-parse -q --verify 'v3.10.0^{commit}' >/dev/null 2>&1; then
   bash "$old_release/install.sh" "$upgraded" >/dev/null 2>&1
   (cd "$upgraded" && git add -A && { git_q commit -qm "install 3.10.0" >/dev/null 2>&1 || true; } && cp AGENTS.md "$work/up-agents" && cp tools/check.cfg "$work/up-check-cfg")
   out="$(bash "$src/install.sh" "$upgraded" 2>&1)"; expect_status "upgrades a game from v3.10.0" 0 $? "$out"
-  if [ -f "$upgraded/tools/ui_screens.gd" ] && [ -f "$upgraded/tools/ui_capture.cfg" ] && [ -f "$upgraded/design/ui/README.md" ] \
+  if [ -f "$upgraded/tools/ui_screens.gd" ] && [ -f "$upgraded/tools/ui_capture.cfg" ] && [ -f "$upgraded/design/ui/README.md" ] && [ -f "$upgraded/design/director-gdd.md" ] \
       && grep -q '^/design/ui/captures/$' "$upgraded/.gitignore" && grep -q 'tools/ui_verify\.gd$' "$upgraded/.godot-director/manifest" \
       && grep -q 'procedures/ui-design\.md$' "$upgraded/.godot-director/manifest" && grep -q 'skills/ui-design/SKILL\.md$' "$upgraded/.godot-director/manifest"; then
-    ok "the upgrade adds the stubs, the captures .gitignore line and the manifest entries"
+    ok "the upgrade adds the stubs, the human-written GDD template, the captures .gitignore line and the manifest entries"
   else
-    bad "the upgrade adds the stubs, the captures .gitignore line and the manifest entries" "$out"
+    bad "the upgrade adds the stubs, the human-written GDD template, the captures .gitignore line and the manifest entries" "$out"
   fi
   cmp -s "$upgraded/AGENTS.md" "$work/up-agents" && cmp -s "$upgraded/tools/check.cfg" "$work/up-check-cfg" \
     && ok "the upgrade keeps the game's own AGENTS.md and tools/check.cfg" || bad "the upgrade keeps the game's own AGENTS.md and tools/check.cfg"
@@ -445,6 +459,11 @@ if [ -f "$core_only/.godot-director/procedures/research.md" ] && [ -f "$core_onl
   ok "a new game gets the research procedure and domain file, the note folder, the screen catalog and capture settings, and an R counter in TASKS.md, even with --tools none"
 else
   bad "a new game gets the research procedure and domain file, the note folder, the screen catalog and capture settings, and an R counter in TASKS.md" "$out"
+fi
+if [ -f "$core_only/design/director-gdd.md" ] && grep -q '^# Game Design Document (GDD): ' "$core_only/design/director-gdd.md"; then
+  ok "a new game gets the human-written GDD template, even with --tools none"
+else
+  bad "a new game gets the human-written GDD template, even with --tools none" "$out"
 fi
 # Installing from a Godot Director folder that is itself a git clone, or sits inside the game.
 gdir_clone="$work/gdir-clone"; cp -R "$src" "$gdir_clone"; rm -rf "$gdir_clone/.git"
