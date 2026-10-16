@@ -4,11 +4,21 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
+**Next IDs:** T14 · B3
+
+## Queue
+
+### T12 · align checks the GDD against reality · done · S · agent
+- Touches: framework/.godot-director/procedures/align.md, CHANGELOG.md
+- Done when: align's item 6 is "Brief against reality", in place of the Decisions spot-check: it reads the whole GDD, checks every statement of state against the built game, the done items and the latest releases, and checks every decision line since the last `docs: align` commit one by one (check)
+- GDD: (none)
+- Source: Director-Driven-Development T94
+
 **Next IDs:** T13 · B3 · R1
 
 ## Queue
 
-### T12 · The repository's own queue has a research counter · done · XS · agent
+### T13 · The repository's own queue has a research counter · done · XS · agent
 - Touches: TASKS.md
 - Done when: `Next IDs` carries the `R` counter that `align.md` asks for, `· R1` (check)
 - GDD: (none)
