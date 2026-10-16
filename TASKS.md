@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T10 · B2
+**Next IDs:** T11 · B2
 
 ## Queue
+
+### T10 · /ui-design says how to open and save the starter drawing · done · S · agent
+- Touches: framework/.godot-director/procedures/ui-design.md, project/design/ui/README.md, examples/market-day/design/ui/README.md, CHANGELOG.md
+- Done when: the capture step gives the one message (nothing to install, excalidraw.com with no account, open, save to `director/ui/<screen>.excalidraw` with the browser difference, privacy, "tell me when it's saved") (check) · the drawing guide seed and the example's copy have the same "Using Excalidraw" section, and the two files are identical (check) · the CHANGELOG entry says existing projects keep their own guide and gets the message on the next capture (check)
+- GDD: (none)
+- Source: Director-Driven-Development T103 (product/anchors/ui-design.md)
 
 ### T9 · /ui-design: verify and the workflow hooks · done · M · agent
 - Depends on: T8

@@ -2,6 +2,12 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## Unreleased
+
+- **`/ui-design` tells you how to open and save the starter drawing.** The capture step gives one plain message: nothing to install, excalidraw.com in the browser with no account, how to open the starter (the menu's Open, or drag it in), how to save it as `director/ui/<screen>.excalidraw` (Save to… in Chrome and Edge, which let you pick the folder; other browsers save to Downloads, so move and rename the file), that the drawing stays on the machine unless Live collaboration or a shareable link is used, and "tell me when it's saved". The drawing guide seed (`design/ui/README.md`) gets a "Using Excalidraw" section with the same facts, plus the address-bar install.
+
+**Upgrade steps:** none. An existing `design/ui/README.md` is the project's own and isn't rewritten; the capture step's message gives the same instructions the next time the agent hands over a starter drawing.
+
 ## 3.11.0 (2026-10-16)
 
 - **New: `/ui-design` captures the game's screens** (`.godot-director/procedures/ui-design.md`). The agent sees the screens as a player does, and layout bugs that tests can't see are caught automatically.
