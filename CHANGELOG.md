@@ -7,10 +7,11 @@ Each entry lists what changed. **Upgrade steps** at the end of an entry cover bo
 - **The repository ignores OS metadata files.** A root `.gitignore` keeps `.DS_Store`, `Thumbs.db`, `desktop.ini` and `__MACOSX/` out of the repository, as the Claude plugin directory's scanner requires.
 - **Fix: the protected-space guard blocks absolute paths.** `framework/.claude/hooks/guard-protected.sh` matched `file_path` only as written, so a write to `director/` sent as an absolute path (`<project>/director/x`, or Windows `C:\...\director\x`) got through. The hook now resolves the path against the project root (`$CLAUDE_PROJECT_DIR`, else the current directory) before matching: Windows, Git Bash and POSIX forms, `..` segments and case-insensitive matching on Windows. Paths outside the project root, and folders named `director` elsewhere in it, are still allowed. The selftest covers each form.
   - **Upgrade steps:** none. The hook is framework-owned and arrives on upgrade.
+- **`/ui-design` tells you how to open and save the starter drawing.** The capture step gives one plain message: nothing to install, excalidraw.com in the browser with no account, how to open the starter (the menu's Open, or drag it in), how to save it as `director/ui/<screen>.excalidraw` (Save to… in Chrome and Edge, which let you pick the folder; other browsers save to Downloads, so move and rename the file), that the drawing stays on the machine unless Live collaboration or a shareable link is used, and "tell me when it's saved". The drawing guide seed (`design/ui/README.md`) gets a "Using Excalidraw" section with the same facts, plus the address-bar install.
 
 **Upgrade steps**
 
-None for games' own files: the `.gitignore` belongs to the Godot Director repository, and the hook is framework-owned and arrives on upgrade.
+None for games' own files. The `.gitignore` belongs to the Godot Director repository, and the hook is framework-owned and arrives on upgrade. An existing `design/ui/README.md` is the project's own and isn't rewritten; the capture step's message gives the same instructions the next time the agent hands over a starter drawing.
 
 ## 3.11.0 (2026-10-16)
 
