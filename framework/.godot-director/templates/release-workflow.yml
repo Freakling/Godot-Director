@@ -1,0 +1,81 @@
+# Godot Director release workflow · framework-owned: replaced on upgrade.
+# Copy to .github/workflows/release.yml and fill in the lines marked FILL IN
+# (see .godot-director/procedures/release.md > Set up release).
+#
+# - Every push and pull request: export every preset (the same command /export runs).
+# - Push to main: upload to UAT with `bash tools/release.sh uat`.
+# - Run by hand with "promote" ticked: upload to production. The job waits for the approval
+#   of the GitHub Environment `production` (Settings > Environments > required reviewers).
+# Credentials are repository or environment secrets only; release.cfg names them, it never holds them.
+name: Export and release
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      promote:
+        description: Promote the latest UAT build to production
+        type: boolean
+        default: false
+
+jobs:
+  export:
+    if: ${{ !inputs.promote }}
+    runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.3 # FILL IN: an image with your project's Godot version and its export templates
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export every preset
+        run: |
+          set -e
+          godot --headless --path . --import || true
+          # one "name|export_path" line per preset in export_presets.cfg
+          awk -F'=' '/^name=/ { gsub(/"/, "", $2); n = $2 } /^export_path=/ { gsub(/"/, "", $2); print n "|" $2 }' export_presets.cfg |
+          while IFS='|' read -r preset path; do
+            mkdir -p "$(dirname "$path")"
+            godot --headless --path . --export-release "$preset" "$path"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: builds
+          path: builds/
+
+  uat:
+    needs: export
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: builds
+          path: builds/
+      # FILL IN: a step that installs the upload tool your release.cfg commands use
+      - name: Upload to UAT
+        run: bash tools/release.sh uat
+        env:
+          # FILL IN: one line per name in release.cfg secrets, for example
+          # ITCH_API_KEY: ${{ secrets.ITCH_API_KEY }}
+          PLACEHOLDER: unused
+
+  production:
+    if: ${{ inputs.promote }}
+    runs-on: ubuntu-latest
+    environment: production # protect this Environment with required reviewers
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: release.yml
+          name: builds
+          path: builds/
+          branch: main
+          workflow_conclusion: success
+      # FILL IN: a step that installs the upload tool your release.cfg commands use
+      - name: Promote to production
+        run: bash tools/release.sh production
+        env:
+          # FILL IN: the same secret lines as the uat job (use the Environment's secrets if you keep them there)
+          PLACEHOLDER: unused

@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T6 · B2
+**Next IDs:** T7 · B2
 
 ## Queue
+
+### T6 · CI export and CD release · done · M · agent
+- Touches: framework/.godot-director/procedures/release.md (new), framework/.claude/skills/release/SKILL.md (new), framework/.godot-director/templates/release-workflow.yml (new), framework/tools/release.sh (new), framework/.godot-director/rules.md, ONBOARDING.md, README.md, examples/scenarios.md, examples/market-day/.gitignore, framework/tools/release.sh (new), selftest.sh, CHANGELOG.md
+- Done when: a GitHub Actions workflow template exports every preset on every change, uploads to UAT from main, and runs an optional production job behind a protected Environment (check) · `/release` runs the director's own upload command per export preset to UAT, and to production only when asked with the check passing (check) · `tools/release.sh` runs the commands `release.cfg` names, after checking the named secrets are set, and the selftest proves it without network, export templates or credentials (test) · onboarding asks for the commands and the secret names, and a skipped step adds a GDD open question and a gated setup item (check)
+- GDD: (none)
+- Source: Director-Driven-Development T31
 
 ### T5 · Export onboarding and /export · done · M · agent
 - Touches: framework/.godot-director/procedures/export.md (new), framework/.claude/skills/export/SKILL.md (new), framework/.godot-director/rules.md, framework/.godot-director/tasks.md, framework/.godot-director/procedures/next-task.md, ONBOARDING.md, README.md, install.sh, examples/market-day/.gitignore, examples/scenarios.md, selftest.sh, CHANGELOG.md

@@ -81,6 +81,7 @@ Only Godot Director's own files are replaced, and your edits to them are kept. W
 | "Let's brainstorm {topic}" (`/design {topic}`) | A design session. Your decisions become GDD text, decision-log lines and task items. |
 | "Research how other games handle {topic}", "What licence does this plugin use?" (`/research {question}`) | A read-only researcher looks into one question in a fresh context and saves a dated note in `design/research/`: the conclusion, the options, the sources with a confidence, and a recommendation. It informs; you decide. A design session asks it for facts it doesn't have, and you can queue a research item (`R1`, `R2`, ...) for later. |
 | "Export the game", "Make a Web build" (`/export`) | Exports every export preset headless with the Godot your clone already knows, after checking the export templates are installed, into the gitignored `builds/` folder, and reports what it produced. Onboarding asks which platforms you ship to and where exports run (this machine, a build container, or a hosted service such as GitHub Actions); skip it and the GDD gets an open question, so `/design Q{n}` sets it up later. |
+| "Release the game", "Push a build to UAT", "Promote to production" (`/release`) | Exports the presets, then runs the upload command you supplied for each preset to its UAT branch or channel (`release.cfg` names the commands and the CI secrets they read; Godot Director knows no store). It goes to production only when you ask, with the check passing. `.godot-director/templates/release-workflow.yml` is a GitHub Actions workflow that exports on every change, uploads to UAT from `main`, and runs production behind a protected Environment you approve. Onboarding asks for the commands and secret names, or you skip it and the GDD gets an open question. |
 | "New playtest", "Process my playtest" (`/playtest`) | Creates a report from the template, or turns a filled-in one into bugs, score trends and design proposals. |
 | "Prepare a function check", "Process the function check" (`/function-check`) | A checklist of what's been built since the last round and needs a human eye; you tick Works or Broken. |
 | "Check the docs are aligned" (`/align`) | A consistency pass. Drift gets fixed; gaps and conflicts come to you. |
@@ -129,10 +130,11 @@ your-game/
 │  Godot Director's, tool-neutral: updated on upgrade
 ├── .godot-director/rules.md      the workflow rules, loaded through AGENTS.md
 ├── .godot-director/tasks.md      the TASKS.md item format, read when items are written
-├── .godot-director/procedures/   next-task · build · design · research · export · playtest · function-check · align · drift-reset · prune · review
+├── .godot-director/procedures/   next-task · build · design · research · export · release · playtest · function-check · align · drift-reset · prune · review
 ├── .godot-director/research-domain.md  what the researcher adds for Godot: the docs and engine version, plugin and asset licences, export and store requirements
 ├── tools/check.sh, check.gd    the check;  tools/test_case.gd: base for tests in tests/
 ├── tools/setup-clone.sh        per clone: finds Godot, installs the pre-commit hook
+├── tools/release.sh            runs the upload commands release.cfg names, per export preset
 ├── .githooks/pre-commit        runs the check before commits that touch code, scenes or data
 ├── playtesting/README.md       how playtests and function checks work
 │

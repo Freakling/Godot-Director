@@ -2,6 +2,21 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## Unreleased
+
+- **New: `/release` and a release step in onboarding** (`.godot-director/procedures/release.md`). CI exports on every change; CD uploads builds to a platform's UAT branch or channel and, when you ask, promotes them to production.
+  - **You supply the upload commands; Godot Director knows no store.** `release.cfg` in the project root has one section per export preset with a `uat` command, an optional `production` command, and `secrets`, the names of the environment variables the commands read. It is committed; only names are in it, never values.
+  - **`/release` uploads to UAT and promotes only when asked.** It checks the working tree is clean and `bash tools/check.sh` passes, exports the presets (`/export`), shows a dry run, then runs `tools/release.sh uat`. Production needs your request, a passing UAT upload of the same commit and your yes. It never prints a secret.
+  - **`tools/release.sh uat|production [preset] [--dry-run]`** runs the commands from `release.cfg` for the presets whose builds are in `builds/`, and stops before running anything when a build is missing or a named secret is unset. Any CI can run it after its own export.
+  - **A GitHub Actions workflow template** (`.godot-director/templates/release-workflow.yml`, copied to `.github/workflows/release.yml`): it exports every preset on every push and pull request, uploads to UAT on `main`, and has a production job run by hand that waits for approval from a protected GitHub Environment named `production`.
+  - **Credentials are CI secrets only.** Onboarding lists the secret names to set. They never go in the repo, `export_presets.cfg`, `release.cfg` or the chat.
+  - **Onboarding offers the step** after exports, and you can skip it: a skip adds an open question to GDD › Open Questions and a "Set up release" item that depends on it, as for exports.
+  - **Selftest** checks the wiring and the install, and runs `tools/release.sh` against a fake `release.cfg` with `echo` commands, so it needs no network, export templates or credentials.
+
+**Upgrade steps**
+
+1. Ask the human whether the game should release builds, and run ONBOARDING.md › 6 › Release: the upload commands, the secret names, and (for GitHub Actions) the workflow file. If the human skips it, add the open question and the "Set up release" item that `.godot-director/procedures/release.md` › "When the human skips it" gives, with the game's next `Q` and `T` numbers.
+
 ## 3.9.0 (2026-10-16)
 
 - **New: `/export` and an export step in onboarding** (`.godot-director/procedures/export.md`). Exporting is Godot's own word for producing a game's binaries, so the skill is `/export`.
