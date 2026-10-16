@@ -2,6 +2,14 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## Unreleased
+
+- **The repository ignores OS metadata files.** A root `.gitignore` keeps `.DS_Store`, `Thumbs.db`, `desktop.ini` and `__MACOSX/` out of the repository, as the Claude plugin directory's scanner requires.
+
+**Upgrade steps**
+
+None. This file belongs to the Godot Director repository, not to games.
+
 ## 3.11.0 (2026-10-16)
 
 - **New: `/ui-design` captures the game's screens** (`.godot-director/procedures/ui-design.md`). The agent sees the screens as a player does, and layout bugs that tests can't see are caught automatically.

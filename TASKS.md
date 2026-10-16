@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T10 · B2
+**Next IDs:** T11 · B2
 
 ## Queue
+
+### T10 · The repository ignores OS metadata files · done · XS · agent
+- Touches: .gitignore, CHANGELOG.md
+- Done when: `.gitignore` lists `.DS_Store`, `Thumbs.db`, `desktop.ini` and `__MACOSX/` (check)
+- GDD: (none)
+- Source: Director-Driven-Development T100
 
 ### T9 · /ui-design: verify and the workflow hooks · done · M · agent
 - Depends on: T8
