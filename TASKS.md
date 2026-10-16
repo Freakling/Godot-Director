@@ -4,7 +4,7 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T12 · B2
+**Next IDs:** T12 · B3
 
 ## Queue
 
@@ -13,6 +13,12 @@ Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reor
 - Done when: `.gitignore` lists `.DS_Store`, `Thumbs.db`, `desktop.ini` and `__MACOSX/` (check)
 - GDD: (none)
 - Source: Director-Driven-Development T100
+
+### B2 · The protected-space guard blocks absolute paths · done · S · agent · high
+- Touches: framework/.claude/hooks/guard-protected.sh, selftest.sh
+- Repro: with the project at `<root>`, Claude Code writes to `<root>/director/x` (absolute), or `C:\\...\\director\\x` on Windows → expected: the hook blocks it / actual: the hook allows it, because it matched `director/*` only against the path as written
+- Found in: Director-Driven-Development T85
+- GDD: (none)
 
 ### T11 · /ui-design says how to open and save the starter drawing · done · S · agent
 - Touches: framework/.godot-director/procedures/ui-design.md, project/design/ui/README.md, examples/market-day/design/ui/README.md, CHANGELOG.md
