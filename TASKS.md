@@ -8,6 +8,12 @@ Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reor
 
 ## Queue
 
+### T13 · The human-written GDD · done · S · agent
+- Touches: project/design/director-gdd.md (new), examples/market-day/design/director-gdd.md (new), ONBOARDING.md, README.md, selftest.sh, CHANGELOG.md
+- Done when: every project has the director's GDD template as a seed (`design/director-gdd.md`) for the human to fill in, and the example carries it too (check) · onboarding offers it before the design interview, as an alternative or an addition to the chat interview, with a word on why it helps, and reads a filled one first for a new or an existing game to build the initial assessment and the design records, marking what it took `(from your document)` and what it inferred `(inferred, please confirm)` (check) · the README mentions it (check) · the selftest fails when the seed, the example copy or onboarding's wiring is missing, and checks a new game and an upgrade receive the seed (check)
+- GDD: (none)
+- Source: Director-Driven-Development T88
+
 ### T12 · align checks the GDD against reality · done · S · agent
 - Touches: framework/.godot-director/procedures/align.md, CHANGELOG.md
 - Done when: align's item 6 is "Brief against reality", in place of the Decisions spot-check: it reads the whole GDD, checks every statement of state against the built game, the done items and the latest releases, and checks every decision line since the last `docs: align` commit one by one (check)

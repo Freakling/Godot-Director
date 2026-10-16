@@ -66,6 +66,23 @@ Then run `bash tools/check.sh` once and keep the result. An existing game often 
 
 ## 5. Content, by mode
 
+### Your own design document (fresh start and existing game; before the interview or the GDD)
+Every project has `design/director-gdd.md`: the human's own Game Design Document template, in their own words. It is the human's file: you read it and never edit it. The GDD (`design/gdd.md`) stays the design record you maintain, so each fact lives in one place; the human's document is input that stays as they wrote it.
+1. **Is it filled?** It is still the template while its title reads `\[Game Title\]` and its sections hold only the prompts. If the human points to another document (a GDD or notes elsewhere, or a file in `director/`), read that instead.
+2. **If it is blank, offer it** before the interview, as an alternative to the chat interview or an addition to it:
+   - what it is: the template for describing the game, how it should work and what it is for, in their own words;
+   - where it is: `design/director-gdd.md`;
+   - why it helps: a written document gives you their intent and the context behind it, adds value that a chat interview alone doesn't, and sets the stage for later development, since every design session and build starts from it;
+   - when: it can be filled before onboarding, now (you wait), or later, for a new game or one already underway; and the interview works without it.
+
+   Ask which they prefer: fill it now, interview only, or both (interview first, document later). Never fill it in for them. If they fill it later, the next session reads it as below.
+3. **If it is filled, read it first.**
+   - Fresh start: take the interview's answers from it (step 2 of Fresh start below). Show each answer taken, marked `(from your document)`, and ask only what it leaves open. An answer you worked out from the document without it saying so is `(inferred, please confirm)`.
+   - Existing game: read it with the existing documents and the code, and use it to build the initial assessment: Architecture rows, GDD sections and first items. Mark each statement it supplied `(from your document)` and each you inferred `(inferred, please confirm)`.
+   - Both: where the document and the code or the earlier docs disagree, say so and let the human decide.
+4. **Record it.** The GDD sections you write from it, and a `design/decisions.md` line for each decision (`why: from your document` when that is the reason). Anything the document leaves undecided becomes a `Q<n>`. Don't copy the document wholesale into the GDD; write the current design in the GDD's own sections.
+5. **Upgrade.** On an upgrade the installer adds `design/director-gdd.md` when it is missing; offer it as above. Later, when the human says the document changed, read it again and bring the GDD in line, marking what you inferred.
+
 ### Fresh start
 1. **The Godot project.** If there's no `project.godot`, write a minimal one yourself; don't send the human to Godot's project manager, which rewrites `.gitignore` and `.gitattributes`. Take the version from setup-clone's output (e.g. `4.7`). The renderer follows the interview: `forward_plus` is the default, and `gl_compatibility` suits web and low-end targets.
    ```ini
@@ -81,7 +98,7 @@ Then run `bash tools/check.sh` once and keep the result. An existing game often 
    [rendering]
    renderer/rendering_method="forward_plus"
    ```
-2. **A short design interview,** in short rounds. For each question, give options with a recommendation and let the human pick:
+2. **A short design interview,** in short rounds, after reading the human's document if they filled one (above): ask only what it leaves open, and confirm what you took from it. For each question, give options with a recommendation and let the human pick:
    1. pitch, genre, and the feeling the game should give;
    2. 3-5 Design Pillars;
    3. the core loop: moment to moment, session, run or campaign, and starting conditions;
@@ -91,7 +108,7 @@ Then run `bash tools/check.sh` once and keep the result. An existing game often 
 
 ### Existing game
 1. **AGENTS.md › Architecture:** one row per autoload, per area of rule code, and per group of screens. Take "Owns" from the scripts' top comments and public methods, not from guesses.
-2. **GDD:** fill each section from the existing design documents and code. Mark anything inferred `(inferred, please confirm)`, and turn anything unknown into a `Q<n>`. Delete a section the game doesn't need only after the human agrees.
+2. **GDD:** fill each section from the human's document (above), the existing design documents and the code. Mark anything inferred `(inferred, please confirm)`, and turn anything unknown into a `Q<n>`. Delete a section the game doesn't need only after the human agrees.
 3. **TASKS.md:** turn TODOs, known bugs and the human's priorities into items, with bugs as `B` items.
 4. **Screens with game logic.** Set `tools/check.cfg` › `[screens] dirs` to the UI folders. Each screen script that breaks the rule gets:
    - its own `M` item titled "Decouple: <screen>", which moves the logic into a system and removes the script from the list;

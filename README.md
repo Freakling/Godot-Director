@@ -56,7 +56,7 @@ The plugin installs the latest release. Then open a new Claude Code session in y
 
 Either way, onboarding works out whether this is a new game, an existing game, a Godot Director 1.x project to migrate, or an upgrade. It then:
 1. installs the files and finds your Godot;
-2. interviews you (new game) or reads the existing game;
+2. interviews you (new game) or reads the existing game, or reads the Game Design Document you wrote yourself in `design/director-gdd.md` (an alternative or an addition; it adds context for everything that follows);
 3. agrees with you who owns what;
 4. ends with one commit for you to approve.
 
@@ -123,6 +123,7 @@ your-game/
 ├── CLAUDE.md                   "@AGENTS.md", for Claude Code
 ├── TASKS.md                    milestones and the queue (tasks, bugs and research)
 ├── design/gdd.md               the game's current design, and Open Questions
+├── design/director-gdd.md      a GDD template for you to fill in, in your own words (optional); onboarding reads it first and never edits it
 ├── design/decisions.md         why: one line per design decision
 ├── design/research/            dated research notes, one per topic; the decision line links to its note
 ├── playtesting/TEMPLATE.md     playtest template, one section per core loop
