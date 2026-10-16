@@ -2,7 +2,7 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
-## Unreleased
+## 3.11.0 (2026-10-16)
 
 - **New: `/ui-design` captures the game's screens** (`.godot-director/procedures/ui-design.md`). The agent sees the screens as a player does, and layout bugs that tests can't see are caught automatically.
   - **The catalog** (`tools/ui_screens.gd`, a project file extending the framework's `tools/ui_catalog.gd`) lists every screen, the scene it opens and how to put it in a representative state (`setup`, or named `states`), built through the game's public APIs and debug hooks, never player data. Unknown keys, duplicate ids and missing scenes are named. A new game's seed lists the main scene.
