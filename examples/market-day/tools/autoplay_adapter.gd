@@ -5,6 +5,8 @@ extends "res://tools/autoplay_adapter_base.gd"
 ## real input; next_day_fast does the same as Next Day through RunState, for speed. The action
 ## format and the helpers are in tools/autoplay_adapter_base.gd. Market Day has no saves yet, so
 ## save_run() and load_save() stay the base's, and a repro carries the seed and the actions only.
+## The shop keeps its UI under the view node, so focus_roots() stays the base's (see the base for a
+## shell that keeps a view's UI elsewhere).
 
 
 ## A new market with this seed; the shop shows it at once.

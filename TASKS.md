@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T20 · B3 · R1
+**Next IDs:** T21 · B3 · R1
 
 ## Queue
+
+### T20 · Autoplay's no-focus invariant looks under the adapter's focus roots · done · M · agent
+- Touches: framework/tools/autoplay_adapter_base.gd, framework/tools/autoplay.gd, framework/tools/autoplay_catalog.gd, project/tools/autoplay_adapter.gd, project/tools/autoplay_scenarios.gd, examples/market-day/tools/autoplay_adapter.gd, framework/.godot-director/procedures/autoplay.md, framework/.godot-director/rules.md, README.md, selftest.sh, CHANGELOG.md
+- Done when: `focus_roots()` on the adapter base returns the view node by default, the no-focus invariant accepts a focus owner under any root, counts a SubViewport root's own focus owner, finds focusable controls under any root, skips the check on an empty list, and names the roots in its finding; `_pick` with every weight 0 picks nothing and smoke carries on to the progress action; the seeds and the example carry the hook and the weight-0 note; the procedure, rules.md and README describe it; the selftest covers the five cases in the spec with the existing no-focus case still passing (check) · following AGENTS.md › Project rules for framework work; VERSION untouched (check)
+- GDD: (none)
+- Source: Director-Driven-Development T138
 
 ### T19 · /autoplay and the workflow hooks · done · M · agent
 - Touches: framework/.godot-director/procedures/autoplay.md (new), framework/.claude/skills/autoplay/SKILL.md (new), framework/.godot-director/rules.md, tasks.md, procedures/next-task.md, build.md, review.md, function-check.md, playtest.md, align.md, framework/playtesting/README.md, framework/tools/check.sh, autoplay.sh, autoplay.gd, autoplay_adapter_base.gd, play_log_base.gd, project/tools/check.cfg, project/tools/autoplay_adapter.gd, examples/market-day/tools/check.cfg, framework/.claude/settings.json, install.sh, README.md, ONBOARDING.md, tests/play-log/selftest_play_log.gd, selftest.sh, CHANGELOG.md
