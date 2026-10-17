@@ -2,7 +2,7 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
-## Unreleased
+## 4.1.0 (2026-10-17)
 
 - **Autoplay's no-focus check looks under the nodes the adapter names.** A shell that keeps each view's flat UI outside the view node (a HUD layer, a `ui_root` it hands each view) or draws a view's page in a SubViewport with a stand-in control holding the window's focus no longer fails `no-focus` on every step. The adapter base has a new hook, `focus_roots() -> Array[Node]`: the nodes under which the current view's focusable controls and its focus owner live. It returns the view node by default, so a game whose adapter doesn't override it behaves as before.
   - **The invariant.** The focus owner satisfies the check when it is a root or under any root (a control in another window is still exempt); the check looks at a focusable control (an enabled button) under any root; a root that is a `SubViewport` (a page on a sheet) counts its own focus owner as well as the window's, so the page's focused control satisfies the check while the window's focus sits on a stand-in in another root. An empty list means no rule for that step: a game may return `[]` for a screen that is mouse-only by design, and the invariant then doesn't apply there. The freed-view check still uses `view_node()`.
