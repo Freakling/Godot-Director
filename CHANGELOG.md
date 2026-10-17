@@ -2,10 +2,13 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
-## 4.1.0 (2026-10-17)
+## 4.1.1 (2026-10-17)
 
 - **An install from a development snapshot says so.** An install from a source whose `CHANGELOG.md` has entries under `## Unreleased` records `# godot-director <version> + unreleased (<commit>)` as the manifest's first line, and its closing lines say it is a development snapshot, not a release, with where the latest release is listed. `VERSION` stays at the last release until a release is cut, so the manifest tells the truth. The commit comes from the source's git checkout (a release zip has none) and goes on a `# source <commit>` line, which release installs get too. An install from a release records the plain version. Upgrades read the old version without the suffix, so an upgrade from a snapshot works.
   - **Upgrade steps:** none: the next upgrade rewrites the manifest.
+
+## 4.1.0 (2026-10-17)
+
 - **Autoplay's no-focus check looks under the nodes the adapter names.** A shell that keeps each view's flat UI outside the view node (a HUD layer, a `ui_root` it hands each view) or draws a view's page in a SubViewport with a stand-in control holding the window's focus no longer fails `no-focus` on every step. The adapter base has a new hook, `focus_roots() -> Array[Node]`: the nodes under which the current view's focusable controls and its focus owner live. It returns the view node by default, so a game whose adapter doesn't override it behaves as before.
   - **The invariant.** The focus owner satisfies the check when it is a root or under any root (a control in another window is still exempt); the check looks at a focusable control (an enabled button) under any root; a root that is a `SubViewport` (a page on a sheet) counts its own focus owner as well as the window's, so the page's focused control satisfies the check while the window's focus sits on a stand-in in another root. An empty list means no rule for that step: a game may return `[]` for a screen that is mouse-only by design, and the invariant then doesn't apply there. The freed-view check still uses `view_node()`.
   - **The finding names its roots,** so a wrong hook is easy to spot: `the view hub has no focused control under ViewUI, HUD (so a keyboard or controller player can't act)`. A view with the default hook reads `the view shop has no focused control under ShopScreen (so ...)`: the text and the signature of an existing no-focus finding change with it.
