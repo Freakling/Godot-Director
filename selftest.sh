@@ -288,13 +288,43 @@ grep -q 'start_capture()' "$proc/rules.md" && grep -q 'dev menu' "$proc/rules.md
 grep -q 'tools/play_log_base\.gd' "$src/README.md" && grep -q 'tools/play_log\.gd' "$src/README.md" || wired="$wired README.md"
 [ -z "$wired" ] && ok "the play log is wired in: base, seed, example, the five rules, onboarding and the installer's lines" \
   || bad "the play log isn't wired into:$wired"
+# Autoplay: the driver, the adapter and scenario bases, the game's seeds (stubs marked PLACEHOLDER,
+# a smoke scenario), the example's wiring, the capture's shared element map writer and the
+# installer's lines.
+wired=""
+for file in framework/tools/autoplay.sh framework/tools/autoplay.gd framework/tools/autoplay_adapter_base.gd \
+    framework/tools/autoplay_catalog.gd project/tools/autoplay_adapter.gd project/tools/autoplay_scenarios.gd \
+    project/tools/autoplay_invariants.gd examples/market-day/tools/autoplay_adapter.gd \
+    examples/market-day/tools/autoplay_scenarios.gd examples/market-day/tools/autoplay_invariants.gd; do
+  [ -f "$src/$file" ] || wired="$wired $file"
+done
+grep -q '^extends "res://tools/autoplay_adapter_base\.gd"$' "$src/project/tools/autoplay_adapter.gd" \
+  && [ "$(grep -c '^## PLACEHOLDER' "$src/project/tools/autoplay_adapter.gd")" -ge 7 ] || wired="$wired autoplay_adapter.gd seed"
+grep -q '^extends "res://tools/autoplay_catalog\.gd"$' "$src/project/tools/autoplay_scenarios.gd" \
+  && grep -q '"id": "smoke", .*"kind": "smoke"' "$src/project/tools/autoplay_scenarios.gd" || wired="$wired autoplay_scenarios.gd seed(smoke)"
+grep -q '^func check(_state: Dictionary, _adapter: Object) -> PackedStringArray:$' "$src/project/tools/autoplay_invariants.gd" \
+  && grep -q 'PLACEHOLDER' "$src/project/tools/autoplay_invariants.gd" || wired="$wired autoplay_invariants.gd seed"
+for hook in 'start_run(_run_seed: int) -> void' 'load_save(_path: String) -> bool' 'list_actions() -> Array\[Dictionary\]' \
+    'perform(_action: Dictionary) -> bool' 'state() -> Dictionary' 'progress_block_reason() -> String' 'is_run_over() -> bool'; do
+  grep -q "^func $hook:$" "$src/framework/tools/autoplay_adapter_base.gd" || wired="$wired adapter base($hook)"
+done
+grep -q 'a smoke scenario is required' "$src/framework/tools/autoplay_catalog.gd" || wired="$wired autoplay_catalog.gd(smoke required)"
+grep -q 'Engine.set_meta(AUTOPLAY_META, true)' "$src/framework/tools/autoplay.gd" && grep -q 'Input.parse_input_event' "$src/framework/tools/autoplay.gd" \
+  && grep -q 'lint.element_map(' "$src/framework/tools/autoplay.gd" && grep -q 'lint.element_map(' "$src/framework/tools/ui_capture.gd" \
+  && ! grep -q '^func _element_map' "$src/framework/tools/ui_capture.gd" || wired="$wired autoplay.gd(meta, real input, the capture's element map writer)"
+grep -q '"/playtesting/autoplay/"' "$src/install.sh" && grep -q '^/playtesting/autoplay/$' "$src/examples/market-day/.gitignore" \
+  && grep -q '"/tools/autoplay\.gd text eol=lf"' "$src/install.sh" && grep -q '^/tools/autoplay_adapter_base\.gd text eol=lf$' "$src/examples/market-day/.gitattributes" \
+  && grep -q '^/tools/autoplay_catalog\.gd$' "$src/examples/market-day/.gitignore" || wired="$wired installer lines"
+[ -z "$wired" ] && ok "autoplay is wired in: driver, bases, seeds with a smoke scenario, the example, the shared element map and the installer's lines" \
+  || bad "autoplay isn't wired into:$wired"
 # The minimum Godot is 4.5 (the engine Logger) everywhere it's stated and checked.
 stale="$(cd "$src" && grep -nE '4\.3([^0-9]|$)|-lt [0-4] \]; \}|-ge [0-4] \]; \}' README.md ONBOARDING.md CLAUDE.md \
-  skills/godot-director/SKILL.md selftest.sh framework/tools/check.sh framework/tools/setup-clone.sh framework/tools/ui_capture.sh \
+  skills/godot-director/SKILL.md selftest.sh framework/tools/check.sh framework/tools/setup-clone.sh framework/tools/ui_capture.sh framework/tools/autoplay.sh \
   framework/.godot-director/procedures/ui-design.md examples/market-day/AGENTS.md)"
 if [ -z "$stale" ] && grep -q 'Godot 4\.5 or newer' "$src/README.md" && grep -q "compatibility: 'Godot 4\.5 or newer" "$installer" \
     && grep -q 'Godot 4\.5+' "$src/ONBOARDING.md" && grep -q '"4\.5"' "$src/examples/market-day/project.godot" \
     && grep -q '\[ "\$minor" -lt 5 \]' "$src/framework/tools/check.sh" && grep -q '\[ "\$minor" -lt 5 \]' "$src/framework/tools/ui_capture.sh" \
+    && grep -q '\[ "\$minor" -lt 5 \]' "$src/framework/tools/autoplay.sh" \
     && grep -q '\[ "\$minor" -ge 5 \]' "$src/framework/tools/setup-clone.sh"; then
   ok "the minimum Godot is 4.5 everywhere it's stated and checked"
 else
@@ -362,6 +392,13 @@ if [ -f tools/play_log_base.gd ] && cut -f2 .godot-director/manifest | grep -q '
   ok "installs the play log base, keeping the game's own PlayLog"
 else
   bad "installs the play log base, keeping the game's own PlayLog" "$out"
+fi
+if [ -x tools/autoplay.sh ] && [ -f tools/autoplay.gd ] && [ -f tools/autoplay_adapter_base.gd ] && [ -f tools/autoplay_catalog.gd ] \
+    && cut -f2 .godot-director/manifest | grep -q '^tools/autoplay_adapter_base\.gd$' && grep -q 'RunState' tools/autoplay_adapter.gd \
+    && grep -q '"trade_week"' tools/autoplay_scenarios.gd && grep -q '^/playtesting/autoplay/$' .gitignore; then
+  ok "installs autoplay and the run folders' gitignore line, keeping the game's adapter and scenarios"
+else
+  bad "installs autoplay and the run folders' gitignore line, keeping the game's adapter and scenarios" "$out"
 fi
 grep -q "Market Day" AGENTS.md && ok "keeps the project's own files" || bad "keeps the project's own files"
 [ -z "$(git status --porcelain)" ] && ok "adds no duplicate .gitignore/.gitattributes lines" || bad "adds no duplicate lines" "$(git status --porcelain)"
@@ -470,6 +507,12 @@ if git -C "$src" rev-parse -q --verify 'v3.10.0^{commit}' >/dev/null 2>&1; then
   else
     bad "the upgrade adds the stubs, the human-written GDD template, the captures .gitignore line and the manifest entries" "$out"
   fi
+  if [ -f "$upgraded/tools/autoplay_adapter.gd" ] && [ -f "$upgraded/tools/autoplay_scenarios.gd" ] && [ -f "$upgraded/tools/autoplay_invariants.gd" ] \
+      && grep -q 'tools/autoplay\.gd$' "$upgraded/.godot-director/manifest" && grep -q '^/playtesting/autoplay/$' "$upgraded/.gitignore"; then
+    ok "the upgrade adds autoplay, its seeds and the run folders' .gitignore line"
+  else
+    bad "the upgrade adds autoplay, its seeds and the run folders' .gitignore line" "$out"
+  fi
   cmp -s "$upgraded/AGENTS.md" "$work/up-agents" && cmp -s "$upgraded/tools/check.cfg" "$work/up-check-cfg" \
     && ok "the upgrade keeps the game's own AGENTS.md and tools/check.cfg" || bad "the upgrade keeps the game's own AGENTS.md and tools/check.cfg"
   if grep -q '^check_in_check=false$' "$upgraded/tools/ui_capture.cfg" && grep -q '^enforce=\[\]$' "$upgraded/tools/ui_capture.cfg"; then
@@ -510,6 +553,14 @@ if [ -f "$core_only/tools/play_log_base.gd" ] && cmp -s "$core_only/tools/play_l
   ok "a new game gets the play log base and the PlayLog seed, even with --tools none"
 else
   bad "a new game gets the play log base and the PlayLog seed, even with --tools none" "$out"
+fi
+if [ -x "$core_only/tools/autoplay.sh" ] && [ -f "$core_only/tools/autoplay.gd" ] \
+    && cmp -s "$core_only/tools/autoplay_adapter.gd" "$src/project/tools/autoplay_adapter.gd" \
+    && cmp -s "$core_only/tools/autoplay_scenarios.gd" "$src/project/tools/autoplay_scenarios.gd" \
+    && cmp -s "$core_only/tools/autoplay_invariants.gd" "$src/project/tools/autoplay_invariants.gd" && grep -q '^/playtesting/autoplay/$' "$core_only/.gitignore"; then
+  ok "a new game gets autoplay, the adapter, scenario and invariant seeds and the run folders' gitignore line, even with --tools none"
+else
+  bad "a new game gets autoplay, the adapter, scenario and invariant seeds and the run folders' gitignore line, even with --tools none" "$out"
 fi
 if [ -f "$core_only/design/director-gdd.md" ] && grep -q '^# Game Design Document (GDD): ' "$core_only/design/director-gdd.md"; then
   ok "a new game gets the human-written GDD template, even with --tools none"
@@ -609,6 +660,7 @@ printf '#!/usr/bin/env bash\necho 4.4.1.stable.official.49a5bc7b6\n' > "$work/go
 out="$(GODOT_BIN="$work/godot-4.4" bash tools/check.sh 2>&1)"; expect_status "the check exits 3 with Godot 4.4" 3 $? "$out"
 expect_output "and says it needs Godot 4.5 or newer" "needs Godot 4\.5 or newer" "$out"
 out="$(GODOT_BIN="$work/godot-4.4" bash tools/ui_capture.sh --list 2>&1)"; expect_status "capture exits 3 with Godot 4.4" 3 $? "$out"
+out="$(GODOT_BIN="$work/godot-4.4" bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "autoplay exits 3 with Godot 4.4" 3 $? "$out"
 out="$(bash tools/setup-clone.sh --skip-hook "$work/godot-4.4" 2>&1)"; expect_status "setup-clone refuses Godot 4.4" 3 $? "$out"
 expect_output "and says it needs 4.5 or newer" "need 4\.5 or newer" "$out"
 out="$(bash tools/setup-clone.sh "$godot" 2>&1)"; expect_status "setup-clone succeeds" 0 $? "$out"
@@ -1435,5 +1487,225 @@ else
 fi
 
 rm -f tools/selftest_drawings.gd tools/selftest_drawings.gd.uid design/ui/spec*.md
+
+# --- autoplay -----------------------------------------------------------------------------------
+# The example plays itself through its adapter: the real main scene, ui actions by real input and an
+# api action, screenshots and element maps, the invariants, repros and replays, and the same log
+# from the same seed. The planted bugs are the spec's three: a script error in a view's button
+# handler, a progress block that never clears, a view with no default focus.
+echo "autoplay"
+runs=playtesting/autoplay
+latest_run() { ls -d "$runs/$1"-* 2>/dev/null | grep -v -- '-replay' | LC_ALL=C /usr/bin/sort | tail -n 1; }
+after_line() { # after_line <file> <exact line> <lines to add after it>; awk reads \t and \n in both
+  awk -v line="$2" -v text="$3" '{ print } $0 == line { print text }' "$1"
+}
+replace_line() { # replace_line <file> <exact line> <its replacement>
+  awk -v line="$2" -v text="$3" '{ print ($0 == line ? text : $0) }' "$1"
+}
+normalized() { # a run's JSONL without time stamps, run ids and timing lines
+  sed -e 's/^{"t":[0-9]*,/{/' -e 's/[0-9]\{8\}-[0-9]\{6\}\(-[0-9][0-9]*\)\{0,1\}/<id>/g' "$1"/run-*.jsonl \
+    | grep -v -e '"event":"frame.hitch"' -e '"event":"window.focus"'
+}
+out="$(GODOT_BIN=/nonexistent/godot bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "autoplay exits 3 without Godot" 3 $? "$out"
+[ ! -e "$runs" ] && ok "and writes nothing" || bad "autoplay without Godot wrote $runs"
+out="$(bash tools/autoplay.sh --list 2>&1)"; expect_status "lists the scenarios" 0 $? "$out"
+[ "$(printf '%s\n' "$out" | awk -F ' · ' 'NF >= 3 { printf "%s %s ", $1, $2 }')" = "smoke smoke trade_week scripted greedy_trader strategy " ] \
+  && ok "with the smoke, scripted and strategy scenarios" || bad "with the smoke, scripted and strategy scenarios" "$out"
+mkdir -p "$user_data" && : > "$work/before-autoplay" && sleep 1
+out="$(bash tools/autoplay.sh --all --no-images 2>&1)"; expect_status "plays every scenario headless, with nothing found" 0 $? "$out"
+[ "$(printf '%s\n' "$out" | grep -c ' · 0 findings · ')" = "3" ] && ok "one clean run per scenario" || bad "one clean run per scenario" "$out"
+run="$(latest_run smoke-1)"
+if [ -n "$run" ] && [ -f "$(ls "$run"/run-*.log 2>/dev/null | head -n 1)" ] && [ -f "$run/0000-start.elements.json" ] \
+    && grep -q '"event":"screenshot","text":"0000-start.elements.json"' "$run"/run-*.jsonl \
+    && grep -q '"event":"autoplay.step".*"kind":"ui","route":"%Buy"' "$run"/run-*.jsonl && grep -q '"event":"trade.buy"' "$run"/run-*.jsonl \
+    && grep -qE '"event":"view.changed"|"reason":"view"' "$run"/run-*.jsonl && [ -f "$run/0003-snapshot.elements.json" ] && [ ! -f "$run/repro.json" ]; then
+  ok "smoke writes the play log, element maps at the start, view and snapshots, and screenshot lines; the shop's buttons are clicked"
+else
+  bad "smoke writes the play log, element maps at the start, view and snapshots, and screenshot lines" "$(ls "$run" 2>&1)"
+fi
+grep -q '"event":"autoplay.step".*"action":"next_day_fast","kind":"api"' "$(latest_run trade_week-1)"/run-*.jsonl \
+  && ok "the scripted scenario mixes ui actions and an api action, and its expects hold" || bad "the scripted scenario performs its api action"
+[ -z "$(/usr/bin/find "$user_data" -type f -newer "$work/before-autoplay" 2>/dev/null)" ] && ok "autoplay writes nothing in the game's user://" \
+  || bad "autoplay writes nothing in the game's user://" "$(/usr/bin/find "$user_data" -type f -newer "$work/before-autoplay")"
+# Determinism: the same seed twice gives the same JSONL, apart from time stamps and run ids, and the
+# same element maps, with a Tween that widens the shop's Buy button after every change (autoplay
+# runs at a fixed 60 frames a second, and each step settles until the tween has ended).
+cp scripts/ui/shop_screen.gd "$work/saved-shop"; cp tools/autoplay_adapter.gd "$work/saved-adapter"
+after_line "$work/saved-shop" 'func _refresh() -> void:' '\t_buy.custom_minimum_size.x = 0.0\n\tcreate_tween().tween_property(_buy, "custom_minimum_size:x", 300.0, 0.5)' \
+  > scripts/ui/shop_screen.gd
+out="$(bash tools/autoplay.sh smoke --no-images --seed 42 2>&1)"; first="$(latest_run smoke-42)"
+out="$(bash tools/autoplay.sh smoke --no-images --seed 42 2>&1)"; second="$(latest_run smoke-42)"
+if [ -n "$first" ] && [ "$first" != "$second" ] && normalized "$first" > "$work/autoplay-first" && normalized "$second" > "$work/autoplay-second" \
+    && [ "$(grep -c '"event":"autoplay.step"' "$work/autoplay-first")" -gt 5 ] && cmp -s "$work/autoplay-first" "$work/autoplay-second"; then
+  ok "the same seed and scenario twice give the same actions and the same JSONL, time stamps aside"
+else
+  bad "the same seed and scenario twice give the same actions and the same JSONL, time stamps aside" "$(diff "$work/autoplay-first" "$work/autoplay-second" 2>&1 | head -n 10)"
+fi
+differ=""
+for map in $(cd "$first" && ls *.elements.json); do cmp -s "$first/$map" "$second/$map" || differ="$differ $map"; done
+[ -z "$differ" ] && [ -n "$(ls "$first"/*.elements.json 2>/dev/null)" ] && ok "and the same element maps, with a Tween running after every action" \
+  || bad "and the same element maps, with a Tween running after every action:$differ"
+grep -qE '"id":"Buy","stable":true,[^}]*"rect":\[[0-9]+,[0-9]+,300,' "$first/0003-snapshot.elements.json" \
+  && ok "each step settles until the tween has ended (the Buy button is 300 px wide)" || bad "the step settles until the tween has ended" "$(grep '"id":"Buy"' "$first/0003-snapshot.elements.json")"
+cp "$work/saved-shop" scripts/ui/shop_screen.gd
+out="$(bash tools/autoplay.sh smoke --no-images --steps 2 2>&1)"; expect_output "--steps caps a run" " · 2 steps · " "$out"
+# Planted bug 1: a script error in a view's button handler, found at the click with its script line,
+# an element map, a repro with the save from before the step, and replayed at the same step.
+cp scripts/ui/shop_screen.gd "$work/saved-shop"; cp tools/autoplay_adapter.gd "$work/saved-adapter"
+after_line "$work/saved-shop" 'func _on_buy_pressed() -> void:' '\tvar receipt: Node = null\n\treceipt.queue_free()' > scripts/ui/shop_screen.gd
+printf '\n\nfunc save_run(path: String) -> bool:\n\tvar file: FileAccess = FileAccess.open(path, FileAccess.WRITE)\n\tfile.store_string(JSON.stringify(state()))\n\treturn true\n' >> tools/autoplay_adapter.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "planted script error: the run fails" 1 $? "$out"
+expect_output "it's found at the click, with the script line and the run folder" "FAIL: smoke step 1: error: Cannot call method 'queue_free' on a null value\. \(at res://scripts/ui/shop_screen\.gd:[0-9]+ in _on_buy_pressed\(\)\) · element map playtesting/autoplay/smoke-1-[0-9-]+/0001-error\.elements\.json · repro playtesting/autoplay/smoke-1-" "$out"
+run="$(latest_run smoke-1)"
+[ -f "$run/0001-error.elements.json" ] && grep -q '"step":1,"kind":"error"' "$run/repro.json" && grep -q '"save":"saves/before-0001.save"' "$run/repro.json" \
+  && grep -q '"day":1,"gold":50,"grain":0' "$run/saves/before-0001.save" && grep -q '"event":"autoplay.finding"' "$run"/run-*.jsonl \
+  && ok "its repro has the step, the actions, the element map and the save from before the step" || bad "the planted error's repro" "$(cat "$run/repro.json" 2>&1)"
+out="$(bash tools/autoplay.sh --replay "$run" --no-images 2>&1)"; expect_status "--replay reproduces it" 1 $? "$out"
+expect_output "at the same step" "FAIL: smoke step 1: error: Cannot call method 'queue_free' on a null value\. .*-replay/0001-error\.elements\.json" "$out"
+out="$(bash tools/autoplay.sh --replay "$run" --until 0 --no-images 2>&1)"; expect_status "--until 0 stops before the step that fails" 0 $? "$out"
+# --from-save: the save written before the failing step, loaded through the adapter's load_save(),
+# and the recorded actions from that step on, with the same step numbers.
+after_line "$work/saved-shop" 'func _on_sell_pressed() -> void:' '\tvar receipt: Node = null\n\treceipt.queue_free()' > scripts/ui/shop_screen.gd
+cp "$work/saved-adapter" tools/autoplay_adapter.gd
+printf '\n\nfunc save_run(path: String) -> bool:\n\tvar data: Dictionary = {"seed": RunState.get("_market").get("_seed"), "day": RunState.day, "gold": RunState.gold, "grain": RunState.grain}\n\tvar file: FileAccess = FileAccess.open(path, FileAccess.WRITE)\n\tfile.store_string(JSON.stringify(data))\n\treturn true\n\n\nfunc load_save(path: String) -> bool:\n\tvar data: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))\n\tif not (data is Dictionary):\n\t\treturn false\n\tRunState.start_run(int(data["seed"]))\n\tRunState.day = int(data["day"])\n\tRunState.gold = int(data["gold"])\n\tRunState.grain = int(data["grain"])\n\tPlayLog.set_turn(RunState.day)\n\tRunState.changed.emit()\n\treturn true\n' >> tools/autoplay_adapter.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"
+expect_output "a script error in the Sell handler, four steps in" "FAIL: smoke step 4: error: Cannot call method 'queue_free' on a null value\. \(at res://scripts/ui/shop_screen\.gd:[0-9]+ in _on_sell_pressed\(\)\)" "$out"
+run="$(latest_run smoke-1)"
+grep -q '"replay_from_save": "bash tools/autoplay.sh --replay .* --from-save"' "$run/repro.json" && grep -q '"day":2' "$run/saves/before-0004.save" \
+  && ok "its repro offers a replay from the save written before step 4" || bad "the repro offers a replay from the save" "$(head -n 14 "$run/repro.json")"
+out="$(bash tools/autoplay.sh --replay "$run" --from-save --no-images 2>&1)"; expect_status "--from-save reproduces it" 1 $? "$out"
+expect_output "at the same step" "FAIL: smoke step 4: error: Cannot call method 'queue_free' on a null value\. .*in _on_sell_pressed" "$out"
+replayed="$(ls -d "$runs"/smoke-1-*-replay* | LC_ALL=C /usr/bin/sort | tail -n 1)"
+grep -q '"text":"step 4: Sell grain (%Sell)"' "$replayed"/run-*.jsonl && ! grep -q '"text":"step [1-3]: ' "$replayed"/run-*.jsonl \
+  && ok "starting from the save, without playing steps 1 to 3" || bad "--from-save starts from the save" "$(grep -o '"text":"step [^"]*"' "$replayed"/run-*.jsonl)"
+cp "$work/saved-shop" scripts/ui/shop_screen.gd; cp "$work/saved-adapter" tools/autoplay_adapter.gd
+# An adapter whose start_run() doesn't start a run leaves the play log in the boot's temporary files.
+replace_line "$work/saved-adapter" '\tRunState.start_run(run_seed)' '\tpass' > tools/autoplay_adapter.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"
+expect_output "a play log outside the run folder after start_run() is a finding" "FAIL: smoke step 0: adapter: the play log isn't writing into the run folder after start_run\(1\)" "$out"
+cp "$work/saved-adapter" tools/autoplay_adapter.gd
+# A ui action whose click never reaches its control: an invisible panel over the whole shop.
+cp scenes/shop_screen.tscn "$work/saved-shop-scene"
+printf '\n[node name="Glass" type="Control" parent="."]\nlayout_mode = 1\nanchors_preset = 15\nanchor_right = 1.0\nanchor_bottom = 1.0\ngrow_horizontal = 2\ngrow_vertical = 2\n' >> scenes/shop_screen.tscn
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "an invisible panel over the buttons fails the run" 1 $? "$out"
+expect_output "the click that never reaches Next Day is a drive finding" "FAIL: smoke step 3: drive: the click on %NextDay \(next_day\) didn't reach it: something on top took it" "$out"
+expect_output "and smoke says it never played its turns" "FAIL: smoke step 200: smoke: played 0 of 3 turns in 200 steps" "$out"
+cp "$work/saved-shop-scene" scenes/shop_screen.tscn
+# Planted bug 2: a progress block that never clears, with nothing offered that clears it.
+cp tools/play_log.gd "$work/saved-play-log"
+# Its reason changes as the player trades, as a countdown would; it's still the same block.
+sed 's/return "the market has closed" if RunState.is_over() else ""/return "the market has closed" if RunState.is_over() else ("the grain cart is late, grain %d" % RunState.grain if RunState.day >= 2 else "")/' \
+  "$work/saved-play-log" > tools/play_log.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "planted progress block: the run fails" 1 $? "$out"
+expect_output "it's a softlock, ten actions after the block began, naming the latest reason" "FAIL: smoke step 13: softlock: progress blocked across 10 actions \(the grain cart is late, grain [0-9]+\), and nothing list_actions\(\) offers unblocks it · element map .*/0013-softlock\.elements\.json · repro " "$out"
+run="$(latest_run smoke-1)"
+[ -f "$run/0013-softlock.elements.json" ] && [ -f "$run/0003-blocked.elements.json" ] && grep -q '"step":13,"kind":"softlock"' "$run/repro.json" \
+  && ok "with element maps where it blocked and where it became a softlock, and a repro" || bad "the softlock's element maps and repro" "$(ls "$run")"
+out="$(bash tools/autoplay.sh --replay "$run" --no-images 2>&1)"; expect_output "--replay reproduces it at the same step" "FAIL: smoke step 13: softlock: " "$out"
+cp "$work/saved-play-log" tools/play_log.gd
+# Planted bug 3: a view with no default focus.
+sed '/_buy.grab_focus()/d' "$work/saved-shop" > scripts/ui/shop_screen.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "planted missing focus: the run fails" 1 $? "$out"
+expect_output "it's found when the view opens" "FAIL: smoke step 0: no-focus: the view shop has no focused control, so a keyboard or controller player can't act · element map .*/0000-no-focus\.elements\.json · repro " "$out"
+run="$(latest_run smoke-1)"
+out="$(bash tools/autoplay.sh --replay "$run" --until 0 --no-images 2>&1)"; expect_output "--replay reproduces it at the same step" "FAIL: smoke step 0: no-focus: the view shop " "$out"
+cp "$work/saved-shop" scripts/ui/shop_screen.gd
+# The other invariants: a freed view the shell still holds, the game's own invariant, a warning (a
+# note, not a failure), orphan nodes growing every turn, and an empty action list.
+cp tools/autoplay_invariants.gd "$work/saved-invariants"
+# view_node() hands out a freed node and leaves an orphan node behind at every step.
+printf '\n\nvar _made: bool = false\nvar _gone: Variant = null\n\n\nfunc view_node() -> Variant:\n\tNode.new()\n\tif not _made:\n\t\t_made = true\n\t\tvar node: Node = Node.new()\n\t\t_gone = node\n\t\tnode.free()\n\treturn _gone\n' >> tools/autoplay_adapter.gd
+replace_line "$work/saved-invariants" '\treturn problems' '\tif int(state.get("gold", 0)) < 1000:\n\t\tproblems.append("gold is below 1000")\n\treturn problems' \
+  > tools/autoplay_invariants.gd
+after_line "$work/saved-shop" 'func _on_sell_pressed() -> void:' '\tpush_warning("selling at a loss")' > scripts/ui/shop_screen.gd
+out="$(bash tools/autoplay.sh greedy_trader --no-images 2>&1)"; expect_status "the invariant fixtures fail the run" 1 $? "$out"
+expect_output "a freed view" "FAIL: greedy_trader step 0: freed-view: the view the shell holds as current \(shop\) was freed" "$out"
+expect_output "the game's own invariant" "FAIL: greedy_trader step 0: invariant: gold is below 1000" "$out"
+expect_output "a warning, as a note" "autoplay: note: greedy_trader step [0-9]+: warning: selling at a loss \(at res://scripts/ui/shop_screen\.gd:[0-9]+ in _on_sell_pressed\(\)\)" "$out"
+expect_output "orphan nodes growing every turn" "FAIL: greedy_trader step [0-9]+: orphans: the orphan-node count grew every turn for 3 turns" "$out"
+cp "$work/saved-adapter" tools/autoplay_adapter.gd; cp "$work/saved-invariants" tools/autoplay_invariants.gd; cp "$work/saved-shop" scripts/ui/shop_screen.gd
+replace_line "$work/saved-adapter" '\tif RunState.is_over():' '\tif RunState.is_over() or RunState.day >= 2:' > tools/autoplay_adapter.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"
+expect_output "no actions before the run is over" "FAIL: smoke step 3: no-actions: list_actions\(\) offers nothing, but the run isn't over \(view shop\)" "$out"
+cp "$work/saved-adapter" tools/autoplay_adapter.gd
+cp tools/autoplay_scenarios.gd "$work/saved-scenarios"
+sed 's/{"do": "buy", "expect": {"grain": 2}}/{"do": "buy", "expect": {"grain": 3}}/' "$work/saved-scenarios" > tools/autoplay_scenarios.gd
+out="$(bash tools/autoplay.sh trade_week --no-images --seed 42 2>&1)"
+expect_output "a scripted expect that fails" "FAIL: trade_week step 2: expect: after buy: grain is 2, expected 3" "$out"
+run="$(latest_run trade_week-42)"
+grep -q '"boot_seed": 42,' "$run/repro.json" && ok "the repro keeps the seed the game booted with" || bad "the repro keeps the boot seed" "$(head -n 6 "$run/repro.json")"
+out="$(bash tools/autoplay.sh --replay "$run" --no-images 2>&1)"; expect_status "--replay checks the expect again" 1 $? "$out"
+expect_output "and fails at the same step" "FAIL: trade_week step 2: expect: after buy: grain is 2, expected 3 · .*-replay/" "$out"
+replayed="$(ls -d "$runs"/trade_week-42-*-replay* | LC_ALL=C /usr/bin/sort | tail -n 1)"
+grep -q '"boot_seed": 42,' "$replayed/repro.json" && ok "booting with the same seed" || bad "the replay boots with the same seed" "$(head -n 6 "$replayed/repro.json")"
+sed 's/"kind": "smoke", "turns": 3}/"kind": "strategy", "strategy": "random"}/' "$work/saved-scenarios" > tools/autoplay_scenarios.gd
+out="$(bash tools/autoplay.sh --list 2>&1)"; expect_status "refuses scenarios without a smoke scenario" 1 $? "$out"
+expect_output "and says a smoke scenario is required" "a smoke scenario is required" "$out"
+cp "$work/saved-scenarios" tools/autoplay_scenarios.gd
+# A second view in the catalog: smoke opens it through the action whose `opens` names it and backs
+# out with the view's `back` action; without that action, the view smoke can't reach is a finding.
+cp tools/ui_screens.gd "$work/saved-screens"
+cat > scenes/ledger.tscn <<'EOF'
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/ledger_view.gd" id="1"]
+
+[node name="LedgerView" type="VBoxContainer"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("1")
+
+[node name="Close" type="Button" parent="."]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Close the ledger"
+EOF
+printf 'extends VBoxContainer\n\n\nfunc _ready() -> void:\n\tPlayLog.log_view("ledger")\n\t%%Close.pressed.connect(_on_close)\n\t%%Close.grab_focus()\n\n\nfunc _unhandled_input(event: InputEvent) -> void:\n\tif event.is_action_pressed("ui_cancel"):\n\t\t_on_close()\n\n\nfunc _on_close() -> void:\n\tget_tree().change_scene_to_file("res://scenes/shop_screen.tscn")\n' > scripts/ui/ledger_view.gd
+after_line "$work/saved-screens" '\t\t\t"states": {"default": _shop, "closed": _shop_closed}},' '\t\t{"id": "ledger", "title": "Ledger", "scene": "res://scenes/ledger.tscn"},' > tools/ui_screens.gd
+after_line "$work/saved-adapter" '\tvar actions: Array[Dictionary] = []' '\tif current_view() == "ledger":\n\t\tactions.append({"id": "close_ledger", "label": "Close", "kind": "ui", "node": "%Close", "back": true})\n\t\treturn actions\n\tactions.append({"id": "open_ledger", "label": "Ledger", "kind": "api", "opens": "ledger"})' \
+  > "$work/adapter-ledger"
+after_line "$work/adapter-ledger" '\tmatch str(action["id"]):' '\t\t"open_ledger":\n\t\t\ttree.change_scene_to_file("res://scenes/ledger.tscn")\n\t\t\treturn true' > tools/autoplay_adapter.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "smoke opens a second catalog view and backs out of it" 0 $? "$out"
+run="$(latest_run smoke-1)"
+grep -q '"text":"step 1: Ledger (api)"' "$run"/run-*.jsonl && grep -q '"text":"step 2: Close (%Close)"' "$run"/run-*.jsonl \
+  && grep -q '"screen": "ledger", "state": "view"' "$run/0001-view.elements.json" && [ -f "$run/0002-view.elements.json" ] \
+  && ok "through the open action and the view's back action, with an element map at each view change" || bad "smoke's view opening" "$(ls "$run")"
+grep -v '"id": "open_ledger"' tools/autoplay_adapter.gd > "$work/adapter-no-open" && cp "$work/adapter-no-open" tools/autoplay_adapter.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"
+expect_output "a catalog view no action opens is a finding" "FAIL: smoke step 0: smoke: no action opens the view ledger from the views smoke reached" "$out"
+# Key routes: the ledger opens with Page Down (an `input` action the shop handles) and has no back
+# action, so smoke backs out with ui_cancel (Escape); both presses must register as their actions.
+after_line "$work/saved-adapter" '\tvar actions: Array[Dictionary] = []' '\tif current_view() == "ledger":\n\t\tactions.append({"id": "ledger_tab", "label": "Next entry (Tab)", "kind": "ui", "input": "ui_focus_next"})\n\t\treturn actions\n\tactions.append({"id": "open_ledger", "label": "Ledger (Page Down)", "kind": "ui", "input": "ui_page_down", "opens": "ledger"})' \
+  > tools/autoplay_adapter.gd
+printf '\n\nfunc _unhandled_input(event: InputEvent) -> void:\n\tif event.is_action_pressed("ui_page_down"):\n\t\tget_tree().change_scene_to_file("res://scenes/ledger.tscn")\n' >> scripts/ui/shop_screen.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "smoke opens a view with a key and backs out with ui_cancel" 0 $? "$out"
+run="$(latest_run smoke-1)"
+grep -q '"text":"step 1: Ledger (Page Down) (input ui_page_down)"' "$run"/run-*.jsonl && grep -q '"text":"step 2: back (ui_cancel) (input ui_cancel)"' "$run"/run-*.jsonl \
+  && grep -q '"event":"input.action","text":"ui_page_down"' "$run"/run-*.jsonl && grep -q '"event":"input.action","text":"ui_cancel"' "$run"/run-*.jsonl \
+  && ok "both key presses register as their InputMap actions" || bad "the key routes" "$(grep -o '"text":"step [^"]*"' "$run"/run-*.jsonl | head -n 3)"
+cp "$work/saved-screens" tools/ui_screens.gd; cp "$work/saved-adapter" tools/autoplay_adapter.gd; cp "$work/saved-shop" scripts/ui/shop_screen.gd
+rm -f scenes/ledger.tscn scenes/ledger.tscn.uid scripts/ui/ledger_view.gd scripts/ui/ledger_view.gd.uid
+# With a display: screenshots and map images at the requested size, and the planted error's screenshot.
+out="$(bash tools/autoplay.sh smoke --size 1280x720 2>&1)"; status=$?
+if [ "$status" -eq 3 ]; then
+  echo "  skip  autoplay with a display: $(printf '%s' "$out" | tail -n 1)"
+else
+  expect_status "smoke with a display" 0 "$status" "$out"
+  run="$(latest_run smoke-1)"
+  [ -f "$run/0000-start.png" ] && [ -f "$run/0000-start.map.png" ] && [ -f "$run/0003-snapshot.png" ] && [ -f "$run/0009-end.png" ] \
+    && [ "$(od -An -tu1 -j16 -N8 "$run/0000-start.png" | tr -s ' ' | sed 's/^ //')" = "0 0 5 0 0 0 2 208" ] \
+    && grep -q '"size": \[1280, 720\]' "$run/0000-start.elements.json" \
+    && ok "writes a screenshot, an element map and a map image at each moment, at the requested size (1280x720)" \
+    || bad "writes a screenshot, an element map and a map image at each moment, at the requested size" "$(ls "$run")"
+  after_line "$work/saved-shop" 'func _on_buy_pressed() -> void:' '\tvar receipt: Node = null\n\treceipt.queue_free()' > scripts/ui/shop_screen.gd
+  out="$(bash tools/autoplay.sh smoke 2>&1)"
+  expect_output "the planted error's finding names its screenshot" "FAIL: smoke step 1: error: .* · screenshot playtesting/autoplay/smoke-1-[0-9-]+/0001-error\.png · repro " "$out"
+  run="$(latest_run smoke-1)"
+  [ -f "$run/0001-error.png" ] && [ -f "$run/0001-error.map.png" ] && grep -q '"screenshot":"0001-error.png"' "$run/repro.json" \
+    && ok "and writes it" || bad "the planted error's screenshot" "$(ls "$run")"
+  cp "$work/saved-shop" scripts/ui/shop_screen.gd
+fi
+rm -rf "$runs"
 
 finish

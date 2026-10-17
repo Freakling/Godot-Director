@@ -22,6 +22,10 @@
 /tools/ui_drawing.gd
 /tools/ui_verify.gd
 /tools/play_log_base.gd
+/tools/autoplay.sh
+/tools/autoplay.gd
+/tools/autoplay_adapter_base.gd
+/tools/autoplay_catalog.gd
 /playtesting/README.md
 
 # Godot Director
@@ -30,3 +34,4 @@
 *.gdir-new
 /builds/
 /design/ui/captures/
+/playtesting/autoplay/

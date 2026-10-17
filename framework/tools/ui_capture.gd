@@ -514,7 +514,7 @@ func _capture(catalog: RefCounted, entry: Dictionary, state: String, setup: Call
 	lint.map(_host, _to_pixels(), size)
 	var findings: PackedStringArray = lint.findings()
 	var source: String = view.scene_file_path if view != null and not view.scene_file_path.is_empty() else str(entry["scene"])
-	_write(path + ".elements.json", _element_map(lint, id, state, size, source))
+	_write(path + ".elements.json", lint.element_map(id, state, size, source))
 	var top: String = ""
 	for line: String in overlay_errors:
 		top += "error: " + line + "\n"
@@ -628,29 +628,6 @@ func _framed(rendered: Image, size: Vector2i) -> Image:
 	framed.fill(Color.BLACK)
 	framed.blit_rect(rendered, Rect2i(Vector2i.ZERO, screen), _stretch["margin"] as Vector2i)
 	return framed
-
-
-func _element_map(lint: UiLint, id: String, state: String, size: Vector2i, source: String) -> String:
-	var lines: PackedStringArray = PackedStringArray([
-		"{",
-		"  \"schema\": 1, \"adapter\": \"godot\",",
-		"  \"screen\": %s, \"state\": %s, \"size\": [%d, %d]," % [JSON.stringify(id), JSON.stringify(state), size.x, size.y],
-		"  \"source\": %s," % JSON.stringify(source),
-		"  \"capped\": %s," % JSON.stringify(lint.capped),
-	])
-	lines.append("  \"elements\": [" + _json_rows(lint.elements) + "],")
-	lines.append("  \"pickables_3d\": [" + _json_rows(lint.pickables_3d) + "]")
-	lines.append("}")
-	return "\n".join(lines) + "\n"
-
-
-func _json_rows(rows: Array[Dictionary]) -> String:
-	if rows.is_empty():
-		return ""
-	var texts: PackedStringArray = PackedStringArray()
-	for row: Dictionary in rows:
-		texts.append("    " + JSON.stringify(row, "", false))
-	return "\n" + ",\n".join(texts) + "\n  "
 
 
 func _write(path: String, text: String) -> void:

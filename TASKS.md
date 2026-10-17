@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T16 · B3 · R1
+**Next IDs:** T17 · B3 · R1
 
 ## Queue
+
+### T16 · Autoplay drives the real game · done · L · agent
+- Touches: framework/tools/autoplay.sh (new), framework/tools/autoplay.gd (new), framework/tools/autoplay_adapter_base.gd (new), framework/tools/autoplay_catalog.gd (new), framework/tools/ui_lint.gd, framework/tools/ui_capture.gd, project/tools/autoplay_adapter.gd (new), project/tools/autoplay_scenarios.gd (new), project/tools/autoplay_invariants.gd (new), install.sh, examples/market-day/tools/autoplay_adapter.gd (new), examples/market-day/tools/autoplay_scenarios.gd (new), examples/market-day/tools/autoplay_invariants.gd (new), examples/market-day/.gitignore, examples/market-day/.gitattributes, selftest.sh, CHANGELOG.md
+- Done when: `bash tools/autoplay.sh <scenario|--all>` launches the real game through the main scene with the autoplay meta, drives it through the adapter by real input and API calls from scripted and strategy scenarios, requires a smoke scenario, writes screenshots and element maps at the spec's moments into `playtesting/autoplay/<run>/`, checks the framework invariants and the project's, writes a replayable repro on every failure, replays with `--replay`, and is deterministic from a seed (check) · the three planted bugs (a script error in a view's button handler, a progress block that never clears, a view with no default focus) are found with a signature-ready line, step, screenshot and repro, and `--replay` reproduces each at the same step (check)
+- GDD: (none)
+- Source: Director-Driven-Development T128
 
 ### T15 · The play log base and the logging rules · done · L · agent
 - Touches: framework/tools/play_log_base.gd (new), project/tools/play_log.gd (new), framework/.godot-director/rules.md, framework/tools/check.sh, framework/tools/check.gd, framework/tools/setup-clone.sh, framework/tools/ui_capture.sh, framework/.godot-director/procedures/ui-design.md, framework/.godot-director/templates/release-workflow.yml, install.sh, examples/market-day/project.godot, examples/market-day/AGENTS.md, examples/market-day/.gitignore, examples/market-day/.gitattributes, examples/market-day/tools/play_log.gd (new), examples/market-day/scripts/autoload/run_state.gd, examples/market-day/scripts/ui/shop_screen.gd, examples/market-day/tests/test_play_log.gd (new), tests/play-log/selftest_play_log.gd (new), skills/godot-director/SKILL.md, README.md, ONBOARDING.md, PRIVACY.md, CLAUDE.md, selftest.sh, CHANGELOG.md

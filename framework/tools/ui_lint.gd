@@ -3,7 +3,8 @@ extends RefCounted
 ##
 ## map() lists what is on screen: the element map of .godot-director/procedures/ui-design.md.
 ## findings() lints the mapped elements, one line per finding: `<rule> element <n> <path>: <message>`.
-## Both read the live scene tree and work with or without a display; tools/ui_capture.gd uses them.
+## element_map() writes the mapped elements as an .elements.json file's text. They read the live scene
+## tree and work with or without a display; tools/ui_capture.gd and tools/autoplay.gd use them.
 ## Don't edit this file in a project; thresholds are in tools/ui_capture.cfg › [lint].
 
 ## The rules, in the order findings are listed for an element.
@@ -87,6 +88,38 @@ func findings() -> PackedStringArray:
 			if found.has(rule):
 				lines.append("%s element %d %s: %s" % [rule, index + 1, str(elements[index]["path"]), str(found[rule])])
 	return lines
+
+
+## The element map file's text (.elements.json): the screen, its state, the capture's size, the
+## scene it came from, and the mapped elements and 3D pickables, one per line.
+func element_map(screen: String, state: String, size: Vector2i, source: String) -> String:
+	var lines: PackedStringArray = PackedStringArray([
+		"{",
+		"  \"schema\": 1, \"adapter\": \"godot\",",
+		"  \"screen\": %s, \"state\": %s, \"size\": [%d, %d]," % [JSON.stringify(screen), JSON.stringify(state), size.x, size.y],
+		"  \"source\": %s," % JSON.stringify(source),
+		"  \"capped\": %s," % JSON.stringify(capped),
+	])
+	lines.append("  \"elements\": [" + _json_rows(elements) + "],")
+	lines.append("  \"pickables_3d\": [" + _json_rows(pickables_3d) + "]")
+	lines.append("}")
+	return "\n".join(lines) + "\n"
+
+
+## The control behind element n (numbered from 1, as in the map), or null.
+func control_of(number: int) -> Control:
+	if number < 1 or number > _nodes.size() or not is_instance_valid(_nodes[number - 1]):
+		return null
+	return _nodes[number - 1]
+
+
+func _json_rows(rows: Array[Dictionary]) -> String:
+	if rows.is_empty():
+		return ""
+	var texts: PackedStringArray = PackedStringArray()
+	for row: Dictionary in rows:
+		texts.append("    " + JSON.stringify(row, "", false))
+	return "\n" + ",\n".join(texts) + "\n  "
 
 
 # --- the map ------------------------------------------------------------------------------------
