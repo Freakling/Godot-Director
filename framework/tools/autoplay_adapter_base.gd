@@ -33,12 +33,17 @@ extends RefCounted
 var tree: SceneTree = null
 ## The catalog's views, scene path to catalog id (tools/ui_screens.gd), set by tools/autoplay.gd.
 var views: Dictionary = {}
+## True once this base's start_run() has run: the game's adapter hasn't filled it in, so there is
+## no run to play. tools/autoplay.gd then skips the run and says what to wire (exit 0), so a game
+## made from the seeds passes the check until its adapter is written.
+var unfilled: bool = false
 
 
 ## Starts a new run with this seed, the way a player starts one (press New Game in the shell, or call
-## the run's API), and waits until the player may act. It may await.
+## the run's API), and waits until the player may act. It may await. This base version only marks the
+## adapter unfilled.
 func start_run(_run_seed: int) -> void:
-	push_warning("autoplay: start_run() in tools/autoplay_adapter.gd isn't filled in yet; the run is whatever the game booted into")
+	unfilled = true
 
 
 ## Loads a run from a save file (a player's report, a repro), the way Continue does. False when the

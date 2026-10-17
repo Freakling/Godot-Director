@@ -11,7 +11,8 @@
 # (tools/autoplay_adapter.gd): ui actions by real input, api actions through the game's systems
 # (tools/autoplay.gd says how). Each run writes the play log, screenshots with their element maps,
 # and repro.json on any finding to playtesting/autoplay/<scenario>-<seed>-<datetime>/ (gitignored).
-# --all runs every scenario, one Godot run each. A replay plays the scenario again with the run's
+# --all runs every scenario, one Godot run each. While the game's adapter still has the seed's
+# start_run(), there is no run to play: it says what to wire, writes nothing and exits 0. A replay plays the scenario again with the run's
 # seeds and its recorded actions, so expects and smoke's checks are made again; --from-save starts
 # from the save written before the first finding that has one (through the adapter's load_save())
 # and replays the recorded actions from that step. The game's user:// folder is pointed at a temporary
@@ -108,9 +109,11 @@ fi
 
 # --- one Godot run at a time (the check, capture and autoplay share .godot/) --------------------
 mkdir -p "$state_dir" || exit 3
+# GDIR_LOCK_HELD=1: tools/check.sh runs this inside its own lock (it holds the lock itself).
+held=0; [ "${GDIR_LOCK_HELD:-}" = "1" ] && held=1
 lock="$state_dir/lock"
 waited=0
-until mkdir "$lock" 2>/dev/null; do
+until [ "$held" -eq 1 ] || mkdir "$lock" 2>/dev/null; do
   holder="$(cat "$lock/pid" 2>/dev/null)"
   if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then rm -rf "$lock"; continue; fi
   if [ "$waited" -ge $((limit * 2 + 60)) ]; then
@@ -120,8 +123,8 @@ until mkdir "$lock" 2>/dev/null; do
   [ "$waited" -eq 0 ] && echo "autoplay: waiting for a check, capture or autoplay to finish..."
   sleep 2; waited=$((waited + 2))
 done
-echo $$ > "$lock/pid"
-trap 'rm -rf "$lock"' EXIT
+[ "$held" -eq 1 ] || echo $$ > "$lock/pid"
+[ "$held" -eq 1 ] || trap 'rm -rf "$lock"' EXIT
 
 timeout_cmd=""
 for candidate in timeout gtimeout; do   # GNU only: Windows' timeout.exe is something else
@@ -139,10 +142,10 @@ run_godot() { # run_godot <log file> <wrapper or ""> <godot arguments...>
 }
 
 # An import pass first, as the check does, so a fresh clone has its import cache and class list.
-run_godot "$state_dir/autoplay_import.log" "" --headless --path . --import
+[ "$held" -eq 1 ] || run_godot "$state_dir/autoplay_import.log" "" --headless --path . --import   # the check has just done it
 # Only the autoplay runs get a temporary user:// folder, deleted afterwards.
 user_dir="$(mktemp -d)"
-trap 'rm -rf "$lock" "$user_dir"' EXIT
+if [ "$held" -eq 1 ]; then trap 'rm -rf "$user_dir"' EXIT; else trap 'rm -rf "$lock" "$user_dir"' EXIT; fi
 if command -v cygpath >/dev/null 2>&1; then APPDATA="$(cygpath -w "$user_dir")"; else APPDATA="$user_dir"; fi
 XDG_DATA_HOME="$user_dir"
 export APPDATA XDG_DATA_HOME
@@ -177,7 +180,7 @@ play() {
   fi
   printf '%s\n' "$log" | sed -n -e 's/^GDIR-AUTOPLAY: /autoplay: /p' -e 's/^GDIR-AUTOPLAY-FAIL: /autoplay: FAIL: /p'
   [ "$status" -eq 124 ] && echo "autoplay: FAIL: Godot timed out after ${limit}s (AUTOPLAY_TIMEOUT)" && return 1
-  if [ "$status" -eq 0 ] && ! printf '%s\n' "$log" | grep -q '^GDIR-AUTOPLAY: .* finding'; then
+  if [ "$status" -eq 0 ] && ! printf '%s\n' "$log" | grep -qE '^GDIR-AUTOPLAY: .* (finding|skipped)'; then
     echo "autoplay: FAIL: tools/autoplay.gd didn't finish (see $state_dir/autoplay.log)"
     return 1
   fi

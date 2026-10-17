@@ -44,6 +44,10 @@ extends SceneTree
 ## mouse_filter IGNORE, a clipped centre) and a key press that never registers as its action are
 ## drive findings, and smoke that ends before playing its turns is a smoke finding.
 ##
+## A game that can't be played yet (no PlayLog on the base, no main scene, or the adapter still has the seed's start_run()) is
+## skipped: the run says what to set up, writes nothing and exits 0, so a game made from the seeds
+## passes the check until it can be played.
+##
 ## Arguments after `--`: <scenario>, --list, --seed N, --steps N, --no-images, --size WxH,
 ## --replay <run folder>, --until <step>, --from-save.
 ## Output: GDIR-AUTOPLAY: lines, GDIR-AUTOPLAY-FAIL: <scenario> step <n>: <kind>: <summary> lines,
@@ -187,6 +191,9 @@ func _run() -> void:
 	root.size = size
 	var main_scene: String = str(ProjectSettings.get_setting("application/run/main_scene", ""))
 	var packed: PackedScene = load(main_scene) as PackedScene if not main_scene.is_empty() else null
+	if main_scene.is_empty():
+		_skip("the project has no main scene yet (application/run/main_scene in project.godot); set one, then this plays the game")
+		return
 	if packed == null:
 		printerr(FAIL_TAG + "the project has no main scene that loads (application/run/main_scene: '%s')" % main_scene)
 		_stop(1)
@@ -210,6 +217,9 @@ func _run() -> void:
 			_finding("adapter", "load_save() returned false for %s, so the run can't start from it" % _save_file.get_file())
 	else:
 		started = await _call(Callable(_adapter, "start_run").bind(_seed))
+	if _adapter.unfilled and not _from_save:
+		_skip("tools/autoplay_adapter.gd isn't filled in yet, so there is no run to play. Fill in start_run(), list_actions() and perform() there (its comments say how); then this plays the game")
+		return
 	if not bool(started["done"]):
 		_finding("stuck", "%s didn't finish within %d seconds" % [how, int(_catalog.stuck_seconds)])
 	await _settle()
@@ -235,6 +245,20 @@ func _run() -> void:
 	_log.call("flush_engine_log")
 	await _observe(PackedStringArray(["end"]), false)
 	_finish()
+
+
+## The game isn't ready to be played yet (no main scene, or the adapter still has the seed's start_run()):
+## say what to set up and stop cleanly, leaving no run folder, so a game made from the seeds passes the
+## check until it can be played.
+func _skip(reason: String) -> void:
+	if Engine.has_meta(AUTOPLAY_META):
+		Engine.remove_meta(AUTOPLAY_META)   # the play log writes nothing at exit: a tool run, not a run to keep
+	if not _run_dir.is_empty():
+		for file: String in DirAccess.get_files_at(_run_dir):
+			DirAccess.remove_absolute(_run_dir.path_join(file))
+		DirAccess.remove_absolute(_run_dir)
+	print(TAG + "%s · seed %d · skipped: %s" % [_entry["id"], _seed, reason])
+	_stop(0)
 
 
 func _finish() -> void:
@@ -431,8 +455,7 @@ func _choose_entry() -> bool:
 func _load_game_parts() -> bool:
 	_log = root.get_node_or_null("PlayLog")
 	if _log == null or not _log.has_method("log_event") or not _log.has_method("start_capture"):
-		printerr(FAIL_TAG + "autoplay needs the PlayLog autoload (tools/play_log.gd, extending tools/play_log_base.gd), registered as PlayLog")
-		_stop(1)
+		_skip("the game has no PlayLog autoload built on tools/play_log_base.gd yet (register PlayLog=\"*res://tools/play_log.gd\" under [autoload] in project.godot, or make the game's own PlayLog extend the base); do that, then this plays the game")
 		return false
 	var script: GDScript = ResourceLoader.load(ADAPTER_PATH) as GDScript if ResourceLoader.exists(ADAPTER_PATH) else null
 	var instance: Variant = script.new() if script != null and script.can_instantiate() else null

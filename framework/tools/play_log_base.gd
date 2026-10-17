@@ -34,7 +34,9 @@ extends Node
 ## frame; call stacks need debug/settings/gdscript/always_track_call_stacks in release builds),
 ## InputMap actions pressed (by name, polled once per frame, never typed text), window and focus changes, frame
 ## hitches over hitch_threshold_ms, orphan-node counts at snapshots (debug builds), the progress
-## button's blocked state whenever it changes, and every press with what blocked it.
+## button's blocked state whenever it changes, and every press with what blocked it. A run that
+## starts without a view change gets the current view as its first view.changed line (_current_view()),
+## so the log and its review always carry the first view.
 ##
 ## Privacy. Every line is scrubbed here: the OS user name, the home folder, the install id and the
 ## values of secret settings never reach the files. Nothing is sent anywhere.
@@ -64,6 +66,9 @@ var hitch_threshold_ms: int = 250
 var max_engine_repeats: int = 20
 ## How many recent text lines tail() keeps.
 var tail_size: int = 200
+## A run's files get its first view if the shell hasn't announced one by this many frames after
+## begin_run() or continue_run(): the view _current_view() names (see there).
+var first_view_frames: int = 3
 ## The folder whose resources the session header counts, per subfolder.
 var data_dir: String = "res://data"
 ## Parts of a setting's name (any case) that mark it secret: it's left out of the header, and its
@@ -96,6 +101,10 @@ var _warned_ids: Dictionary = {}
 var _actions: PackedStringArray = PackedStringArray()
 var _actions_ready: bool = false
 var _view: String = ""
+var _view_written: bool = false
+var _first_view_wait: int = 0
+var _screen_ids: Dictionary = {}
+var _screens_read: bool = false
 var _block_known: bool = false
 var _block: String = ""
 var _frames: int = 0
@@ -126,6 +135,21 @@ func progress_block_reason() -> String:
 	return ""
 
 
+## The name of the view the player sees now, for a run that starts without a view change: its files
+## then get this view as their first view.changed line, so a log and its review always carry the
+## first view. By default the current scene's catalog id (tools/ui_screens.gd), else its node name in
+## snake_case, as the autoplay adapter's current_view() names it. A game whose shell swaps views
+## inside one scene overrides it. "" names nothing.
+func _current_view() -> String:
+	var scene: Node = get_tree().current_scene if is_inside_tree() else null
+	if scene == null or not is_instance_valid(scene):
+		return ""
+	if not _screens_read:
+		_screens_read = true
+		_read_screens()
+	return str(_screen_ids.get(scene.scene_file_path, scene.name.to_snake_case()))
+
+
 ## The game's install id, if it has one, so it's scrubbed from every line.
 func _install_id() -> String:
 	return ""
@@ -147,6 +171,8 @@ func log_event(category: String, event: String, text: String, data: Dictionary =
 		"data": _scrub_value(data),
 	}
 	var clock: String = Time.get_time_string_from_system()
+	if event == "view.changed":
+		_view_written = true
 	_record(line, clock)
 	if _pending:
 		if _held.size() < MAX_HELD:
@@ -269,6 +295,9 @@ func continue_run(id: String) -> void:
 	_held = []
 	_pending = false
 	_open_files("run-", id, true)
+	_view_written = false
+	_view = ""
+	_first_view_wait = first_view_frames
 	_write_header()
 	for entry: Dictionary in held:
 		var line: Dictionary = entry["line"]
@@ -382,8 +411,39 @@ func _process(delta: float) -> void:
 	if _frames > 2 and ms > hitch_threshold_ms:
 		log_event("hitch", "frame.hitch", "frame took %d ms" % ms, {"ms": ms})
 	_log_actions()
+	_log_first_view()
 	if not _pending:
 		check_progress()
+
+
+## A run that began without the shell announcing a view gets the current one, a few frames in (the
+## shell's own announcement, if it comes in that time, is the line, so the view isn't logged twice).
+func _log_first_view() -> void:
+	if _first_view_wait <= 0:
+		return
+	_first_view_wait -= 1
+	if _first_view_wait > 0 or _view_written or _pending:
+		return
+	var view_name: String = _current_view()
+	if view_name.is_empty():
+		return
+	log_event("view", "view.changed", view_name, {"view": view_name, "from": _view, "initial": true})
+	_view = view_name
+
+
+## The catalog's scenes (tools/ui_screens.gd), scene path to id, for _current_view().
+func _read_screens() -> void:
+	var path: String = "res://tools/ui_screens.gd"
+	if not ResourceLoader.exists(path):
+		return
+	var script: GDScript = ResourceLoader.load(path) as GDScript
+	var catalog: Variant = script.new() if script != null and script.can_instantiate() else null
+	if not (catalog is RefCounted) or not (catalog as RefCounted).has_method("checked_screens"):
+		return
+	var checked: Array = (catalog as RefCounted).call("checked_screens")
+	for screen: Dictionary in (checked[0] as Array):
+		if not str(screen.get("scene", "")).is_empty():
+			_screen_ids[str(screen["scene"])] = str(screen["id"])
 
 
 ## Logs the actions that became pressed this frame. Polled rather than read from _input, so a held
@@ -486,9 +546,15 @@ func _start_files(prefix: String, id: String) -> void:
 	_held = []
 	_pending = false
 	_open_files(prefix, id, false)
+	_view_written = false
+	_view = ""
+	_first_view_wait = first_view_frames
 	_write_header()
 	for entry: Dictionary in held:
 		_write(entry["line"], str(entry["clock"]))
+		if entry["line"]["event"] == "view.changed":
+			_view_written = true
+			_view = str((entry["line"]["data"] as Dictionary).get("view", ""))
 
 
 func _open_files(prefix: String, id: String, append: bool) -> void:

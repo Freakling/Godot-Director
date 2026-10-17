@@ -9,6 +9,7 @@ These rules apply to any AI assistant working in this project. For each of these
 - **export.md:** export the game with Godot headless into `builds/` (`/export`), or set exports up: target platforms and where exports run. Setting up is a design session on the export open question.
 - **release.md:** release the game's builds (`/release`): run the human's own upload command per export preset to a platform's UAT branch, and promote to production only when asked; or set release up: the commands, and the CI secrets they need. Setting up is a design session on the release open question.
 - **ui-design.md:** capture the screens (`/ui-design`): a PNG per screen, state and size, with an element map, a numbered map image, layout lint and a starter drawing; process the human's Excalidraw drawing of a screen into a screen spec and items; verify a built screen against its spec and write compare images; list the screens in the catalog.
+- **autoplay.md:** let the game play itself (`/autoplay`): play a scenario through the real game, review the play log into findings with a signature, step, screenshot, element map and repro, replay a failure. "Check the logs" after the human played ("I just played, check the logs") is `/autoplay --player`: the newest log a person played, reviewed in the same format.
 - **playtest.md:** new playtest, process a playtest.
 - **function-check.md:** prepare or process a function check.
 - **align.md:** check the docs and tasks are aligned.
@@ -65,11 +66,13 @@ Update the owning place in the same change that makes it untrue. Replace superse
 - **Read what the work needs:** the item's `Touches`, the Architecture rows, and the GDD sections it names. Read by heading or line range, not whole files. Quote only the relevant lines of logs; the full check logs are in `.godot/godot-director/`.
 - **Stay inside the item.** Prefer the smallest change, and delete dead code. Match existing patterns; a new pattern needs a reason in the commit message.
 - **Tests.** A rule that can be checked without a screen gets a test: `tests/**/test_*.gd`, `extends "res://tools/test_case.gd"`, synchronous methods `test_*()`. A fixed bug gets a regression test when it can have one; otherwise it goes into the next function check.
+- **Scenarios.** An item that touches the shell, a view, the turn loop or a save adds or updates a step in `tools/autoplay_scenarios.gd` that walks the change, and the builder plays the scenarios the item names, plus `smoke`, with `bash tools/autoplay.sh` before reporting (`procedures/autoplay.md`).
 - **Outcome tags.** Each outcome in `Done when` is tagged:
   - `(test)`: a test in `tests/` proves it;
   - `(check)`: a command you run and quote proves it, such as the check or a `grep`;
+  - `(autoplay)`: a scenario run by `bash tools/autoplay.sh` proves it, such as "the smoke scenario plays 10 turns with no new signature". The builder runs it and quotes the review's delta line; a function check marks it pre-verified.
   - `(play)`: a human verifies it in the next function check.
-- **Done** means every `(test)` and `(check)` outcome holds, every `(play)` outcome is implemented, and `bash tools/check.sh` exits 0. Never report done otherwise, and show the output of a failing check. Exit 3 means the check couldn't run, so say the work is unverified.
+- **Done** means every `(test)`, `(check)` and `(autoplay)` outcome holds, every `(play)` outcome is implemented, and `bash tools/check.sh` exits 0. Never report done otherwise, and show the output of a failing check. Exit 3 means the check couldn't run, so say the work is unverified.
 - **Running the check.** Run it in the foreground with a long timeout (10 minutes or more). Other runs and hooks wait for it.
 - **Two failed attempts.** After two failed attempts at the same problem, stop and report instead of guessing further.
 

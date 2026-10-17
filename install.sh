@@ -11,7 +11,8 @@
 #   it is. If this version changes that file too, the new version is written next to it as
 #   <file>.gdir-new for you to merge.
 # - project/ holds project-owned seeds, copied only when missing. They're yours from then on. (On an
-#   upgrade, a new tools/ui_capture.cfg is written with the layout lint in the check off.)
+#   upgrade, a new tools/ui_capture.cfg is written with the layout lint in the check off, and a new
+#   tools/check.cfg with autoplay's smoke in the check off.)
 # - Framework files an earlier version installed but this one no longer ships are deleted, unless
 #   you changed them.
 # - .gitignore and .gitattributes get the lines Godot Director needs.
@@ -252,6 +253,14 @@ if [ -n "$old_version" ] && grep -qx 'tools/ui_capture.cfg' "$tmp/seeds"; then
   sed -e 's/^check_in_check=.*/check_in_check=false/' -e 's/^enforce=.*/enforce=[]/' "$dest/tools/ui_capture.cfg" > "$tmp/ui_capture.cfg"
   cat "$tmp/ui_capture.cfg" > "$dest/tools/ui_capture.cfg"
   seeded="$seeded$nl      (with the layout lint in the check off: check_in_check=false)"
+fi
+# The same for autoplay's smoke in the check (tools/check.cfg › [autoplay]): on for a new project, off
+# on an upgrade. A game that already has its own tools/check.cfg keeps it, and a missing [autoplay]
+# section reads as off; the "Wire autoplay" item in the changelog's upgrade steps turns it on.
+if [ -n "$old_version" ] && grep -qx 'tools/check.cfg' "$tmp/seeds"; then
+  sed -e 's/^check_in_check=.*/check_in_check=false/' -e 's/^enforce=.*/enforce=[]/' "$dest/tools/check.cfg" > "$tmp/check.cfg"
+  cat "$tmp/check.cfg" > "$dest/tools/check.cfg"
+  seeded="$seeded$nl      (with autoplay in the check off: [autoplay] check_in_check=false, enforce=[])"
 fi
 
 # Scripts must be executable (git ignores a hook that isn't, on macOS and Linux).

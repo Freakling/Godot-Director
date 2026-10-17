@@ -4,8 +4,8 @@ extends "res://tools/autoplay_adapter_base.gd"
 ## How `bash tools/autoplay.sh` plays this game: tools/autoplay.gd talks to the game only through this
 ## file. The action format, and tree, views, play_log(), node(), unique() and wait_frames(), are in
 ## tools/autoplay_adapter_base.gd. Every player action appears in list_actions() while it's legal,
-## with a ui route (rules.md › Every action is drivable). Until this file is filled in, autoplay finds
-## nothing to do, and says so.
+## with a ui route (rules.md › Every action is drivable). While start_run() below still calls super(),
+## autoplay skips the run and says what to wire; the check passes meanwhile.
 ##
 ## Example actions:
 ##	{"id": "end_turn", "label": "End turn", "kind": "ui", "node": "%EndTurn", "progress": true}
@@ -17,6 +17,7 @@ extends "res://tools/autoplay_adapter_base.gd"
 ## PLACEHOLDER: start a new run with this seed, as New Game does (the run's RandomNumberGenerator
 ## takes the seed: rules.md › Seeded randomness), and wait until the player may act. Such as
 ## `node("/root/Run").call("start_run", run_seed)` or pressing %NewGame, then `await wait_frames(2)`.
+## Replace the super() call with the real start: it is what marks this adapter as not filled in yet.
 func start_run(run_seed: int) -> void:
 	super(run_seed)
 

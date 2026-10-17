@@ -22,6 +22,9 @@ Each loop in the template has one fixed scored statement, so scores stay compara
 2. For each item, tick **Works** or **Broken / missing**, and say what went wrong in Notes. Leave both boxes empty for anything you didn't check; it comes back next time.
 3. Say "process the function check". Broken items become bugs. A note saying the rule itself should change becomes a design question for you.
 
+## Autoplay and your session's log
+The game writes a play log of every session. After you play, say "I just played, check the logs" (in Claude Code also `/autoplay --player`): the assistant reviews your newest log into a timeline, findings with a signature, coverage, and what changed since the last run, and tells you what it found. `/autoplay` plays the game by itself in the same way, so the assistant can check a change before your playtest. A processed playtest gets that review attached as a Machine review, and a function check lists what autoplay already verified as pre-verified, so you tick only what a machine can't judge.
+
 ## Files
 - `TEMPLATE.md`: the report template. It's yours, with one section per core gameplay loop.
 - `YYYY-MM-DD-playtest.md` and `YYYY-MM-DD-function-check.md`: one file per session. Once processed, a file gets a `Processed:` line listing the bugs, tasks and questions it produced.

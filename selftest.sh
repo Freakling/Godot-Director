@@ -363,6 +363,47 @@ grep -q '"/tools/dev_menu_base\.gd text eol=lf"' "$src/install.sh" && grep -q '^
   && grep -q '^/tools/dev_menu_base\.gd text eol=lf$' "$src/examples/market-day/.gitattributes" || wired="$wired installer lines"
 [ -z "$wired" ] && ok "the dev menu is wired in: base, seed, example, the rule, onboarding's question and answer format, the upgrade step and the installer's lines" \
   || bad "the dev menu isn't wired into:$wired"
+# /autoplay and the workflow around it: the procedure and the skill that point at each other, the
+# request list's "check the logs", the (autoplay) tag, every procedure that uses autoplay, the
+# settings' allowed commands, the check's [autoplay] section and the seeds, README and onboarding.
+wired=""
+autoproc="$proc/procedures/autoplay.md"
+autoskill="$src/framework/.claude/skills/autoplay/SKILL.md"
+[ -f "$autoproc" ] && [ -f "$autoskill" ] || wired="$wired autoplay.md/skill(missing)"
+grep -q '^name: autoplay$' "$autoskill" && grep -q 'procedures/autoplay\.md' "$autoskill" && grep -q -- '--player' "$autoskill" \
+  && grep -q -- '--replay' "$autoskill" && grep -q 'check the logs' "$autoskill" || wired="$wired skills/autoplay"
+grep -q '/autoplay' "$autoproc" && grep -q 'tools/autoplay\.sh' "$autoproc" && grep -q 'tools/log_review\.sh' "$autoproc" \
+  && grep -q -- '--replay <run folder>' "$autoproc" && grep -q -- '--player' "$autoproc" || wired="$wired autoplay.md(commands)"
+grep -q '^## Who owns what' "$autoproc" && grep -q 'Framework-owned' "$autoproc" && grep -q 'Project-owned' "$autoproc" \
+  && grep -q "can't view images" "$autoproc" && grep -q '\.elements\.json' "$autoproc" && grep -q 'review\.md' "$autoproc" \
+  && grep -q '^## Report' "$autoproc" && grep -q 'File and confirm' "$autoproc" && grep -q 'Never edit `director/`' "$autoproc" || wired="$wired autoplay.md(owners, element maps, report, bugs)"
+grep -q '^- \*\*autoplay\.md:\*\*' "$proc/rules.md" && grep -q '"Check the logs"' "$proc/rules.md" && grep -q '/autoplay --player' "$proc/rules.md" || wired="$wired rules.md(request list)"
+for file in rules.md tasks.md procedures/next-task.md procedures/build.md procedures/review.md; do
+  grep -q '(autoplay)' "$proc/$file" || wired="$wired $file((autoplay))"
+done
+for file in next-task build review function-check playtest align; do
+  grep -qi 'autoplay' "$proc/procedures/$file.md" || wired="$wired $file.md(autoplay)"
+done
+grep -q 'build\.md` step 6' "$proc/procedures/next-task.md" && grep -q '^6\. \*\*Autoplay\*\*' "$proc/procedures/build.md" && grep -q '^   Autoplay: ' "$proc/procedures/build.md" \
+  && grep -q 'plus `smoke`\|and `smoke`' "$proc/procedures/build.md" && grep -q "delta line" "$proc/procedures/build.md" || wired="$wired build.md(autoplay step, report line)"
+grep -q 'Logging and drivability' "$proc/procedures/review.md" && grep -q 'list_actions()' "$proc/procedures/review.md" && grep -q 'opened by `smoke`' "$proc/procedures/review.md" || wired="$wired review.md(logging, drivability)"
+grep -q 'Pre-verified by autoplay' "$proc/procedures/function-check.md" && grep -q 'run folder' "$proc/procedures/function-check.md" || wired="$wired function-check.md(pre-verified)"
+grep -q 'Machine review' "$proc/procedures/playtest.md" && grep -q 'tools/autoplay\.sh smoke' "$proc/procedures/playtest.md" || wired="$wired playtest.md(machine review)"
+grep -q 'Scenario gaps' "$proc/procedures/align.md" && grep -q 'Logging gaps' "$proc/procedures/align.md" && grep -q 'never fails\|none of it fails' "$proc/procedures/align.md" || wired="$wired align.md(gaps)"
+for command in 'tools/autoplay.sh \*' 'tools/autoplay.sh' 'tools/log_review.sh \*' 'tools/log_review.sh'; do
+  grep -q "\"Bash(bash $command)\"" "$settings" || wired="$wired settings.json($command)"
+done
+grep -q '^\[autoplay\]$' "$src/project/tools/check.cfg" && grep -q '^check_in_check=true$' "$src/project/tools/check.cfg" && grep -q '^enforce=\["smoke"\]$' "$src/project/tools/check.cfg" \
+  && grep -q '^\[autoplay\]$' "$src/examples/market-day/tools/check.cfg" || wired="$wired check.cfg seeds"
+grep -q "sed .s/^/GDIR-FAIL: /." "$src/framework/tools/check.sh" && grep -q "GDIR_LOCK_HELD=1" "$src/framework/tools/check.sh" \
+  && grep -q "GDIR_LOCK_HELD" "$src/framework/tools/autoplay.sh" && grep -q "tools/check.cfg > \[autoplay\]" "$src/framework/tools/check.sh" || wired="$wired check.sh([autoplay])"
+grep -q 'old_version' "$src/install.sh" && grep -q "tools/check.cfg" "$src/install.sh" && grep -q 'autoplay in the check off' "$src/install.sh" || wired="$wired install.sh(check.cfg off on an upgrade)"
+grep -q '^### Auto-playtesting' "$src/README.md" && grep -q '(`/autoplay`)' "$src/README.md" && grep -q 'framework-owned\|Godot Director owns' "$src/README.md" \
+  && grep -q "can't view images" "$src/README.md" && grep -q 'check_in_check' "$src/README.md" || wired="$wired README.md(auto-playtesting)"
+grep -q '^8\. \*\*The workflow\.\*\*' "$src/CHANGELOG.md" && grep -q '^- \*\*New: `/autoplay`' "$src/CHANGELOG.md" && grep -q 'Wire autoplay' "$src/CHANGELOG.md" || wired="$wired CHANGELOG.md"
+grep -q 'autoplay_adapter\.gd' "$src/ONBOARDING.md" && grep -q '^8\. \*\*Autoplay\.\*\*' "$src/ONBOARDING.md" || wired="$wired ONBOARDING.md(autoplay)"
+[ -z "$wired" ] && ok "/autoplay is wired in: procedure and skill, the request list, the (autoplay) tag, the workflow procedures, the settings, the check's [autoplay] section and the docs" \
+  || bad "/autoplay isn't wired into:$wired"
 # The minimum Godot is 4.5 (the engine Logger) everywhere it's stated and checked.
 stale="$(cd "$src" && grep -nE '4\.3([^0-9]|$)|-lt [0-4] \]; \}|-ge [0-4] \]; \}' README.md ONBOARDING.md CLAUDE.md \
   skills/godot-director/SKILL.md selftest.sh framework/tools/check.sh framework/tools/setup-clone.sh framework/tools/ui_capture.sh framework/tools/autoplay.sh \
@@ -946,6 +987,10 @@ expect_status "commits in a repository without project.godot yet" 0 $?
 # --- screen capture (/ui-design) ----------------------------------------------------------------
 echo "ui capture"
 captures=design/ui/captures
+# The catalogs below have views no adapter opens, and these tests are about the layout lint: keep the
+# check's autoplay smoke (tools/check.cfg) off until the autoplay sections.
+cp tools/check.cfg "$work/saved-check-cfg-ui"
+sed -e 's/^check_in_check=.*/check_in_check=false/' "$work/saved-check-cfg-ui" > tools/check.cfg
 out="$(GODOT_BIN=/nonexistent/godot bash tools/ui_capture.sh --all 2>&1)"; expect_status "capture exits 3 without Godot" 3 $? "$out"
 [ ! -e "$captures" ] && ok "and writes nothing" || bad "capture without Godot wrote $captures"
 out="$(bash tools/ui_capture.sh --list 2>&1)"; expect_status "lists the catalog" 0 $? "$out"
@@ -1590,6 +1635,7 @@ fi
 rm -f tools/selftest_drawings.gd tools/selftest_drawings.gd.uid design/ui/spec*.md
 
 # --- autoplay -----------------------------------------------------------------------------------
+cp "$work/saved-check-cfg-ui" tools/check.cfg
 # The example plays itself through its adapter: the real main scene, ui actions by real input and an
 # api action, screenshots and element maps, the invariants, repros and replays, and the same log
 # from the same seed. The planted bugs are the spec's three: a script error in a view's button
@@ -1608,7 +1654,7 @@ normalized() { # a run's JSONL without time stamps, run ids and timing lines
     | grep -v -e '"event":"frame.hitch"' -e '"event":"window.focus"'
 }
 out="$(GODOT_BIN=/nonexistent/godot bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "autoplay exits 3 without Godot" 3 $? "$out"
-[ ! -e "$runs" ] && ok "and writes nothing" || bad "autoplay without Godot wrote $runs"
+[ -z "$(ls -A "$runs" 2>/dev/null)" ] && ok "and writes nothing" || bad "autoplay without Godot wrote $runs"
 out="$(bash tools/autoplay.sh --list 2>&1)"; expect_status "lists the scenarios" 0 $? "$out"
 [ "$(printf '%s\n' "$out" | awk -F ' · ' 'NF >= 3 { printf "%s %s ", $1, $2 }')" = "smoke smoke trade_week scripted greedy_trader strategy " ] \
   && ok "with the smoke, scripted and strategy scenarios" || bad "with the smoke, scripted and strategy scenarios" "$out"
@@ -1623,6 +1669,14 @@ if [ -n "$run" ] && [ -f "$(ls "$run"/run-*.log 2>/dev/null | head -n 1)" ] && [
   ok "smoke writes the play log, element maps at the start, view and snapshots, and screenshot lines; the shop's buttons are clicked"
 else
   bad "smoke writes the play log, element maps at the start, view and snapshots, and screenshot lines" "$(ls "$run" 2>&1)"
+fi
+# A run that starts without a view change names the current view: the example's shell never announces
+# the shop, so the log's one view line is the first view, logged once.
+if [ -n "$run" ] && [ "$(grep -c '"event":"view.changed"' "$run"/run-*.jsonl)" = "1" ] \
+    && grep -q '"event":"view.changed","text":"shop","data":{"view":"shop","from":"","initial":true}' "$run"/run-*.jsonl; then
+  ok "the play log names the shop as the first view of a run that starts without a view change, once"
+else
+  bad "the play log names the first view of a run that starts without a view change, once" "$(grep -h '"event":"view.changed"' "$run"/run-*.jsonl 2>&1 | head -n 3)"
 fi
 grep -q '"event":"autoplay.step".*"action":"next_day_fast","kind":"api"' "$(latest_run trade_week-1)"/run-*.jsonl \
   && ok "the scripted scenario mixes ui actions and an api action, and its expects hold" || bad "the scripted scenario performs its api action"
@@ -1996,5 +2050,95 @@ fi
 rm -rf "$runs"
 out="$(bash tools/log_review.sh --latest 2>&1)"; expect_status "log review with no autoplay run says so (exit 3)" 3 $? "$out"
 expect_output "and names where runs come from" "no autoplay run with a play log in playtesting/autoplay" "$out"
+
+
+# --- autoplay in the check -----------------------------------------------------------------------
+# tools/check.cfg > [autoplay]: smoke played headless once the rest passed. A finding fails the check
+# only for a scenario under enforce; with the keys missing or check_in_check=false the check is what it
+# was. A game made from the seeds is played or skipped cleanly, whatever it has registered.
+echo "autoplay in the check"
+cp tools/check.cfg "$work/saved-check-cfg"; cp scripts/ui/shop_screen.gd "$work/saved-shop"
+set_autoplay() { # set_autoplay <check_in_check> <enforce as JSON>
+  sed -e "s/^check_in_check=.*/check_in_check=$1/" -e "s/^enforce=.*/enforce=$2/" "$work/saved-check-cfg" > tools/check.cfg
+}
+rm -rf "$runs"
+set_autoplay true '["smoke"]'
+out="$(bash tools/check.sh 2>&1)"; expect_status "check_in_check with smoke under enforce passes on the clean example" 0 $? "$out"
+expect_output "and says what smoke played" "check: note: autoplay: smoke · seed 1 · [0-9]+ steps · [0-9]+ turns · 0 findings$" "$out"
+[ -z "$(ls "$runs" 2>/dev/null)" ] && ok "and keeps no run folder for a clean run" || bad "and keeps no run folder for a clean run" "$(ls "$runs")"
+after_line "$work/saved-shop" 'func _on_buy_pressed() -> void:' '\tvar receipt: Node = null\n\treceipt.queue_free()' > scripts/ui/shop_screen.gd
+out="$(bash tools/check.sh 2>&1)"; expect_status "a finding in smoke under enforce fails the check" 1 $? "$out"
+expect_output "as GDIR-FAIL: autoplay, with the scenario, step, kind and summary" "GDIR-FAIL: autoplay: smoke step 1: error: Cannot call method 'queue_free' on a null value\." "$out"
+expect_output "and names the element map and the repro folder" "0001-error\.elements\.json · repro playtesting/autoplay/smoke-1-" "$out"
+expect_output "and says how to read and replay it" "log_review\.sh --latest.*autoplay\.sh --replay" "$out"
+[ -f "$(latest_run smoke-1)/repro.json" ] && ok "the run with the finding keeps its folder, with the repro" || bad "the run with the finding keeps its folder" "$(ls "$runs" 2>&1)"
+set_autoplay true '[]'
+out="$(bash tools/check.sh 2>&1)"; expect_status "with enforce empty the same finding doesn't fail the check" 0 $? "$out"
+expect_output "and is a note, marked as not enforced" "check: note: \(not enforced\) autoplay: smoke step 1: error: Cannot call method 'queue_free'" "$out"
+grep -v '^enforce=' "$work/saved-check-cfg" > tools/check.cfg
+out="$(bash tools/check.sh 2>&1)"; expect_status "with check_in_check on and enforce missing, smoke is a note too" 0 $? "$out"
+set_autoplay true '["*"]'
+cp "$work/saved-shop" scripts/ui/shop_screen.gd
+out="$(bash tools/check.sh 2>&1)"; expect_status "enforce [\"*\"] plays every scenario, clean" 0 $? "$out"
+[ "$(printf '%s\n' "$out" | grep -c '^check: note: autoplay: .* · 0 findings$')" = "3" ] && ok "one note per scenario" || bad "one note per scenario" "$out"
+after_line "$work/saved-shop" 'func _on_buy_pressed() -> void:' '\tvar receipt: Node = null\n\treceipt.queue_free()' > scripts/ui/shop_screen.gd
+set_autoplay false '["smoke"]'
+rm -f .godot/godot-director/autoplay_check.log; rm -rf "$runs"
+out="$(bash tools/check.sh 2>&1)"; expect_status "with check_in_check=false the same finding doesn't fail the check" 0 $? "$out"
+if ! printf '%s' "$out" | grep -qi 'autoplay' && [ ! -e .godot/godot-director/autoplay_check.log ] && [ ! -e "$runs" ]; then
+  ok "and the check plays nothing: no mention, no autoplay log, no run folder"
+else
+  bad "and the check plays nothing: no mention, no autoplay log, no run folder" "$out"
+fi
+grep -v -e '^check_in_check=' -e '^enforce=' "$work/saved-check-cfg" > tools/check.cfg
+out="$(bash tools/check.sh 2>&1)"; expect_status "with both keys missing the check reads autoplay as off" 0 $? "$out"
+expect_no_output "and says nothing about it" "autoplay" "$out"
+awk '/^\[autoplay\]$/ { skip = 1; next } /^\[/ { skip = 0 } !skip' "$work/saved-check-cfg" > tools/check.cfg
+out="$(bash tools/check.sh 2>&1)"; expect_status "with no [autoplay] section at all the check is what it was" 0 $? "$out"
+expect_no_output "and says nothing about it either" "autoplay" "$out"
+fp_before="$(bash tools/check.sh --fingerprint)"
+set_autoplay false '[]'
+[ "$fp_before" != "$(bash tools/check.sh --fingerprint)" ] && ok "the check's fingerprint covers tools/check.cfg" || bad "the check's fingerprint covers tools/check.cfg"
+cp "$work/saved-check-cfg" tools/check.cfg; cp "$work/saved-shop" scripts/ui/shop_screen.gd
+rm -rf "$runs"
+
+# A game made from the seeds, with nothing wired yet: the new project's seed has autoplay in the check
+# on, smoke exits 0 and says what to wire at each stage, the check passes, and nothing is written.
+fresh="$work/fresh-game"; mkdir -p "$fresh"
+printf 'config_version=5\n\n[application]\nconfig/name="Fresh"\nconfig/features=PackedStringArray("4.5")\n' > "$fresh/project.godot"
+printf '[gd_scene format=3]\n\n[node name="Main" type="Control"]\n' > "$fresh/main.tscn"
+(cd "$fresh" && git init -q && git config core.autocrlf false && git add -A && git_q commit -qm init) || exit 1
+out="$(bash "$src/install.sh" "$fresh" 2>&1)"; expect_status "installs into a fresh game" 0 $? "$out"
+if grep -q '^\[autoplay\]$' "$fresh/tools/check.cfg" && grep -q '^check_in_check=true$' "$fresh/tools/check.cfg" && grep -q '^enforce=\["smoke"\]$' "$fresh/tools/check.cfg" \
+    && ! printf '%s' "$out" | grep -q 'autoplay in the check off'; then
+  ok "a new project's tools/check.cfg has autoplay in the check on, with smoke enforced"
+else
+  bad "a new project's tools/check.cfg has autoplay in the check on, with smoke enforced" "$out"
+fi
+fresh_play() { (cd "$fresh" && GODOT_BIN="$godot" bash tools/autoplay.sh smoke --no-images 2>&1); }
+out="$(fresh_play)"; expect_status "smoke in a fresh game with no PlayLog and no main scene exits 0" 0 $? "$out"
+expect_output "and says to register the PlayLog" "autoplay: smoke · seed 1 · skipped: the game has no PlayLog autoload built on tools/play_log_base\.gd yet" "$out"
+printf '\n[autoload]\n\nPlayLog="*res://tools/play_log.gd"\n' >> "$fresh/project.godot"
+out="$(fresh_play)"; expect_status "with the PlayLog registered and no main scene it exits 0" 0 $? "$out"
+expect_output "and says to set a main scene" "skipped: the project has no main scene yet" "$out"
+after_line "$fresh/project.godot" 'config/name="Fresh"' 'run/main_scene="res://main.tscn"' > "$work/fresh-project" && cp "$work/fresh-project" "$fresh/project.godot"
+out="$(fresh_play)"; expect_status "with a main scene and the seed's adapter it exits 0" 0 $? "$out"
+expect_output "and says to fill in the adapter" "skipped: tools/autoplay_adapter\.gd isn't filled in yet, so there is no run to play" "$out"
+out="$(cd "$fresh" && GODOT_BIN="$godot" bash tools/autoplay.sh --all --no-images 2>&1)"; expect_status "--all in the fresh game exits 0 too" 0 $? "$out"
+[ -z "$(ls "$fresh/playtesting/autoplay" 2>/dev/null)" ] && ok "a skip writes no run folder and no boot log" || bad "a skip writes no run folder and no boot log" "$(ls -R "$fresh/playtesting/autoplay")"
+out="$(cd "$fresh" && GODOT_BIN="$godot" bash tools/check.sh 2>&1)"; expect_status "the check passes in the fresh game with autoplay on and smoke enforced" 0 $? "$out"
+expect_output "and notes that smoke was skipped, naming the adapter" "check: note: autoplay: smoke · seed 1 · skipped: tools/autoplay_adapter\.gd isn't filled in yet" "$out"
+# An upgrade that gets a new tools/check.cfg gets it with autoplay in the check off.
+rm -f "$fresh/tools/check.cfg"
+out="$(bash "$src/install.sh" "$fresh" 2>&1)"; expect_status "upgrades the fresh game" 0 $? "$out"
+if grep -q '^check_in_check=false$' "$fresh/tools/check.cfg" && grep -q '^enforce=\[\]$' "$fresh/tools/check.cfg" \
+    && printf '%s' "$out" | grep -q 'with autoplay in the check off: \[autoplay\] check_in_check=false, enforce=\[\]'; then
+  ok "an upgrade writes a new tools/check.cfg with autoplay in the check off, and says so"
+else
+  bad "an upgrade writes a new tools/check.cfg with autoplay in the check off" "$out"
+fi
+grep -q 'Wire autoplay' "$src/CHANGELOG.md" && grep -q 'enforce=\["smoke"\]' "$src/CHANGELOG.md" && grep -q 'a missing section reads as off' "$src/CHANGELOG.md" \
+  && ok "and the changelog's upgrade step adds the \"Wire autoplay\" item and says how to turn the check on" || bad "the changelog's upgrade step for autoplay"
+
 
 finish

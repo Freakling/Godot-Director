@@ -43,6 +43,7 @@ func _on_frame() -> void:
 	_root_dir = OS.get_cmdline_user_args()[0]
 	_run()
 	await _run_input()
+	await _run_first_view()
 	print("DONE")
 	quit(0)
 
@@ -402,6 +403,125 @@ func _run_input() -> void:
 	field.queue_free()
 	root.remove_child(log)
 	log.free()
+
+
+## A run that starts without a view change names the current view as its first view, once, and a view
+## change that follows at once is the line instead.
+func _run_first_view() -> void:
+	var scene: Control = Control.new()
+	scene.name = "MarketBoard"
+	root.add_child(scene)
+	current_scene = scene
+	# No view change: the current scene's node name, in snake_case, a few frames in.
+	var log: TestLog = _new_log(_dir("first-view"))
+	log.start_capture()
+	log.begin_run()
+	for index: int in 8:
+		await process_frame
+	var lines: Array[Dictionary] = log.stop_capture()
+	var views: Array[Dictionary] = _views(lines)
+	_check(views.size() == 1 and str(views[0]["text"]) == "market_board" and bool((views[0]["data"] as Dictionary).get("initial", false)),
+		"a run that starts without a view change gets the current view as its first view.changed line", str(_events(lines)))
+	_check(_jsonl_views(log.log_path().get_basename() + ".jsonl").size() == 1,
+		"and it is in the run's JSONL", FileAccess.get_file_as_string(log.log_path().get_basename() + ".jsonl"))
+	_check(str(_events(lines)).find("view.changed") > str(_events(lines)).find("session.start"),
+		"after the session header")
+	# A second run in the same session gets its own first view, in its own files.
+	log.start_capture()
+	log.begin_run()
+	for index: int in 8:
+		await process_frame
+	views = _views(log.stop_capture())
+	_check(views.size() == 1 and str(views[0]["text"]) == "market_board", "a second run in the session gets its own first view")
+	# A shell that announces its view right after begin_run: that is the line, and nothing is added.
+	log.start_capture()
+	log.begin_run()
+	log.log_view("shop")
+	for index: int in 8:
+		await process_frame
+	views = _views(log.stop_capture())
+	_check(views.size() == 1 and str(views[0]["text"]) == "shop", "a view change that follows at once is the only view line, not a second one",
+		str(views))
+	# The same through the shell's signal, a frame later.
+	var shell: Node = Node.new()
+	shell.add_user_signal("view_changed", [{"name": "name", "type": TYPE_STRING}])
+	root.add_child(shell)
+	log.watch_views(shell)
+	log.start_capture()
+	log.begin_run()
+	await process_frame
+	shell.emit_signal("view_changed", "map")
+	for index: int in 8:
+		await process_frame
+	views = _views(log.stop_capture())
+	_check(views.size() == 1 and str(views[0]["text"]) == "map", "and so does the shell's signal a frame later", str(views))
+	# A view logged while the run was still held (a title screen) is already the first view.
+	var held: TestLog = _new_log(_dir("first-view-held"))
+	held.log_view("title")
+	held.start_capture()
+	held.begin_run()
+	for index: int in 8:
+		await process_frame
+	var held_lines: Array[Dictionary] = held.stop_capture()
+	var held_views: Array[Dictionary] = _jsonl_views(held.log_path().get_basename() + ".jsonl")
+	_check(held_views.size() == 1 and str(held_views[0]["text"]) == "title" and _views(held_lines).is_empty(),
+		"a view logged before the run began is its first view, and none is added", str(held_views))
+	# The scene is a catalog entry: its catalog id names it (tools/ui_screens.gd in the game).
+	var catalog_scene: Node = (load("res://scenes/shop_screen.tscn") as PackedScene).instantiate() if ResourceLoader.exists("res://scenes/shop_screen.tscn") else null
+	if catalog_scene != null:
+		root.add_child(catalog_scene)
+		current_scene = catalog_scene
+		var catalog_log: TestLog = _new_log(_dir("first-view-catalog"))
+		catalog_log.start_capture()
+		catalog_log.begin_run()
+		for index: int in 8:
+			await process_frame
+		views = _views(catalog_log.stop_capture())
+		_check(views.size() == 1 and str(views[0]["text"]) == "shop", "a scene in the screen catalog is named by its catalog id", str(views))
+		current_scene = scene
+		root.remove_child(catalog_scene)
+		catalog_scene.free()
+		root.remove_child(catalog_log)
+		catalog_log.free()
+	# A game whose shell swaps views in one scene overrides _current_view().
+	var custom: CustomViewLog = CustomViewLog.new()
+	custom.log_dir = _dir("first-view-custom")
+	root.add_child(custom)
+	custom.start_capture()
+	custom.begin_run()
+	for index: int in 8:
+		await process_frame
+	views = _views(custom.stop_capture())
+	_check(views.size() == 1 and str(views[0]["text"]) == "inventory", "a game's _current_view() hook names the view", str(views))
+	# No scene and no view named: nothing is logged.
+	current_scene = null
+	var none: TestLog = _new_log(_dir("first-view-none"))
+	none.start_capture()
+	none.begin_run()
+	for index: int in 8:
+		await process_frame
+	_check(_views(none.stop_capture()).is_empty(), "with no current scene, no view line is invented")
+	for node: Node in [log, held, custom, none, shell, scene]:
+		root.remove_child(node)
+		node.free()
+
+
+func _views(lines: Array[Dictionary]) -> Array[Dictionary]:
+	var views: Array[Dictionary] = []
+	for line: Dictionary in lines:
+		if str(line["event"]) == "view.changed":
+			views.append(line)
+	return views
+
+
+func _jsonl_views(path: String) -> Array[Dictionary]:
+	return _views(_jsonl_events(path))
+
+
+## A game whose shell swaps views inside one scene says which one it shows.
+class CustomViewLog extends TestLog:
+	func _current_view() -> String:
+		return "inventory"
 
 
 func _press(action: StringName) -> void:

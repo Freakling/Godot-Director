@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T19 · B3 · R1
+**Next IDs:** T20 · B3 · R1
 
 ## Queue
+
+### T19 · /autoplay and the workflow hooks · done · M · agent
+- Touches: framework/.godot-director/procedures/autoplay.md (new), framework/.claude/skills/autoplay/SKILL.md (new), framework/.godot-director/rules.md, tasks.md, procedures/next-task.md, build.md, review.md, function-check.md, playtest.md, align.md, framework/playtesting/README.md, framework/tools/check.sh, autoplay.sh, autoplay.gd, autoplay_adapter_base.gd, play_log_base.gd, project/tools/check.cfg, project/tools/autoplay_adapter.gd, examples/market-day/tools/check.cfg, framework/.claude/settings.json, install.sh, README.md, ONBOARDING.md, tests/play-log/selftest_play_log.gd, selftest.sh, CHANGELOG.md
+- Done when: the procedure and skill run, review and replay as spec section 3.4 says, every named procedure uses autoplay as the spec says, the check runs smoke headless under `[autoplay] check_in_check` with `enforce` (on for new projects, off on upgrade, missing keys read as off), a new project gets everything wired so that `bash tools/autoplay.sh smoke` exits 0 in a fresh project made by the skill (a clean skip that names what to wire) and an upgrade gets the seeds plus a TASKS item (spec section 5), and the docs say what is framework-owned and what is project-owned and how an assistant without image viewing reviews from element maps (spec section 6) (check) · the play log names the current view when a run starts without a view change, so a run's log and review always carry its first view (check) · the whole feature is one open pull request, each stage one commit, with the selftest passing (check)
+- GDD: (none)
+- Source: Director-Driven-Development T131
 
 ### T18 · The dev menu base and its onboarding step · done · M · agent
 - Touches: framework/tools/dev_menu_base.gd (new), project/tools/dev_menu.gd (new), framework/.godot-director/rules.md, ONBOARDING.md, README.md, project/AGENTS.md, examples/market-day/tools/dev_menu.gd (new), examples/market-day/tests/test_dev_menu.gd (new), examples/market-day/scripts/autoload/run_state.gd, examples/market-day/project.godot, examples/market-day/AGENTS.md, examples/market-day/.gitignore, examples/market-day/.gitattributes, tests/dev-menu/selftest_dev_menu.gd (new), install.sh, selftest.sh, CHANGELOG.md

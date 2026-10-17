@@ -82,6 +82,7 @@ Only Godot Director's own files are replaced, and your edits to them are kept. W
 | "Research how other games handle {topic}", "What licence does this plugin use?" (`/research {question}`) | A read-only researcher looks into one question in a fresh context and saves a dated note in `design/research/`: the conclusion, the options, the sources with a confidence, and a recommendation. It informs; you decide. A design session asks it for facts it doesn't have, and you can queue a research item (`R1`, `R2`, ...) for later. |
 | "Export the game", "Make a Web build" (`/export`) | Exports every export preset headless with the Godot your clone already knows, after checking the export templates are installed, into the gitignored `builds/` folder, and reports what it produced. Onboarding asks which platforms you ship to and where exports run (this machine, a build container, or a hosted service such as GitHub Actions); skip it and the GDD gets an open question, so `/design Q{n}` sets it up later. |
 | "Release the game", "Push a build to UAT", "Promote to production" (`/release`) | Exports the presets, then runs the upload command you supplied for each preset to its UAT branch or channel (`release.cfg` names the commands and the CI secrets they read; Godot Director knows no store). It goes to production only when you ask, with the check passing. `.godot-director/templates/release-workflow.yml` is a GitHub Actions workflow that exports on every change, uploads to UAT from `main`, and runs production behind a protected Environment you approve. Onboarding asks for the commands and secret names, or you skip it and the GDD gets an open question. |
+| "Playtest this", "Run the smoke test", "I just played, check the logs" (`/autoplay`) | The game plays itself through its real main scene, clicking and pressing keys as you would, and the assistant reads the play log into findings, each with a step, a screenshot and a command that replays it. After your own session it reviews your log the same way. |
 | "New playtest", "Process my playtest" (`/playtest`) | Creates a report from the template, or turns a filled-in one into bugs, score trends and design proposals. |
 | "Capture the screens", "Redesign the shop screen", "Process my drawing", "Verify the hero room" (`/ui-design`) | Renders each screen at each size with a numbered map of its elements and a layout lint (squeezed text, off-screen or unreachable controls, no default focus), and writes a starter drawing per screen. You draw over it in Excalidraw (free, no account) and save it in `director/ui/`; `process` reads exactly what you drew, asks about what it can't tell, and records the layout once in `design/ui/<screen>.md`; the build follows that spec, and `verify` captures the built screen, lists its deviations from the spec and writes a compare image of your drawing's screenshot beside the result. A catalog entry's `overlays` put a HUD an autoload draws into the shot. The lint can also run in the check (`tools/ui_capture.cfg` › `[lint]`: on for new games, off after an upgrade, per screen in `enforce`). Drawing is optional; capture and lint work without it. |
 | "Prepare a function check", "Process the function check" (`/function-check`) | A checklist of what's been built since the last round and needs a human eye; you tick Works or Broken. |
@@ -127,10 +128,14 @@ your-game/
 ├── design/decisions.md         why: one line per design decision
 ├── design/research/            dated research notes, one per topic; the decision line links to its note
 ├── playtesting/TEMPLATE.md     playtest template, one section per core loop
-├── tools/check.cfg             check settings: screen folders, folders to skip
+├── tools/check.cfg             check settings: screen folders, folders to skip, whether the check plays smoke
 ├── tools/ui_screens.gd         the screen catalog: every screen, how to open it in a state, the overlays it shows
 ├── tools/ui_capture.cfg        capture sizes and seed, lint thresholds, which screens the check lints, verify tolerance
 ├── tools/play_log.gd           the PlayLog autoload: what the play log's header, snapshots and progress line say for this game
+├── tools/autoplay_adapter.gd   how autoplay starts a run, which actions are legal and how each is performed
+├── tools/autoplay_scenarios.gd the scenarios autoplay plays: smoke, scripted ones and strategies
+├── tools/autoplay_invariants.gd  the game's own always-true checks, run after every autoplay step
+├── playtesting/signatures.tsv  the problems log review has seen, each with a stable signature
 ├── tools/dev_menu.gd           the DevMenu autoload, if you want one: how it is enabled and which systems it shows
 ├── design/ui/                  one spec per screen (and a gitignored captures/ folder); README.md says how to draw
 ├── director/ui/                your screen drawings (you create it; the agent only reads it)
@@ -138,11 +143,13 @@ your-game/
 │  Godot Director's, tool-neutral: updated on upgrade
 ├── .godot-director/rules.md      the workflow rules, loaded through AGENTS.md
 ├── .godot-director/tasks.md      the TASKS.md item format, read when items are written
-├── .godot-director/procedures/   next-task · build · design · research · export · release · ui-design · playtest · function-check · align · drift-reset · prune · review
+├── .godot-director/procedures/   next-task · build · design · research · export · release · ui-design · autoplay · playtest · function-check · align · drift-reset · prune · review
 ├── .godot-director/research-domain.md  what the researcher adds for Godot: the docs and engine version, plugin and asset licences, export and store requirements
 ├── tools/check.sh, check.gd    the check;  tools/test_case.gd: base for tests in tests/
 ├── tools/ui_capture.sh, ui_*.gd  screen capture, element map, layout lint, drawing reader, compare and verify
 ├── tools/play_log_base.gd      the play log: a .log and a .jsonl per run in user://logs/play/, engine errors, scrubbing
+├── tools/autoplay.sh, autoplay*.gd  autoplay: plays the real game through the adapter, checks invariants, writes repros
+├── tools/log_review.sh, .gd    log review: a play log into review.md and findings.json, with signatures
 ├── tools/dev_menu_base.gd      the dev menu: a tab per system with its actions and hidden values, and the play log's tail
 ├── tools/setup-clone.sh        per clone: finds Godot, installs the pre-commit hook
 ├── tools/release.sh            runs the upload commands release.cfg names, per export preset
@@ -164,6 +171,7 @@ The full rules are in `.godot-director/rules.md`, and the assistant reads them e
 - **Each fact lives in one place,** and is updated in the same change that makes it untrue.
 - **Rules live in systems, not screens.** They sit in plain classes that tests can build directly. Saves are JSON in `user://`, never Resources, which can run scripts when loaded.
 - **Everything is logged.** Every player action, turn step, view change and blocked progress button writes a line to the play log, a `.log` for you and a `.jsonl` for tools per run, and tests assert on those lines. The log ships in every build, never leaves the machine, and leaves out the user name, the home path and the install id.
+- **Every action is drivable.** Every player action is offered to autoplay while it's legal, through a key, a pad button or a uniquely named control, so the game can be played without a person.
 - **A dev menu, if you want one.** Onboarding asks, and recommends F12 in debug builds. A tab per system shows its `debug_*` actions and the values only code can see (`debug_inspect()`), plus the play log's tail, so an assistant can look inside the game. You choose how it is enabled: in game (the key, debug builds), a setting (`debug/dev_menu`), a command-line flag (`-- --dev-menu`), or none.
 - **Done means the check passes,** and the work is committed only with your approval.
 - **Guarded git:** in Claude Code, force-push, `reset --hard`, `--no-verify` and other work-destroying commands are blocked by a hook that checks the whole command line. It's a strong safety net, not a guarantee.
@@ -185,12 +193,20 @@ The orchestrator and the builder are deliberately separate contexts. Each optimi
 
 **Model sizing** (recommended on): each item size maps to its own build model in AGENTS.md › Project rules. Claude Code defaults: XS and S to Haiku, M to Sonnet, L and XL to Opus. A size without an entry uses the session model, and a failed build retries once on the next size's model. Onboarding writes the mapping; `/refresh-model-sizing` updates it, or tells you if your assistant can't choose a model per subagent.
 
+### Auto-playtesting
+The game plays itself, so an assistant can playtest a change before you do, and read what your own session did.
+- **How it works.** `bash tools/autoplay.sh smoke` launches the real game through its main scene and plays a scenario through the game's adapter. Buttons are clicked and keys pressed through real input, as you would; a few actions call the systems directly for speed. After every step it checks that there's no engine error, no softlock, an action to take, a view that isn't freed, a focused control, no growing orphan nodes and no slow step. The same seed plays the same run. It writes the play log, screenshots with their element maps, and a repro for anything it finds, in `playtesting/autoplay/` (gitignored).
+- **What's whose.** Godot Director owns the driver, the play log base and the review tool, and replaces them on upgrade. The game owns three seeds, `tools/autoplay_adapter.gd` (how a run starts, which actions are legal, how each is performed), `tools/autoplay_scenarios.gd` (smoke is required) and `tools/autoplay_invariants.gd`, plus `tools/play_log.gd` and `playtesting/signatures.tsv`. Until the adapter is filled in, a run says what to wire and is skipped.
+- **Running it.** `/autoplay` plays smoke, reviews the run and reports. `/autoplay <scenario>`, `--all`, `--replay <run folder>` and `--player` do what they say. The check plays smoke headless when `tools/check.cfg` › `[autoplay]` has `check_in_check=true`, and a finding fails it when `enforce` names the scenario. New projects start with both on, and an upgrade starts with both off until the adapter is wired.
+- **Reading a review.** `bash tools/log_review.sh` writes `review.md` and `findings.json` next to the log: a timeline in turns and views, the findings by signature (the same problem keeps its `sig-xxxxxxxx` across runs), the coverage of views and actions, and a delta against the previous run of the scenario. "I just played, check the logs" reviews your newest session the same way (`--player`). An assistant that can't view images reads the element map beside each screenshot: every element's name, text, position and focus order.
+
 ### The check
-`bash tools/check.sh` runs four steps:
+`bash tools/check.sh` runs five steps:
 1. Godot's import pass;
 2. loads every script, scene and resource (views that only load when opened too), checks screen scripts for game rules, and runs `tests/**/test_*.gd`;
 3. scans Godot's output for errors;
-4. runs `tools/check.local.sh`, if the game has one.
+4. plays the smoke scenario headless, when `tools/check.cfg` › `[autoplay]` turns it on;
+5. runs `tools/check.local.sh`, if the game has one.
 
 It exits 0 on pass, 1 on fail, and 3 when it can't run. It remembers the last passing state, so hooks don't run it again when nothing has changed. Game-specific settings go in `tools/check.cfg`, and extra steps (for example an existing GUT suite) go in `tools/check.local.sh`.
 
