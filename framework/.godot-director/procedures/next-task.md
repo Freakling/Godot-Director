@@ -33,6 +33,7 @@ A research item goes to Research items instead, and skips steps 4 and 6.
   1. Before starting it, create the file `.godot/godot-director/building`. Delete it when the report arrives; while it exists, the Stop hook leaves the half-built files alone.
   2. If AGENTS.md › Project rules turn on model sizing, read the per-size model from the mapping there (lines `- XS: …` through `- XL: …`) and pass `model: <id>` for this item's size. Otherwise use the session model.
 - **Other tools:** follow `build.md` yourself, or in a subagent if your tool has them.
+- **Autoplay.** The builder plays the scenarios the item names, such as the one behind an `(autoplay)` outcome, plus `smoke`, before it reports (`build.md` step 6), and the report's `Autoplay:` line carries the review's delta line.
 - **A rebuild** (after a failure, a blocked report or review findings) gets the previous report, anything the human said about the item, and word that the earlier attempt's edits are still in the tree to continue from.
 - **Report `blocked`:** the report brings the question with options and a recommendation. Put it to the human.
   - If the answer is a design decision, record it following `design.md` › Record each decision before rebuilding. It's committed with the item.
@@ -51,6 +52,7 @@ From the report:
 - `Systems:` → AGENTS.md › Architecture.
 - A milestone finished or changed → its row in TASKS.md › Milestones.
 - `Found:` → new items, in the format in `.godot-director/tasks.md` (IDs from `Next IDs`, then bump it).
+- `Autoplay:` → an `(autoplay)` outcome is done once that line shows its scenario ran with the finding it names fixed or absent. A finding it reported and left unfixed becomes a `B` item with the signature, scenario, seed, step and replay command (`autoplay.md` › File and confirm); the run files it without asking.
 - Name any difference from `Touches` in your report to the human.
 
 ## 6. Review

@@ -2,7 +2,7 @@
 name: godot-director
 description: 'Sets up Godot Director in a Godot 4 project: you direct the game design while the AI builds it, design calls come to you as options, and one project check proves every change works. Use when the user asks to install, set up, upgrade or migrate Godot Director, or wants an AI design-and-build workflow for a Godot game.'
 license: MIT
-compatibility: 'Godot 4.3 or newer, git and bash (Git Bash on Windows). Needs network access to fetch Godot Director from GitHub unless it is already present.'
+compatibility: 'Godot 4.5 or newer, git and bash (Git Bash on Windows). Needs network access to fetch Godot Director from GitHub unless it is already present.'
 metadata:
   author: Freakling
   version: 3.13.0

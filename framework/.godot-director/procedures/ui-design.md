@@ -22,7 +22,7 @@ Requests:
 
 ## capture
 1. Run `bash tools/ui_capture.sh <screen>`, or `--all`. `--state <name>` narrows it; `--size <W>x<H>` captures one size, listed in `tools/ui_capture.cfg` or not. Godot needs a display, since it renders nothing headless, and opens a small window for a few seconds. The screens themselves are rendered offscreen at each size with the project's stretch settings, so every size captures whatever the monitor; a size the GPU can't render is skipped with a note.
-   - Exit 3: say capture couldn't run and why (no Godot, Godot older than 4.3, no display, or Godot couldn't open a window or start its renderer; on Linux it needs a display or `xvfb-run`), and stop. Where the reason is the display, `--no-images` still writes the element maps and lint; say they come from a headless run, whose text measurement can differ slightly.
+   - Exit 3: say capture couldn't run and why (no Godot, Godot older than 4.5, no display, or Godot couldn't open a window or start its renderer; on Linux it needs a display or `xvfb-run`), and stop. Where the reason is the display, `--no-images` still writes the element maps and lint; say they come from a headless run, whose text measurement can differ slightly.
    - Exit 1: something failed, and the run went on with everything else. The causes, each named in a `FAIL` line:
      - a screen's setup printed a script error, or didn't finish within `[capture] setup_timeout` seconds, or an overlay it names isn't in the scene tree: the error is at the top of that screen's `.lint.txt`;
      - a catalog entry has a problem (an unknown key, a duplicate id, a missing scene, no title, a setup or state that isn't a Callable), or `tools/ui_screens.gd` doesn't compile or doesn't extend `tools/ui_catalog.gd`;

@@ -13,6 +13,8 @@ func _ready() -> void:
 	_buy.pressed.connect(_on_buy_pressed)
 	_sell.pressed.connect(_on_sell_pressed)
 	_next_day.pressed.connect(_on_next_day_pressed)
+	PlayLog.log_view("shop")
+	PlayLog.watch_progress_button(_next_day)
 	_refresh()
 	_buy.grab_focus()   # keyboard and controller players start on Buy
 

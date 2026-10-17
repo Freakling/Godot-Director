@@ -5,13 +5,15 @@
 #   bash tools/check.sh                 run the check
 #   bash tools/check.sh --if-changed    repeat the last result at once if these exact files were checked
 #   bash tools/check.sh --fingerprint   print the fingerprint of the current files (for hooks)
-# Exit codes: 0 = pass · 1 = fail · 3 = couldn't run (Godot missing or older than 4.3)
+# Exit codes: 0 = pass · 1 = fail · 3 = couldn't run (Godot missing or older than 4.5)
 #
 # Steps:
 #   1. an import pass (so a fresh clone gets its import cache and class list, and new assets and
 #      class_names are picked up)
 #   2. tools/check.gd: load every script, scene and resource; check the screen rules; run tests
 #   3. scan Godot's output for errors (a parse error is printed, not returned)
+#   3b. the layout lint of the screens and 3c. the autoplay smoke scenario, when tools/ui_capture.cfg and
+#      tools/check.cfg switch them on
 #   4. run tools/check.local.sh, if the project has one (extra project-specific steps)
 #
 # Godot is found through $GODOT_BIN, else the first line of tools/godot_bin.local (per machine,
@@ -24,6 +26,8 @@ set -u
 cd "$(dirname "$0")/.." || exit 3
 mode="${1:-}"
 state_dir=".godot/godot-director"
+nl="
+"
 limit="${CHECK_TIMEOUT:-600}"
 
 # Hash of every file that can change the result. Empty outside a git repository.
@@ -33,7 +37,7 @@ fingerprint() {
   paths="$( {
     git -c core.quotePath=false ls-files -z -c -o --exclude-standard -- '*.gd' '*.tscn' '*.scn' \
       '*.tres' '*.res' '*.gdshader' '*.gdshaderinc' project.godot tools/check.cfg tools/ui_capture.cfg \
-      tools/check.sh tools/check.local.sh 2>/dev/null | tr '\0' '\n'
+      tools/check.sh tools/check.local.sh tools/autoplay.sh 2>/dev/null | tr '\0' '\n'
     echo tools/godot_bin.local
     echo tools/check.ignore
   } | while IFS= read -r path; do [ -f "$path" ] && printf '%s\n' "$path"; done )"
@@ -79,8 +83,8 @@ if [ -z "$major" ] || [ -z "$minor" ]; then
   echo "check: couldn't read a version from '$godot' (on Windows, use the *_console.exe build)."
   exit 3
 fi
-if [ "$major" -lt 4 ] || { [ "$major" -eq 4 ] && [ "$minor" -lt 3 ]; }; then
-  echo "check: needs Godot 4.3 or newer; '$godot' is $version."
+if [ "$major" -lt 4 ] || { [ "$major" -eq 4 ] && [ "$minor" -lt 5 ]; }; then
+  echo "check: needs Godot 4.5 or newer; '$godot' is $version."
   exit 3
 fi
 if [ ! -f project.godot ]; then
@@ -187,6 +191,69 @@ if [ "$failed" -eq 0 ] && [ -z "$errors" ] && [ -f tools/ui_capture.cfg ] && [ -
   fi
 fi
 
+# --- 3c. autoplay smoke (opt in) ----------------------------------------------------------------
+# tools/check.cfg > [autoplay] check_in_check = true plays the smoke scenario headless (--no-images),
+# and any other scenario `enforce` names ("*" is all of them), once everything above was clean: the
+# game's own code runs. A finding in an enforced scenario fails the check, as GDIR-FAIL: autoplay:
+# <scenario> step <n>: <kind>: <summary>; in another scenario it is a note, so `enforce` left empty
+# makes smoke a note too. A missing file or key reads as off, and then nothing here costs anything.
+# While the game's adapter is still the seed's, the run is skipped with a note that names what to wire.
+ap_notes=""
+ap_log="$state_dir/autoplay_check.log"
+rm -f "$ap_log"
+if [ "$failed" -eq 0 ] && [ -z "$errors" ] && [ -f tools/check.cfg ] && [ -f tools/autoplay.sh ] && [ -f tools/autoplay.gd ] \
+    && [ -f tools/autoplay_adapter.gd ] && [ -f tools/autoplay_scenarios.gd ]; then
+  ap_cfg="$(awk '/^\[/ { in_ap = ($0 ~ /^\[autoplay\]/); next }
+    in_ap && /^[ \t]*(check_in_check|enforce)[ \t]*=/ { k = $0; sub(/[ \t]*=.*$/, "", k); sub(/^[ \t]*/, "", k)
+      v = $0; sub(/^[^=]*=[ \t]*/, "", v); sub(/[ \t\r]*(;.*)?$/, "", v); if (!(k in seen)) print k "=" v; seen[k] = 1 }' tools/check.cfg)"
+  ap_on="$(printf '%s\n' "$ap_cfg" | sed -n 's/^check_in_check=//p')"
+  ap_enforce="$(printf '%s\n' "$ap_cfg" | sed -n 's/^enforce=//p' | tr -d '[]" \r' | tr ',' ' ')"
+  if [ "$ap_on" = "true" ]; then
+    ap_scenarios="smoke"
+    set -f   # enforce may hold "*": no file name expansion
+    for id in $ap_enforce; do
+      case "$id" in "*") ap_scenarios="--all"; break ;; smoke) ;; *) ap_scenarios="$ap_scenarios $id" ;; esac
+    done
+    set +f
+    ap_dir="playtesting/autoplay"
+    ap_before="$(ls "$ap_dir" 2>/dev/null)"
+    for id in $ap_scenarios; do
+      enforced=0
+      case " $ap_enforce " in *" $id "*|*" * "*) enforced=1 ;; esac
+      GDIR_LOCK_HELD=1 AUTOPLAY_TIMEOUT="$limit" GODOT_BIN="$godot" bash tools/autoplay.sh $id --no-images > "$ap_log" 2>&1
+      ap_status=$?
+      ap_out="$(clean "$ap_log")"
+      ap_fail="$(printf '%s\n' "$ap_out" | sed -n 's/^autoplay: FAIL: /autoplay: /p')"
+      if [ "$ap_status" -eq 1 ] || [ -n "$ap_fail" ]; then
+        [ -n "$ap_fail" ] || ap_fail="autoplay: $id failed (see $ap_log)"
+        if [ "$enforced" -eq 1 ]; then
+          errors="${errors:+$errors
+}$(printf '%s\n' "$ap_fail" | sed 's/^/GDIR-FAIL: /')"
+          failed=1
+        else
+          ap_notes="${ap_notes:+$ap_notes
+}$(printf '%s\n' "$ap_fail" | sed 's/^/check: note: (not enforced) /')"
+        fi
+      elif [ "$ap_status" -eq 3 ]; then
+        ap_notes="${ap_notes:+$ap_notes
+}check: note: autoplay $id couldn't run: $(printf '%s\n' "$ap_out" | head -n 1)"
+      elif [ "$ap_status" -ne 0 ]; then
+        errors="${errors:+$errors
+}GDIR-FAIL: autoplay: $id exited with $ap_status (see $ap_log)"
+        failed=1
+      else
+        ap_notes="${ap_notes:+$ap_notes
+}$(printf '%s\n' "$ap_out" | grep -E '^autoplay: .* · (skipped:|[0-9]+ steps? · )' | sed -e 's/ · playtesting\/autoplay\/[^ ]*$//' -e 's/^/check: note: /')"
+      fi
+    done
+    # A clean run's folder isn't kept (every check would add one); a run with findings keeps its own.
+    for folder in $(ls "$ap_dir" 2>/dev/null); do
+      case "$nl$ap_before$nl" in *"$nl$folder$nl"*) continue ;; esac
+      [ -f "$ap_dir/$folder/repro.json" ] || rm -rf "${ap_dir:?}/$folder"
+    done
+  fi
+fi
+
 summary="$(clean "$state_dir/check.log" | grep -E '^GDIR(-NOTE)?:')"
 if [ -n "$summary" ]; then
   printf '%s\n' "$summary" | sed 's/^GDIR: /check: /; s/^GDIR-NOTE: /check: note: /'
@@ -201,6 +268,7 @@ if [ "$ui_ran" -eq 1 ]; then
     failed=1
   fi
 fi
+if [ -n "$ap_notes" ]; then printf '%s\n' "$ap_notes"; fi
 hooks_dir="$(git rev-parse --git-path hooks 2>/dev/null)"
 if [ -n "$hooks_dir" ] && ! grep -qs "Godot Director" "$hooks_dir/pre-commit"; then
   echo "check: note: this clone has no Godot Director pre-commit hook. Run: bash tools/setup-clone.sh"
@@ -214,6 +282,9 @@ if [ -n "$errors" ]; then
   failed=1
   echo "check: errors:"
   printf '%s\n' "$errors" | head -n 60 | sed 's/^/  /'
+  if printf '%s\n' "$errors" | grep -q '^GDIR-FAIL: autoplay:'; then
+    echo "  autoplay: 'bash tools/log_review.sh --latest' reads the run; 'bash tools/autoplay.sh --replay <run folder>' plays it again"
+  fi
 fi
 
 # --- 4. project-specific steps ------------------------------------------------------------------

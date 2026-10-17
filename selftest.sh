@@ -3,7 +3,7 @@
 # and tests the installer, the project check, the per-clone setup, the Claude Code hooks and the
 # pre-commit hook. Run it after every change to the framework.
 #
-#   bash selftest.sh [path to Godot 4.3+]      (or set GODOT_BIN)
+#   bash selftest.sh [path to Godot 4.5+]      (or set GODOT_BIN)
 #
 # Without Godot, only the parts that don't need it are tested. KEEP=1 keeps the temporary folder.
 
@@ -259,6 +259,164 @@ grep -q '(`/ui-design`)' "$src/README.md" && grep -q 'tools/ui_screens\.gd' "$sr
 grep -q 'verify <screen>' "$src/framework/.claude/skills/ui-design/SKILL.md" || wired="$wired skills/ui-design(verify)"
 [ -z "$wired" ] && ok "ui-design verify, the build, review, function check and align hooks, the lint in the check and overlays are wired in" \
   || bad "ui-design verify and the hooks aren't wired into:$wired"
+# The play log: the framework's base, the game's seed (hooks marked PLACEHOLDER), the example's wiring,
+# the five rules, onboarding's autoload line and the installer's lines.
+wired=""
+for file in framework/tools/play_log_base.gd project/tools/play_log.gd examples/market-day/tools/play_log.gd \
+    examples/market-day/tests/test_play_log.gd tests/play-log/selftest_play_log.gd; do
+  [ -f "$src/$file" ] || wired="$wired $file"
+done
+grep -q '^extends "res://tools/play_log_base\.gd"$' "$src/project/tools/play_log.gd" \
+  && [ "$(grep -c '## PLACEHOLDER' "$src/project/tools/play_log.gd")" -ge 3 ] || wired="$wired play_log.gd seed"
+for hook in '_session_extras() -> Dictionary' '_build_snapshot() -> Dictionary' 'progress_block_reason() -> String' \
+    'log_snapshot() -> void' 'start_capture() -> void' 'begin_run() -> String' 'continue_run(id: String) -> void'; do
+  grep -qF "func $hook" "$src/framework/tools/play_log_base.gd" || wired="$wired base($hook)"
+done
+grep -q 'OS\.add_logger' "$src/framework/tools/play_log_base.gd" && grep -q 'extends Logger' "$src/framework/tools/play_log_base.gd" || wired="$wired base(Logger)"
+grep -q '^PlayLog="\*res://tools/play_log\.gd"$' "$src/examples/market-day/project.godot" \
+  && grep -q '^settings/gdscript/always_track_call_stacks=true$' "$src/examples/market-day/project.godot" || wired="$wired example project.godot"
+grep -q '^   settings/gdscript/always_track_call_stacks=true$' "$src/ONBOARDING.md" || wired="$wired ONBOARDING.md(call stacks)"
+grep -q '^func _install_id() -> String:$' "$src/project/tools/play_log.gd" || wired="$wired play_log.gd seed(_install_id)"
+grep -q 'PlayLog="\*res://tools/play_log\.gd"' "$src/ONBOARDING.md" && grep -q 'Migrate PlayLog to extend tools/play_log_base\.gd' "$src/ONBOARDING.md" || wired="$wired ONBOARDING.md"
+grep -q '"/tools/play_log_base\.gd text eol=lf"' "$src/install.sh" && grep -q '^/tools/play_log_base\.gd$' "$src/examples/market-day/.gitignore" \
+  && grep -q '^/tools/play_log_base\.gd text eol=lf$' "$src/examples/market-day/.gitattributes" || wired="$wired installer lines"
+for rule in 'Everything is logged' 'Every action is drivable' 'Agent-visible state' 'Seeded randomness' 'Privacy'; do
+  grep -q "^- \*\*$rule\.\*\*" "$proc/rules.md" || wired="$wired rules.md($rule)"
+done
+grep -q "use the editor's Remote scene tree instead" "$proc/rules.md" && wired="$wired rules.md(the Remote tree sentence is still there)"
+grep -q 'start_capture()' "$proc/rules.md" && grep -q 'dev menu' "$proc/rules.md" || wired="$wired rules.md(start_capture, dev menu)"
+grep -q 'tools/play_log_base\.gd' "$src/README.md" && grep -q 'tools/play_log\.gd' "$src/README.md" || wired="$wired README.md"
+[ -z "$wired" ] && ok "the play log is wired in: base, seed, example, the five rules, onboarding and the installer's lines" \
+  || bad "the play log isn't wired into:$wired"
+# Autoplay: the driver, the adapter and scenario bases, the game's seeds (stubs marked PLACEHOLDER,
+# a smoke scenario), the example's wiring, the capture's shared element map writer and the
+# installer's lines.
+wired=""
+for file in framework/tools/autoplay.sh framework/tools/autoplay.gd framework/tools/autoplay_adapter_base.gd \
+    framework/tools/autoplay_catalog.gd project/tools/autoplay_adapter.gd project/tools/autoplay_scenarios.gd \
+    project/tools/autoplay_invariants.gd examples/market-day/tools/autoplay_adapter.gd \
+    examples/market-day/tools/autoplay_scenarios.gd examples/market-day/tools/autoplay_invariants.gd; do
+  [ -f "$src/$file" ] || wired="$wired $file"
+done
+grep -q '^extends "res://tools/autoplay_adapter_base\.gd"$' "$src/project/tools/autoplay_adapter.gd" \
+  && [ "$(grep -c '^## PLACEHOLDER' "$src/project/tools/autoplay_adapter.gd")" -ge 7 ] || wired="$wired autoplay_adapter.gd seed"
+grep -q '^extends "res://tools/autoplay_catalog\.gd"$' "$src/project/tools/autoplay_scenarios.gd" \
+  && grep -q '"id": "smoke", .*"kind": "smoke"' "$src/project/tools/autoplay_scenarios.gd" || wired="$wired autoplay_scenarios.gd seed(smoke)"
+grep -q '^func check(_state: Dictionary, _adapter: Object) -> PackedStringArray:$' "$src/project/tools/autoplay_invariants.gd" \
+  && grep -q 'PLACEHOLDER' "$src/project/tools/autoplay_invariants.gd" || wired="$wired autoplay_invariants.gd seed"
+for hook in 'start_run(_run_seed: int) -> void' 'load_save(_path: String) -> bool' 'list_actions() -> Array\[Dictionary\]' \
+    'perform(_action: Dictionary) -> bool' 'state() -> Dictionary' 'progress_block_reason() -> String' 'is_run_over() -> bool'; do
+  grep -q "^func $hook:$" "$src/framework/tools/autoplay_adapter_base.gd" || wired="$wired adapter base($hook)"
+done
+grep -q 'a smoke scenario is required' "$src/framework/tools/autoplay_catalog.gd" || wired="$wired autoplay_catalog.gd(smoke required)"
+grep -q 'Engine.set_meta(AUTOPLAY_META, true)' "$src/framework/tools/autoplay.gd" && grep -q 'Input.parse_input_event' "$src/framework/tools/autoplay.gd" \
+  && grep -q 'lint.element_map(' "$src/framework/tools/autoplay.gd" && grep -q 'lint.element_map(' "$src/framework/tools/ui_capture.gd" \
+  && ! grep -q '^func _element_map' "$src/framework/tools/ui_capture.gd" || wired="$wired autoplay.gd(meta, real input, the capture's element map writer)"
+grep -q '"/playtesting/autoplay/"' "$src/install.sh" && grep -q '^/playtesting/autoplay/$' "$src/examples/market-day/.gitignore" \
+  && grep -q '"/tools/autoplay\.gd text eol=lf"' "$src/install.sh" && grep -q '^/tools/autoplay_adapter_base\.gd text eol=lf$' "$src/examples/market-day/.gitattributes" \
+  && grep -q '^/tools/autoplay_catalog\.gd$' "$src/examples/market-day/.gitignore" || wired="$wired installer lines"
+[ -z "$wired" ] && ok "autoplay is wired in: driver, bases, seeds with a smoke scenario, the example, the shared element map and the installer's lines" \
+  || bad "autoplay isn't wired into:$wired"
+# Log review: the tool and its wrapper, the signatures.tsv seed (a header only, the same in the
+# example), the normalisation fixture and the installer's lines.
+wired=""
+for file in framework/tools/log_review.sh framework/tools/log_review.gd project/playtesting/signatures.tsv \
+    examples/market-day/playtesting/signatures.tsv tests/log-review/signature-cases.tsv; do
+  [ -f "$src/$file" ] || wired="$wired $file"
+done
+[ "$(cat "$src/project/playtesting/signatures.tsv")" = "$(printf 'id\tkind\ttext\tfirst_seen_build\tlast_seen_build')" ] \
+  && cmp -s "$src/project/playtesting/signatures.tsv" "$src/examples/market-day/playtesting/signatures.tsv" || wired="$wired signatures.tsv seed(header, example copy)"
+grep -q 'GODOT_BIN' "$src/framework/tools/log_review.sh" && grep -q '\[ "\$minor" -lt 5 \]' "$src/framework/tools/log_review.sh" \
+  && grep -q 'tools/log_review.gd' "$src/framework/tools/log_review.sh" || wired="$wired log_review.sh(Godot lookup, 4.5 minimum)"
+grep -q '"/tools/log_review\.gd text eol=lf"' "$src/install.sh" && grep -q '"/playtesting/signatures\.tsv text eol=lf"' "$src/install.sh" \
+  && grep -q '^/tools/log_review\.gd text eol=lf$' "$src/examples/market-day/.gitattributes" \
+  && grep -q '^/playtesting/signatures\.tsv text eol=lf$' "$src/examples/market-day/.gitattributes" \
+  && grep -q '^/tools/log_review\.sh$' "$src/examples/market-day/.gitignore" && grep -q '^/tools/log_review\.gd$' "$src/examples/market-day/.gitignore" || wired="$wired installer lines"
+[ -z "$wired" ] && ok "log review is wired in: tool, wrapper, the signatures.tsv seed with its header, the fixture and the installer's lines" \
+  || bad "log review isn't wired into:$wired"
+# The dev menu: the base, the game's seed (PLACEHOLDER marked), the example's wiring, the rules,
+# onboarding's question and recorded answer, the upgrade step and the installer's lines.
+wired=""
+for file in framework/tools/dev_menu_base.gd project/tools/dev_menu.gd examples/market-day/tools/dev_menu.gd \
+    examples/market-day/tests/test_dev_menu.gd tests/dev-menu/selftest_dev_menu.gd; do
+  [ -f "$src/$file" ] || wired="$wired $file"
+done
+grep -q '^extends "res://tools/dev_menu_base\.gd"$' "$src/project/tools/dev_menu.gd" \
+  && [ "$(grep -c 'PLACEHOLDER' "$src/project/tools/dev_menu.gd")" -ge 3 ] \
+  && grep -q '^func setting_enabled() -> bool:$' "$src/project/tools/dev_menu.gd" || wired="$wired dev_menu.gd seed"
+for hook in 'register_system(system_name: String, node: Object' 'is_available() -> bool' 'actions_of(system_name: String)' \
+    'inspect(system_name: String) -> Dictionary' 'inspect_text(system_name: String) -> String' 'log_text() -> String' \
+    'run_action(system_name: String, method: String'; do
+  grep -qF "func $hook" "$src/framework/tools/dev_menu_base.gd" || wired="$wired base($hook)"
+done
+grep -q '"debug/dev_menu"' "$src/framework/tools/dev_menu_base.gd" && grep -q '"--dev-menu"' "$src/framework/tools/dev_menu_base.gd" \
+  && grep -q 'KEY_F12' "$src/framework/tools/dev_menu_base.gd" || wired="$wired base(setting, flag, F12)"
+grep -q '^DevMenu="\*res://tools/dev_menu\.gd"$' "$src/examples/market-day/project.godot" \
+  && grep -q '^- Dev menu: in game (F12, debug builds only)$' "$src/examples/market-day/AGENTS.md" || wired="$wired example project.godot, AGENTS.md"
+grep -q 'register_system(name, node)' "$proc/rules.md" && grep -q 'tools/dev_menu_base\.gd' "$proc/rules.md" && grep -q 'debug_inspect()' "$proc/rules.md" || wired="$wired rules.md(dev menu base, registration)"
+grep -q '^- Dev menu: \*\*ask the human' "$src/ONBOARDING.md" && grep -q '^  Dev menu: in game (F12, debug builds only)$' "$src/ONBOARDING.md" \
+  && grep -q '`debug/dev_menu=true`' "$src/ONBOARDING.md" && grep -q -- '`-- --dev-menu`' "$src/ONBOARDING.md" \
+  && grep -q 'AGENTS.md › Project rules' "$src/ONBOARDING.md" || wired="$wired ONBOARDING.md(dev menu step)"
+grep -q '^7\. \*\*The dev menu\.\*\*' "$src/CHANGELOG.md" || wired="$wired CHANGELOG.md(upgrade step)"
+grep -q '^- Dev menu: ' "$src/project/AGENTS.md" && grep -q 'tools/dev_menu_base\.gd' "$src/README.md" || wired="$wired project/AGENTS.md, README.md"
+grep -q '"/tools/dev_menu_base\.gd text eol=lf"' "$src/install.sh" && grep -q '^/tools/dev_menu_base\.gd$' "$src/examples/market-day/.gitignore" \
+  && grep -q '^/tools/dev_menu_base\.gd text eol=lf$' "$src/examples/market-day/.gitattributes" || wired="$wired installer lines"
+[ -z "$wired" ] && ok "the dev menu is wired in: base, seed, example, the rule, onboarding's question and answer format, the upgrade step and the installer's lines" \
+  || bad "the dev menu isn't wired into:$wired"
+# /autoplay and the workflow around it: the procedure and the skill that point at each other, the
+# request list's "check the logs", the (autoplay) tag, every procedure that uses autoplay, the
+# settings' allowed commands, the check's [autoplay] section and the seeds, README and onboarding.
+wired=""
+autoproc="$proc/procedures/autoplay.md"
+autoskill="$src/framework/.claude/skills/autoplay/SKILL.md"
+[ -f "$autoproc" ] && [ -f "$autoskill" ] || wired="$wired autoplay.md/skill(missing)"
+grep -q '^name: autoplay$' "$autoskill" && grep -q 'procedures/autoplay\.md' "$autoskill" && grep -q -- '--player' "$autoskill" \
+  && grep -q -- '--replay' "$autoskill" && grep -q 'check the logs' "$autoskill" || wired="$wired skills/autoplay"
+grep -q '/autoplay' "$autoproc" && grep -q 'tools/autoplay\.sh' "$autoproc" && grep -q 'tools/log_review\.sh' "$autoproc" \
+  && grep -q -- '--replay <run folder>' "$autoproc" && grep -q -- '--player' "$autoproc" || wired="$wired autoplay.md(commands)"
+grep -q '^## Who owns what' "$autoproc" && grep -q 'Framework-owned' "$autoproc" && grep -q 'Project-owned' "$autoproc" \
+  && grep -q "can't view images" "$autoproc" && grep -q '\.elements\.json' "$autoproc" && grep -q 'review\.md' "$autoproc" \
+  && grep -q '^## Report' "$autoproc" && grep -q 'File and confirm' "$autoproc" && grep -q 'Never edit `director/`' "$autoproc" || wired="$wired autoplay.md(owners, element maps, report, bugs)"
+grep -q '^- \*\*autoplay\.md:\*\*' "$proc/rules.md" && grep -q '"Check the logs"' "$proc/rules.md" && grep -q '/autoplay --player' "$proc/rules.md" || wired="$wired rules.md(request list)"
+for file in rules.md tasks.md procedures/next-task.md procedures/build.md procedures/review.md; do
+  grep -q '(autoplay)' "$proc/$file" || wired="$wired $file((autoplay))"
+done
+for file in next-task build review function-check playtest align; do
+  grep -qi 'autoplay' "$proc/procedures/$file.md" || wired="$wired $file.md(autoplay)"
+done
+grep -q 'build\.md` step 6' "$proc/procedures/next-task.md" && grep -q '^6\. \*\*Autoplay\*\*' "$proc/procedures/build.md" && grep -q '^   Autoplay: ' "$proc/procedures/build.md" \
+  && grep -q 'plus `smoke`\|and `smoke`' "$proc/procedures/build.md" && grep -q "delta line" "$proc/procedures/build.md" || wired="$wired build.md(autoplay step, report line)"
+grep -q 'Logging and drivability' "$proc/procedures/review.md" && grep -q 'list_actions()' "$proc/procedures/review.md" && grep -q 'opened by `smoke`' "$proc/procedures/review.md" || wired="$wired review.md(logging, drivability)"
+grep -q 'Pre-verified by autoplay' "$proc/procedures/function-check.md" && grep -q 'run folder' "$proc/procedures/function-check.md" || wired="$wired function-check.md(pre-verified)"
+grep -q 'Machine review' "$proc/procedures/playtest.md" && grep -q 'tools/autoplay\.sh smoke' "$proc/procedures/playtest.md" || wired="$wired playtest.md(machine review)"
+grep -q 'Scenario gaps' "$proc/procedures/align.md" && grep -q 'Logging gaps' "$proc/procedures/align.md" && grep -q 'never fails\|none of it fails' "$proc/procedures/align.md" || wired="$wired align.md(gaps)"
+for command in 'tools/autoplay.sh \*' 'tools/autoplay.sh' 'tools/log_review.sh \*' 'tools/log_review.sh'; do
+  grep -q "\"Bash(bash $command)\"" "$settings" || wired="$wired settings.json($command)"
+done
+grep -q '^\[autoplay\]$' "$src/project/tools/check.cfg" && grep -q '^check_in_check=true$' "$src/project/tools/check.cfg" && grep -q '^enforce=\["smoke"\]$' "$src/project/tools/check.cfg" \
+  && grep -q '^\[autoplay\]$' "$src/examples/market-day/tools/check.cfg" || wired="$wired check.cfg seeds"
+grep -q "sed .s/^/GDIR-FAIL: /." "$src/framework/tools/check.sh" && grep -q "GDIR_LOCK_HELD=1" "$src/framework/tools/check.sh" \
+  && grep -q "GDIR_LOCK_HELD" "$src/framework/tools/autoplay.sh" && grep -q "tools/check.cfg > \[autoplay\]" "$src/framework/tools/check.sh" || wired="$wired check.sh([autoplay])"
+grep -q 'old_version' "$src/install.sh" && grep -q "tools/check.cfg" "$src/install.sh" && grep -q 'autoplay in the check off' "$src/install.sh" || wired="$wired install.sh(check.cfg off on an upgrade)"
+grep -q '^### Auto-playtesting' "$src/README.md" && grep -q '(`/autoplay`)' "$src/README.md" && grep -q 'framework-owned\|Godot Director owns' "$src/README.md" \
+  && grep -q "can't view images" "$src/README.md" && grep -q 'check_in_check' "$src/README.md" || wired="$wired README.md(auto-playtesting)"
+grep -q '^8\. \*\*The workflow\.\*\*' "$src/CHANGELOG.md" && grep -q '^- \*\*New: `/autoplay`' "$src/CHANGELOG.md" && grep -q 'Wire autoplay' "$src/CHANGELOG.md" || wired="$wired CHANGELOG.md"
+grep -q 'autoplay_adapter\.gd' "$src/ONBOARDING.md" && grep -q '^8\. \*\*Autoplay\.\*\*' "$src/ONBOARDING.md" || wired="$wired ONBOARDING.md(autoplay)"
+[ -z "$wired" ] && ok "/autoplay is wired in: procedure and skill, the request list, the (autoplay) tag, the workflow procedures, the settings, the check's [autoplay] section and the docs" \
+  || bad "/autoplay isn't wired into:$wired"
+# The minimum Godot is 4.5 (the engine Logger) everywhere it's stated and checked.
+stale="$(cd "$src" && grep -nE '4\.3([^0-9]|$)|-lt [0-4] \]; \}|-ge [0-4] \]; \}' README.md ONBOARDING.md CLAUDE.md \
+  skills/godot-director/SKILL.md selftest.sh framework/tools/check.sh framework/tools/setup-clone.sh framework/tools/ui_capture.sh framework/tools/autoplay.sh \
+  framework/tools/log_review.sh framework/.godot-director/procedures/ui-design.md examples/market-day/AGENTS.md)"
+if [ -z "$stale" ] && grep -q 'Godot 4\.5 or newer' "$src/README.md" && grep -q "compatibility: 'Godot 4\.5 or newer" "$installer" \
+    && grep -q 'Godot 4\.5+' "$src/ONBOARDING.md" && grep -q '"4\.5"' "$src/examples/market-day/project.godot" \
+    && grep -q '\[ "\$minor" -lt 5 \]' "$src/framework/tools/check.sh" && grep -q '\[ "\$minor" -lt 5 \]' "$src/framework/tools/ui_capture.sh" \
+    && grep -q '\[ "\$minor" -lt 5 \]' "$src/framework/tools/autoplay.sh" \
+    && grep -q '\[ "\$minor" -ge 5 \]' "$src/framework/tools/setup-clone.sh"; then
+  ok "the minimum Godot is 4.5 everywhere it's stated and checked"
+else
+  bad "the minimum Godot is 4.5 everywhere it's stated and checked" "$stale"
+fi
 # The old name (Claude4Godot, 2.x and earlier) is left only in history and in the 2.x migration.
 allowed=" CHANGELOG.md install.sh selftest.sh ONBOARDING.md framework/tools/check.gd framework/tools/check.sh framework/tools/setup-clone.sh "
 leftovers=""
@@ -316,6 +474,31 @@ if [ -x tools/ui_capture.sh ] && [ -f tools/ui_capture.gd ] && [ -f tools/ui_lin
   ok "installs /ui-design: procedure, skill, capture tools and the captures gitignore line, keeping the game's catalog"
 else
   bad "installs /ui-design: procedure, skill, capture tools and the captures gitignore line, keeping the game's catalog" "$out"
+fi
+if [ -f tools/play_log_base.gd ] && cut -f2 .godot-director/manifest | grep -q '^tools/play_log_base\.gd$' && grep -q 'RunState' tools/play_log.gd; then
+  ok "installs the play log base, keeping the game's own PlayLog"
+else
+  bad "installs the play log base, keeping the game's own PlayLog" "$out"
+fi
+if [ -x tools/autoplay.sh ] && [ -f tools/autoplay.gd ] && [ -f tools/autoplay_adapter_base.gd ] && [ -f tools/autoplay_catalog.gd ] \
+    && cut -f2 .godot-director/manifest | grep -q '^tools/autoplay_adapter_base\.gd$' && grep -q 'RunState' tools/autoplay_adapter.gd \
+    && grep -q '"trade_week"' tools/autoplay_scenarios.gd && grep -q '^/playtesting/autoplay/$' .gitignore; then
+  ok "installs autoplay and the run folders' gitignore line, keeping the game's adapter and scenarios"
+else
+  bad "installs autoplay and the run folders' gitignore line, keeping the game's adapter and scenarios" "$out"
+fi
+if [ -x tools/log_review.sh ] && [ -f tools/log_review.gd ] && cut -f2 .godot-director/manifest | grep -q '^tools/log_review\.gd$' \
+    && [ "$(cat playtesting/signatures.tsv)" = "$(printf 'id\tkind\ttext\tfirst_seen_build\tlast_seen_build')" ] \
+    && grep -q '^/tools/log_review\.gd text eol=lf$' .gitattributes && grep -q '^/playtesting/signatures\.tsv text eol=lf$' .gitattributes; then
+  ok "installs log review, the signatures.tsv seed and the .gitattributes lines for both"
+else
+  bad "installs log review, the signatures.tsv seed and the .gitattributes lines for both" "$out"
+fi
+if [ -f tools/dev_menu_base.gd ] && cut -f2 .godot-director/manifest | grep -q '^tools/dev_menu_base\.gd$' && grep -q 'register_system("Run", RunState' tools/dev_menu.gd \
+    && grep -q '^/tools/dev_menu_base\.gd text eol=lf$' .gitattributes; then
+  ok "installs the dev menu base and its .gitattributes line, keeping the game's own DevMenu"
+else
+  bad "installs the dev menu base and its .gitattributes line, keeping the game's own DevMenu" "$out"
 fi
 grep -q "Market Day" AGENTS.md && ok "keeps the project's own files" || bad "keeps the project's own files"
 [ -z "$(git status --porcelain)" ] && ok "adds no duplicate .gitignore/.gitattributes lines" || bad "adds no duplicate lines" "$(git status --porcelain)"
@@ -424,6 +607,25 @@ if git -C "$src" rev-parse -q --verify 'v3.10.0^{commit}' >/dev/null 2>&1; then
   else
     bad "the upgrade adds the stubs, the human-written GDD template, the captures .gitignore line and the manifest entries" "$out"
   fi
+  if [ -f "$upgraded/tools/autoplay_adapter.gd" ] && [ -f "$upgraded/tools/autoplay_scenarios.gd" ] && [ -f "$upgraded/tools/autoplay_invariants.gd" ] \
+      && grep -q 'tools/autoplay\.gd$' "$upgraded/.godot-director/manifest" && grep -q '^/playtesting/autoplay/$' "$upgraded/.gitignore"; then
+    ok "the upgrade adds autoplay, its seeds and the run folders' .gitignore line"
+  else
+    bad "the upgrade adds autoplay, its seeds and the run folders' .gitignore line" "$out"
+  fi
+  if [ -x "$upgraded/tools/log_review.sh" ] && grep -q 'tools/log_review\.gd$' "$upgraded/.godot-director/manifest" \
+      && cmp -s "$upgraded/playtesting/signatures.tsv" "$src/project/playtesting/signatures.tsv" \
+      && grep -q '^/playtesting/signatures\.tsv text eol=lf$' "$upgraded/.gitattributes"; then
+    ok "the upgrade adds log review, the signatures.tsv seed and its .gitattributes line"
+  else
+    bad "the upgrade adds log review, the signatures.tsv seed and its .gitattributes line" "$out"
+  fi
+  if cmp -s "$upgraded/tools/dev_menu.gd" "$src/project/tools/dev_menu.gd" && grep -q 'tools/dev_menu_base\.gd$' "$upgraded/.godot-director/manifest" \
+      && grep -q '^/tools/dev_menu_base\.gd text eol=lf$' "$upgraded/.gitattributes" && ! grep -q '^DevMenu=' "$upgraded/project.godot"; then
+    ok "the upgrade adds the dev menu base and its seed, and leaves it unregistered until the human answers"
+  else
+    bad "the upgrade adds the dev menu base and its seed, and leaves it unregistered until the human answers" "$out"
+  fi
   cmp -s "$upgraded/AGENTS.md" "$work/up-agents" && cmp -s "$upgraded/tools/check.cfg" "$work/up-check-cfg" \
     && ok "the upgrade keeps the game's own AGENTS.md and tools/check.cfg" || bad "the upgrade keeps the game's own AGENTS.md and tools/check.cfg"
   if grep -q '^check_in_check=false$' "$upgraded/tools/ui_capture.cfg" && grep -q '^enforce=\[\]$' "$upgraded/tools/ui_capture.cfg"; then
@@ -459,6 +661,30 @@ if [ -f "$core_only/.godot-director/procedures/research.md" ] && [ -f "$core_onl
   ok "a new game gets the research procedure and domain file, the note folder, the screen catalog and capture settings, and an R counter in TASKS.md, even with --tools none"
 else
   bad "a new game gets the research procedure and domain file, the note folder, the screen catalog and capture settings, and an R counter in TASKS.md" "$out"
+fi
+if [ -f "$core_only/tools/play_log_base.gd" ] && cmp -s "$core_only/tools/play_log.gd" "$src/project/tools/play_log.gd"; then
+  ok "a new game gets the play log base and the PlayLog seed, even with --tools none"
+else
+  bad "a new game gets the play log base and the PlayLog seed, even with --tools none" "$out"
+fi
+if [ -x "$core_only/tools/autoplay.sh" ] && [ -f "$core_only/tools/autoplay.gd" ] \
+    && cmp -s "$core_only/tools/autoplay_adapter.gd" "$src/project/tools/autoplay_adapter.gd" \
+    && cmp -s "$core_only/tools/autoplay_scenarios.gd" "$src/project/tools/autoplay_scenarios.gd" \
+    && cmp -s "$core_only/tools/autoplay_invariants.gd" "$src/project/tools/autoplay_invariants.gd" && grep -q '^/playtesting/autoplay/$' "$core_only/.gitignore"; then
+  ok "a new game gets autoplay, the adapter, scenario and invariant seeds and the run folders' gitignore line, even with --tools none"
+else
+  bad "a new game gets autoplay, the adapter, scenario and invariant seeds and the run folders' gitignore line, even with --tools none" "$out"
+fi
+if [ -x "$core_only/tools/log_review.sh" ] && [ -f "$core_only/tools/log_review.gd" ] \
+    && cmp -s "$core_only/playtesting/signatures.tsv" "$src/project/playtesting/signatures.tsv"; then
+  ok "a new game gets log review and the signatures.tsv seed, even with --tools none"
+else
+  bad "a new game gets log review and the signatures.tsv seed, even with --tools none" "$out"
+fi
+if [ -f "$core_only/tools/dev_menu_base.gd" ] && cmp -s "$core_only/tools/dev_menu.gd" "$src/project/tools/dev_menu.gd"; then
+  ok "a new game gets the dev menu base and the DevMenu seed, even with --tools none"
+else
+  bad "a new game gets the dev menu base and the DevMenu seed, even with --tools none" "$out"
 fi
 if [ -f "$core_only/design/director-gdd.md" ] && grep -q '^# Game Design Document (GDD): ' "$core_only/design/director-gdd.md"; then
   ok "a new game gets the human-written GDD template, even with --tools none"
@@ -546,13 +772,21 @@ got=$?
 if [ "$got" -eq 2 ]; then ok "blocks a relative path against the current directory when CLAUDE_PROJECT_DIR is unset"; else bad "guard-protected without CLAUDE_PROJECT_DIR exit $got, expected 2" "$out"; fi
 
 if [ -z "$godot" ]; then
-  echo "check and hooks: skipped (pass the path to Godot 4.3+ to test them)"
+  echo "check and hooks: skipped (pass the path to Godot 4.5+ to test them)"
   finish
 fi
 
 # --- per-clone setup ----------------------------------------------------------------------------
 echo "setup-clone"
 out="$(GODOT_BIN=/nonexistent/godot bash tools/check.sh 2>&1)"; expect_status "the check exits 3 without Godot" 3 $? "$out"
+# A Godot older than the minimum, 4.5: a stand-in that only prints its version.
+printf '#!/usr/bin/env bash\necho 4.4.1.stable.official.49a5bc7b6\n' > "$work/godot-4.4" && chmod +x "$work/godot-4.4"
+out="$(GODOT_BIN="$work/godot-4.4" bash tools/check.sh 2>&1)"; expect_status "the check exits 3 with Godot 4.4" 3 $? "$out"
+expect_output "and says it needs Godot 4.5 or newer" "needs Godot 4\.5 or newer" "$out"
+out="$(GODOT_BIN="$work/godot-4.4" bash tools/ui_capture.sh --list 2>&1)"; expect_status "capture exits 3 with Godot 4.4" 3 $? "$out"
+out="$(GODOT_BIN="$work/godot-4.4" bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "autoplay exits 3 with Godot 4.4" 3 $? "$out"
+out="$(bash tools/setup-clone.sh --skip-hook "$work/godot-4.4" 2>&1)"; expect_status "setup-clone refuses Godot 4.4" 3 $? "$out"
+expect_output "and says it needs 4.5 or newer" "need 4\.5 or newer" "$out"
 out="$(bash tools/setup-clone.sh "$godot" 2>&1)"; expect_status "setup-clone succeeds" 0 $? "$out"
 grep -qs "Godot Director" "$(git rev-parse --git-path hooks)/pre-commit" && ok "installs the pre-commit hook" || bad "installs the pre-commit hook" "$out"
 [ -z "$(git config --get core.hooksPath)" ] && ok "leaves core.hooksPath alone (Git LFS keeps working)" || bad "leaves core.hooksPath alone"
@@ -563,7 +797,7 @@ printf '\357\273\277%s  \r\n' "$godot" > tools/godot_bin.local
 echo "check"
 out="$(bash tools/check.sh 2>&1)"; status=$?
 expect_status "passes on a fresh clone of the example (Godot path with BOM and spaces)" 0 "$status" "$out"
-expect_output "runs the example's tests" "6 tests passed" "$out"
+expect_output "runs the example's tests" "12 tests passed" "$out"
 expect_output "scans the screen scripts" "1 screen script scanned" "$out"
 expect_no_output "reports no missing hook" "no Godot Director pre-commit hook" "$out"
 out="$(bash tools/check.sh --if-changed 2>&1)"; expect_output "--if-changed reuses the last pass" "nothing changed since the last passing run" "$out"
@@ -583,6 +817,13 @@ fault "a screen assigning to an autoload" scripts/ui/shop_screen.gd "$(printf '\
 fault "a failing test" tests/test_market.gd "$(printf '\nfunc test_selftest_failure() -> void:\n\texpect_eq(1, 2)')" 'expected 2, got 1'
 fault "an async test" tests/test_market.gd "$(printf '\nfunc test_selftest_async() -> void:\n\tawait Engine.get_main_loop().process_frame\n\texpect(true)')" 'must be synchronous'
 fault "a runtime error in a test" tests/test_market.gd "$(printf '\nfunc test_selftest_crash() -> void:\n\tvar node: Node = null\n\tnode.get_name()')" 'SCRIPT ERROR'
+# A view the game only loads when it opens (nothing references it) with a compile error: the check
+# loads every script and scene, so it fails anyway.
+printf 'extends Control\n\nfunc _on_open() -> void:\n\tvar count: int = "three"\n\tprint(count)\n' > scripts/ui/lazy_view.gd
+printf '[gd_scene load_steps=2 format=3]\n\n[ext_resource type="Script" path="res://scripts/ui/lazy_view.gd" id="1"]\n\n[node name="LazyView" type="Control"]\nscript = ExtResource("1")\n' > scenes/lazy_view.tscn
+out="$(bash tools/check.sh 2>&1)"; expect_status "fails on a compile error in a view that only loads when it opens" 1 $? "$out"
+expect_output "names the view's line" 'lazy_view\.gd:4' "$out"
+rm -f scripts/ui/lazy_view.gd scripts/ui/lazy_view.gd.uid scenes/lazy_view.tscn
 cp data/market_config.tres "$work/saved"
 sed 's|scripts/resources/market_config\.gd|scripts/resources/renamed.gd|' "$work/saved" > data/market_config.tres
 out="$(bash tools/check.sh 2>&1)"; expect_status "fails on a resource whose script was renamed" 1 $? "$out"
@@ -614,10 +855,60 @@ cp "$work/saved-state" scripts/autoload/run_state.gd; cp "$work/saved-screen" sc
 printf 'extends "res://tools/test_case.gd"\n\nfunc test_check_meta() -> void:\n\texpect(Engine.has_meta("godot_director_check"))\n\texpect(Engine.has_meta("claude4godot_check"))\n\nfunc test_ignore_markers() -> void:\n\tprint("GDIR-IGNORE:selftest expected error one")\n\tpush_error("selftest expected error one")\n\tprint("C4G-IGNORE:selftest expected error two")\n\tpush_error("selftest expected error two")\n' > tests/test_selftest_meta.gd
 out="$(bash tools/check.sh 2>&1)"; status=$?
 expect_status "accepts expected errors marked GDIR-IGNORE, or C4G-IGNORE as in 2.x" 0 "$status" "$out"
-expect_output "sets the check meta under the new and the deprecated 2.x name" "8 tests passed" "$out"
+expect_output "sets the check meta under the new and the deprecated 2.x name" "14 tests passed" "$out"
 rm -f tests/test_selftest_meta.gd tests/test_selftest_meta.gd.uid
 
 out="$(bash tools/check.sh 2>&1)"; expect_status "passes again after the faults are removed" 0 $? "$out"
+
+# --- play log -----------------------------------------------------------------------------------
+# The example's PlayLog runs under the check and writes nothing; tests/play-log/selftest_play_log.gd
+# runs the base outside the check, into a folder of its own, and checks the files it writes.
+echo "play log"
+# The example's real user:// folder.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) user_data="$(cygpath -u "$APPDATA")/Godot/app_userdata/Market Day" ;;
+  Darwin) user_data="$HOME/Library/Application Support/Godot/app_userdata/Market Day" ;;
+  *) user_data="${XDG_DATA_HOME:-$HOME/.local/share}/godot/app_userdata/Market Day" ;;
+esac
+mkdir -p "$user_data" && : > "$work/before-play-log" && sleep 1
+rm -f .godot/godot-director/last-pass
+out="$(bash tools/check.sh 2>&1)"; expect_status "the check passes with the example's PlayLog" 0 $? "$out"
+cp "$src/tests/play-log/selftest_play_log.gd" tools/selftest_play_log.gd
+play_dir="$work/play-log"; mkdir -p "$play_dir"
+command -v cygpath >/dev/null 2>&1 && play_dir="$(cygpath -m "$play_dir")"
+out="$("$godot" --headless --path . --script tools/selftest_play_log.gd -- "$play_dir" 2>&1 | tr -d '\r')"
+while IFS= read -r line; do
+  case "$line" in
+    "PASS "*) ok "${line#PASS }" ;;
+    "FAIL "*) bad "${line#FAIL }" ;;
+  esac
+done <<EOF
+$out
+EOF
+printf '%s\n' "$out" | grep -q '^DONE$' && ok "the play log's own test ran to the end" || bad "the play log's own test ran to the end" "$out"
+# Godot's own logs/godot*.log may appear there; a play log is run-*.log and run-*.jsonl.
+[ -z "$(/usr/bin/find "$user_data" -type f -name 'run-*' -newer "$work/before-play-log" 2>/dev/null)" ] \
+  && ok "neither the check nor a tool script writes a play log in the game's user://" \
+  || bad "neither the check nor a tool script writes a play log in the game's user://" "$(/usr/bin/find "$user_data" -type f -name 'run-*' -newer "$work/before-play-log")"
+rm -f tools/selftest_play_log.gd tools/selftest_play_log.gd.uid
+
+# --- dev menu -----------------------------------------------------------------------------------
+# tests/dev-menu/selftest_dev_menu.gd builds the menu headless and runs it, with the real flag on the
+# command line. A script error in it must fail too, so its output is searched for one.
+echo "dev menu"
+cp "$src/tests/dev-menu/selftest_dev_menu.gd" tools/selftest_dev_menu.gd
+out="$("$godot" --headless --path . --script tools/selftest_dev_menu.gd -- --dev-menu 2>&1 | tr -d '\r')"
+while IFS= read -r line; do
+  case "$line" in
+    "PASS "*) ok "${line#PASS }" ;;
+    "FAIL "*) bad "${line#FAIL }" ;;
+  esac
+done <<EOF
+$out
+EOF
+printf '%s\n' "$out" | grep -q '^DONE$' && ok "the dev menu's own test ran to the end" || bad "the dev menu's own test ran to the end" "$out"
+expect_no_output "and raised no script error" "SCRIPT ERROR|Parse Error" "$out"
+rm -f tools/selftest_dev_menu.gd tools/selftest_dev_menu.gd.uid
 
 # --- Stop hook ----------------------------------------------------------------------------------
 echo "stop hook"
@@ -696,6 +987,10 @@ expect_status "commits in a repository without project.godot yet" 0 $?
 # --- screen capture (/ui-design) ----------------------------------------------------------------
 echo "ui capture"
 captures=design/ui/captures
+# The catalogs below have views no adapter opens, and these tests are about the layout lint: keep the
+# check's autoplay smoke (tools/check.cfg) off until the autoplay sections.
+cp tools/check.cfg "$work/saved-check-cfg-ui"
+sed -e 's/^check_in_check=.*/check_in_check=false/' "$work/saved-check-cfg-ui" > tools/check.cfg
 out="$(GODOT_BIN=/nonexistent/godot bash tools/ui_capture.sh --all 2>&1)"; expect_status "capture exits 3 without Godot" 3 $? "$out"
 [ ! -e "$captures" ] && ok "and writes nothing" || bad "capture without Godot wrote $captures"
 out="$(bash tools/ui_capture.sh --list 2>&1)"; expect_status "lists the catalog" 0 $? "$out"
@@ -1275,11 +1570,6 @@ expect_output "the starter is valid Excalidraw, and saved unchanged it reads bac
 rm -rf drawing_fixtures
 
 # The example's screens with a display: every state and size, nothing in user://, repeatable.
-case "$(uname -s)" in
-  MINGW*|MSYS*|CYGWIN*) user_data="$(cygpath -u "$APPDATA")/Godot/app_userdata/Market Day" ;;
-  Darwin) user_data="$HOME/Library/Application Support/Godot/app_userdata/Market Day" ;;
-  *) user_data="${XDG_DATA_HOME:-$HOME/.local/share}/godot/app_userdata/Market Day" ;;
-esac
 mkdir -p "$user_data" && : > "$work/before-capture" && sleep 1
 out="$(bash tools/ui_capture.sh --all 2>&1)"; status=$?
 if [ "$status" -eq 3 ]; then
@@ -1343,5 +1633,512 @@ else
 fi
 
 rm -f tools/selftest_drawings.gd tools/selftest_drawings.gd.uid design/ui/spec*.md
+
+# --- autoplay -----------------------------------------------------------------------------------
+cp "$work/saved-check-cfg-ui" tools/check.cfg
+# The example plays itself through its adapter: the real main scene, ui actions by real input and an
+# api action, screenshots and element maps, the invariants, repros and replays, and the same log
+# from the same seed. The planted bugs are the spec's three: a script error in a view's button
+# handler, a progress block that never clears, a view with no default focus.
+echo "autoplay"
+runs=playtesting/autoplay
+latest_run() { ls -d "$runs/$1"-* 2>/dev/null | grep -v -- '-replay' | LC_ALL=C /usr/bin/sort | tail -n 1; }
+after_line() { # after_line <file> <exact line> <lines to add after it>; awk reads \t and \n in both
+  awk -v line="$2" -v text="$3" '{ print } $0 == line { print text }' "$1"
+}
+replace_line() { # replace_line <file> <exact line> <its replacement>
+  awk -v line="$2" -v text="$3" '{ print ($0 == line ? text : $0) }' "$1"
+}
+normalized() { # a run's JSONL without time stamps, run ids and timing lines
+  sed -e 's/^{"t":[0-9]*,/{/' -e 's/[0-9]\{8\}-[0-9]\{6\}\(-[0-9][0-9]*\)\{0,1\}/<id>/g' "$1"/run-*.jsonl \
+    | grep -v -e '"event":"frame.hitch"' -e '"event":"window.focus"'
+}
+out="$(GODOT_BIN=/nonexistent/godot bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "autoplay exits 3 without Godot" 3 $? "$out"
+[ -z "$(ls -A "$runs" 2>/dev/null)" ] && ok "and writes nothing" || bad "autoplay without Godot wrote $runs"
+out="$(bash tools/autoplay.sh --list 2>&1)"; expect_status "lists the scenarios" 0 $? "$out"
+[ "$(printf '%s\n' "$out" | awk -F ' · ' 'NF >= 3 { printf "%s %s ", $1, $2 }')" = "smoke smoke trade_week scripted greedy_trader strategy " ] \
+  && ok "with the smoke, scripted and strategy scenarios" || bad "with the smoke, scripted and strategy scenarios" "$out"
+mkdir -p "$user_data" && : > "$work/before-autoplay" && sleep 1
+out="$(bash tools/autoplay.sh --all --no-images 2>&1)"; expect_status "plays every scenario headless, with nothing found" 0 $? "$out"
+[ "$(printf '%s\n' "$out" | grep -c ' · 0 findings · ')" = "3" ] && ok "one clean run per scenario" || bad "one clean run per scenario" "$out"
+run="$(latest_run smoke-1)"
+if [ -n "$run" ] && [ -f "$(ls "$run"/run-*.log 2>/dev/null | head -n 1)" ] && [ -f "$run/0000-start.elements.json" ] \
+    && grep -q '"event":"screenshot","text":"0000-start.elements.json"' "$run"/run-*.jsonl \
+    && grep -q '"event":"autoplay.step".*"kind":"ui","route":"%Buy"' "$run"/run-*.jsonl && grep -q '"event":"trade.buy"' "$run"/run-*.jsonl \
+    && grep -qE '"event":"view.changed"|"reason":"view"' "$run"/run-*.jsonl && [ -f "$run/0003-snapshot.elements.json" ] && [ ! -f "$run/repro.json" ]; then
+  ok "smoke writes the play log, element maps at the start, view and snapshots, and screenshot lines; the shop's buttons are clicked"
+else
+  bad "smoke writes the play log, element maps at the start, view and snapshots, and screenshot lines" "$(ls "$run" 2>&1)"
+fi
+# A run that starts without a view change names the current view: the example's shell never announces
+# the shop, so the log's one view line is the first view, logged once.
+if [ -n "$run" ] && [ "$(grep -c '"event":"view.changed"' "$run"/run-*.jsonl)" = "1" ] \
+    && grep -q '"event":"view.changed","text":"shop","data":{"view":"shop","from":"","initial":true}' "$run"/run-*.jsonl; then
+  ok "the play log names the shop as the first view of a run that starts without a view change, once"
+else
+  bad "the play log names the first view of a run that starts without a view change, once" "$(grep -h '"event":"view.changed"' "$run"/run-*.jsonl 2>&1 | head -n 3)"
+fi
+grep -q '"event":"autoplay.step".*"action":"next_day_fast","kind":"api"' "$(latest_run trade_week-1)"/run-*.jsonl \
+  && ok "the scripted scenario mixes ui actions and an api action, and its expects hold" || bad "the scripted scenario performs its api action"
+[ -z "$(/usr/bin/find "$user_data" -type f -newer "$work/before-autoplay" 2>/dev/null)" ] && ok "autoplay writes nothing in the game's user://" \
+  || bad "autoplay writes nothing in the game's user://" "$(/usr/bin/find "$user_data" -type f -newer "$work/before-autoplay")"
+# Determinism: the same seed twice gives the same JSONL, apart from time stamps and run ids, and the
+# same element maps, with a Tween that widens the shop's Buy button after every change (autoplay
+# runs at a fixed 60 frames a second, and each step settles until the tween has ended).
+cp scripts/ui/shop_screen.gd "$work/saved-shop"; cp tools/autoplay_adapter.gd "$work/saved-adapter"
+after_line "$work/saved-shop" 'func _refresh() -> void:' '\t_buy.custom_minimum_size.x = 0.0\n\tcreate_tween().tween_property(_buy, "custom_minimum_size:x", 300.0, 0.5)' \
+  > scripts/ui/shop_screen.gd
+out="$(bash tools/autoplay.sh smoke --no-images --seed 42 2>&1)"; first="$(latest_run smoke-42)"
+out="$(bash tools/autoplay.sh smoke --no-images --seed 42 2>&1)"; second="$(latest_run smoke-42)"
+if [ -n "$first" ] && [ "$first" != "$second" ] && normalized "$first" > "$work/autoplay-first" && normalized "$second" > "$work/autoplay-second" \
+    && [ "$(grep -c '"event":"autoplay.step"' "$work/autoplay-first")" -gt 5 ] && cmp -s "$work/autoplay-first" "$work/autoplay-second"; then
+  ok "the same seed and scenario twice give the same actions and the same JSONL, time stamps aside"
+else
+  bad "the same seed and scenario twice give the same actions and the same JSONL, time stamps aside" "$(diff "$work/autoplay-first" "$work/autoplay-second" 2>&1 | head -n 10)"
+fi
+differ=""
+for map in $(cd "$first" && ls *.elements.json); do cmp -s "$first/$map" "$second/$map" || differ="$differ $map"; done
+[ -z "$differ" ] && [ -n "$(ls "$first"/*.elements.json 2>/dev/null)" ] && ok "and the same element maps, with a Tween running after every action" \
+  || bad "and the same element maps, with a Tween running after every action:$differ"
+grep -qE '"id":"Buy","stable":true,[^}]*"rect":\[[0-9]+,[0-9]+,300,' "$first/0003-snapshot.elements.json" \
+  && ok "each step settles until the tween has ended (the Buy button is 300 px wide)" || bad "the step settles until the tween has ended" "$(grep '"id":"Buy"' "$first/0003-snapshot.elements.json")"
+cp "$work/saved-shop" scripts/ui/shop_screen.gd
+out="$(bash tools/autoplay.sh smoke --no-images --steps 2 2>&1)"; expect_output "--steps caps a run" " · 2 steps · " "$out"
+# Planted bug 1: a script error in a view's button handler, found at the click with its script line,
+# an element map, a repro with the save from before the step, and replayed at the same step.
+cp scripts/ui/shop_screen.gd "$work/saved-shop"; cp tools/autoplay_adapter.gd "$work/saved-adapter"
+after_line "$work/saved-shop" 'func _on_buy_pressed() -> void:' '\tvar receipt: Node = null\n\treceipt.queue_free()' > scripts/ui/shop_screen.gd
+printf '\n\nfunc save_run(path: String) -> bool:\n\tvar file: FileAccess = FileAccess.open(path, FileAccess.WRITE)\n\tfile.store_string(JSON.stringify(state()))\n\treturn true\n' >> tools/autoplay_adapter.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "planted script error: the run fails" 1 $? "$out"
+expect_output "it's found at the click, with the script line and the run folder" "FAIL: smoke step 1: error: Cannot call method 'queue_free' on a null value\. \(at res://scripts/ui/shop_screen\.gd:[0-9]+ in _on_buy_pressed\(\)\) · element map playtesting/autoplay/smoke-1-[0-9-]+/0001-error\.elements\.json · repro playtesting/autoplay/smoke-1-" "$out"
+run="$(latest_run smoke-1)"
+[ -f "$run/0001-error.elements.json" ] && grep -q '"step":1,"kind":"error"' "$run/repro.json" && grep -q '"save":"saves/before-0001.save"' "$run/repro.json" \
+  && grep -q '"day":1,"gold":50,"grain":0' "$run/saves/before-0001.save" && grep -q '"event":"autoplay.finding"' "$run"/run-*.jsonl \
+  && ok "its repro has the step, the actions, the element map and the save from before the step" || bad "the planted error's repro" "$(cat "$run/repro.json" 2>&1)"
+out="$(bash tools/autoplay.sh --replay "$run" --no-images 2>&1)"; expect_status "--replay reproduces it" 1 $? "$out"
+expect_output "at the same step" "FAIL: smoke step 1: error: Cannot call method 'queue_free' on a null value\. .*-replay/0001-error\.elements\.json" "$out"
+out="$(bash tools/autoplay.sh --replay "$run" --until 0 --no-images 2>&1)"; expect_status "--until 0 stops before the step that fails" 0 $? "$out"
+# --- log review ---------------------------------------------------------------------------------
+# tools/log_review.sh reads the JSONL: the normalisation fixture, a person's logs in a fixture user
+# dir (--player), and the planted error's autoplay runs (reused from above) for the sections, the
+# delta between two runs, the signatures file and --check.
+echo "log review"
+review_section() { # review_section <review.md> <heading>: the lines under "## <heading>"
+  awk -v head="## $2" '$0 == head { on = 1; next } /^## / { on = 0 } on' "$1"
+}
+sig_of() { sed -n 's/.*"signature": "\(sig-[0-9a-f]*\)".*/\1/p' "$1" | head -n 1; }
+tab="$(printf '\t')"
+cases="$src/tests/log-review/signature-cases.tsv"
+command -v cygpath >/dev/null 2>&1 && cases="$(cygpath -m "$cases")"
+out="$("$godot" --headless --path . --script tools/log_review.gd -- --cases "$cases" 2>&1 | tr -d '\r')"
+while IFS= read -r line; do
+  case "$line" in
+    "PASS "*) ok "normalisation: ${line#PASS }" ;;
+    "FAIL "*) bad "normalisation: ${line#FAIL }" ;;
+  esac
+done <<EOF
+$out
+EOF
+printf '%s\n' "$out" | grep -q '^DONE$' && ok "the normalisation fixture ran to the end" || bad "the normalisation fixture ran to the end" "$out"
+awk '!done && sub(/sig-2f29a879/, "sig-00000000") { done = 1 } { print }' "$src/tests/log-review/signature-cases.tsv" > "$work/cases-wrong.tsv"
+wrong="$work/cases-wrong.tsv"; command -v cygpath >/dev/null 2>&1 && wrong="$(cygpath -m "$wrong")"
+out="$("$godot" --headless --path . --script tools/log_review.gd -- --cases "$wrong" 2>&1 | tr -d '\r')"
+printf '%s\n' "$out" | grep -q '^FAIL .*expected sig-00000000' && ok "a wrong expected signature in the fixture fails" || bad "a wrong expected signature in the fixture fails" "$out"
+out="$(bash tools/log_review.sh --check nonsense 2>&1)"; expect_status "--check refuses a signature that isn't one" 2 $? "$out"
+out="$(bash tools/log_review.sh "$work/no-such-run" 2>&1)"; expect_status "a folder that isn't there can't be reviewed" 3 $? "$out"
+
+# A person's logs, in a fixture user dir: Market Day's user://logs/play, found from project.godot.
+fx="$work/player-fixture"; mkdir -p "$fx"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) player_data="$fx"; player_std="$fx/Godot/app_userdata" ;;
+  Darwin) player_data="$fx/Library/Application Support"; player_std="$player_data/Godot/app_userdata" ;;
+  *) player_data="$fx/.local/share"; player_std="$player_data/godot/app_userdata" ;;
+esac
+fx_appdata="$fx"; command -v cygpath >/dev/null 2>&1 && fx_appdata="$(cygpath -w "$fx")"
+as_player() { env APPDATA="$fx_appdata" XDG_DATA_HOME="$fx/.local/share" HOME="$fx" "$@"; }
+logs="$player_std/Market Day/logs/play"; mkdir -p "$logs"
+fl() { printf '{"t":%s,"turn":%s,"cat":"%s","event":"%s","text":"%s","data":%s}\n' "$1" "$2" "$3" "$4" "$5" "$6"; }
+fixture_start() { fl 10 0 session session.start "Market Day $1 · Godot 4.7 · Windows · debug · args: (none)" "{\"game\":\"Market Day\",\"build\":\"$1\",\"godot\":\"4.7.2.stable\",\"os\":\"Windows\"}"; }
+# 0.3.0: the index error and a hitch.
+{ fixture_start 0.3.0
+  fl 20 1 snapshot snapshot "day=1" '{"day":1}'
+  fl 30 1 "engine error" engine.error "Index 3 is out of bounds (size 3). (at res://scripts/roster.gd:88 in pick())" '{"kind":"error"}'
+  fl 40 1 hitch frame.hitch "frame took 120 ms" '{"ms":120}'
+  fl 50 1 session session.end "session ended" '{}'
+} > "$logs/run-20260101-090000.jsonl"
+# 0.3.1: every kind of finding, two views (one not in the catalog), a key press, and a line that isn't JSON.
+{ fixture_start 0.3.1
+  fl 20 0 run run.new "new run 20260102-100000" '{"run":"20260102-100000"}'
+  fl 30 1 view view.changed "shop" '{"view":"shop","from":""}'
+  fl 35 1 snapshot snapshot "day=1" '{"day":1}'
+  fl 40 1 input input.action "buy" '{"action":"buy"}'
+  fl 50 1 trade trade.buy "bought grain" '{}'
+  fl 55 2 snapshot snapshot "day=2" '{"day":2}'
+  fl 60 2 progress progress.blocked "blocked: the grain cart is late, grain 3" '{"reason":"the grain cart is late, grain 3"}'
+  fl 70 2 progress progress.pressed_blocked "pressed while blocked: the grain cart is late, grain 4" '{"blocked":"the grain cart is late, grain 4"}'
+  fl 80 2 "engine error" engine.error "Index 17 is out of bounds (size 17). (at res://scripts/roster.gd:91 in pick())" '{"kind":"error"}'
+  fl 90 2 "engine warning" engine.warning "selling at a loss (at res://scripts/ui/shop_screen.gd:41 in _on_sell_pressed())" '{"kind":"warning"}'
+  fl 95 3 view view.changed "ledger" '{"view":"ledger","from":"shop"}'
+  fl 96 3 snapshot snapshot "day=3" '{"day":3}'
+  fl 100 3 hitch frame.hitch "frame took 140 ms" '{"ms":140}'
+  fl 110 3 session session.end "session ended" '{}'
+  printf '{"t":120,"turn":3,"cat":"bro\n'
+} > "$logs/run-20260102-100000.jsonl"
+# A launch that ended before a run began: never what a player played.
+{ fixture_start 0.3.1; fl 20 null "engine error" engine.error "a boot-only error" '{}'; } > "$logs/boot-20260104-100000.jsonl"
+index_sig="sig-2f29a879"; cart_sig="sig-d8ddb8e4"; sell_sig="sig-0dc8bfae"; hitch_sig="sig-40dd34bd"
+out="$(bash tools/log_review.sh "$logs/run-20260101-090000.jsonl" 2>&1)"; expect_status "reviews a .jsonl by its path" 0 $? "$out"
+expect_output "and says a person played it" "played by a person · 0 steps · 1 turn · 2 findings \(error 1, hitch 1\)" "$out"
+grep -q "^$index_sig${tab}error${tab}Index <n> is out of bounds (size <n>)\. (at res://scripts/roster\.gd:<n> in pick())${tab}0\.3\.0${tab}0\.3\.0\$" playtesting/signatures.tsv \
+  && ok "the signatures file gets the signature, its kind, text and the build it was first and last seen in" || bad "the signatures file gets the signature" "$(cat playtesting/signatures.tsv)"
+out="$(as_player bash tools/log_review.sh --player 2>&1)"; expect_status "--player reviews the newest run in the game's user://logs/play" 0 $? "$out"
+expect_output "which is the one a person played last, not the boot file" "played by a person · 0 steps · 3 turns · 4 findings \(error 1, blocked 1, warning 1, hitch 1\)" "$out"
+review="$logs/review.md"; findings="$logs/findings.json"
+[ -f "$review" ] && [ -f "$findings" ] && ok "review.md and findings.json are written next to the log, in the user dir" || bad "review.md and findings.json next to the player's log" "$(ls "$logs")"
+expect_output "the header: a person, the build, the length with a line that isn't JSON, the findings" "Played by: a person.*Build: 0\.3\.1 · Godot 4\.7\.2\.stable · Windows · Market Day.*Length: 15 lines, 3 turns \(T1-T3\) · session end logged · 1 unreadable line skipped.*Findings: 4 signatures \(error 1, blocked 1, warning 1, hitch 1\)" "$(tr '\n' ' ' < "$review")"
+timeline="$(review_section "$review" Timeline)"
+expect_output "timeline: the views in order" "^Views: shop > ledger$" "$timeline"
+expect_output "timeline: a row per turn with its views and game events" "^\| T1 \| shop \| trade\.buy \|  \|$" "$timeline"
+expect_output "timeline: findings sit in the turn they happened in" "^\| T2 \| .*\| $cart_sig, $index_sig, $sell_sig \|$" "$timeline"
+expect_output "timeline: and the hitch in the last" "^\| T3 \| ledger \|  \| $hitch_sig \|$" "$timeline"
+body="$(review_section "$review" Findings)"
+expect_output "findings: grouped by signature, with the kind and the count" "^### $index_sig · error · 1x$" "$body"
+expect_output "findings: a blocked reason that changed is one signature, counted twice" "^### $cart_sig · blocked · 2x$" "$body"
+expect_output "findings: the normalised text, and the line as logged" "^- What: .*roster\.gd:<n> in pick\(\).*$" "$body"
+expect_output "findings: and the first turn and line" "^- First: T2, line [0-9]+$" "$body"
+expect_no_output "findings: a person's log has no step, screenshot or repro to name" "step [0-9]|Screenshot|Repro|Element map" "$body"
+expect_no_output "findings: and the boot-only file is left out" "boot-only" "$body"
+cover="$(review_section "$review" Coverage)"
+expect_output "coverage: views opened against the catalog, and one the catalog doesn't have" "^- Views opened: 1 of 1 in the catalog \(shop, ledger\) · opened but not in the catalog: ledger$" "$cover"
+expect_output "coverage: the keys pressed" "^- Controls actions pressed: buy x1 \(the game defines no input action beyond ui_\*\)$" "$cover"
+expect_output "coverage: and that a person took no adapter actions" "^- Adapter actions taken: none \(a person played\)$" "$cover"
+expect_output "delta: only autoplay runs have one" "^None: only an autoplay run folder has a delta" "$(review_section "$review" Delta)"
+grep -q '"schema": 1' "$findings" && grep -q '"autoplay": false' "$findings" && [ "$(grep -c '"signature":' "$findings")" = "4" ] && grep -q '"first_step": null' "$findings" \
+  && ok "findings.json holds the four signatures, with no step for a person's log" || bad "findings.json" "$(head -n 30 "$findings")"
+grep -q "^$index_sig${tab}error${tab}.*${tab}0\.3\.0${tab}0\.3\.1\$" playtesting/signatures.tsv && grep -q "^$cart_sig${tab}blocked${tab}the grain cart is late, grain <n>${tab}0\.3\.1${tab}0\.3\.1\$" playtesting/signatures.tsv \
+  && [ "$(grep -c "^$index_sig${tab}" playtesting/signatures.tsv)" = "1" ] \
+  && ok "the signatures file moves a known signature's last seen build and adds the new ones" || bad "the signatures file after the second log" "$(cat playtesting/signatures.tsv)"
+# 0.3.2: the index error is gone and the cart is still late.
+{ fixture_start 0.3.2
+  fl 20 1 snapshot snapshot "day=1" '{"day":1}'
+  fl 30 1 progress progress.blocked "blocked: the grain cart is late, grain 9" '{"reason":"the grain cart is late, grain 9"}'
+  fl 40 1 session session.end "session ended" '{}'
+} > "$logs/run-20260103-100000.jsonl"
+out="$(as_player bash tools/log_review.sh --player --check "$index_sig" 2>&1)"; expect_status "--check: a signature missing from the newest log is absent (exit 0)" 0 $? "$out"
+expect_output "and says what it was and when it was seen" "check $index_sig: absent from .*logs/play · build 0\.3\.2 · played by a person · error: Index <n> is out of bounds .* first seen in build 0\.3\.0, last seen in build 0\.3\.1" "$out"
+out="$(as_player bash tools/log_review.sh --player --check "$cart_sig" 2>&1)"; expect_status "--check: one still in it is present (exit 1)" 1 $? "$out"
+expect_output "and says how often and where it first came" "check $cart_sig: PRESENT in .* build 0\.3\.2 .* \(1x, first at T1, line [0-9]+\)" "$out"
+out="$(as_player bash tools/log_review.sh --player --check sig-00000000 2>&1)"; expect_status "--check: a signature the file doesn't know is an error (exit 2)" 2 $? "$out"
+expect_output "and says to review first" "isn't in playtesting/signatures\.tsv" "$out"
+# use_custom_user_dir puts the folder straight under the data folder, named by custom_user_dir_name.
+cp project.godot "$work/saved-project-godot"
+after_line "$work/saved-project-godot" 'config/name="Market Day"' 'config/use_custom_user_dir=true\nconfig/custom_user_dir_name="Market Stall"' > project.godot
+mkdir -p "$player_data/Market Stall/logs/play" && cp "$logs/run-20260101-090000.jsonl" "$player_data/Market Stall/logs/play/run-20260101-090000.jsonl"
+out="$(as_player bash tools/log_review.sh --player 2>&1)"; expect_status "--player follows use_custom_user_dir" 0 $? "$out"
+[ -f "$player_data/Market Stall/logs/play/review.md" ] && ok "and writes the review in the custom folder" || bad "the review in the custom user dir" "$out"
+cp "$work/saved-project-godot" project.godot
+rm -f "$logs"/*
+out="$(as_player bash tools/log_review.sh --player 2>&1)"; expect_status "--player without a log exits 3" 3 $? "$out"
+expect_output "and says to play first" "no run-\*\.jsonl|play the game first" "$out"
+
+# The planted script error's autoplay run (above): every section, then the delta between runs.
+planted="$(latest_run smoke-1)"
+out="$(bash tools/log_review.sh "$planted" 2>&1)"; expect_status "reviews an autoplay run folder" 0 $? "$out"
+expect_output "and says what it found, with the delta against the run before" "log_review: playtesting/autoplay/smoke-1-[0-9-]+ · scenario smoke seed 1 · 9 steps · [0-9]+ turns · 1 finding \(error 1\) · vs smoke-[0-9]+-[0-9-]+: 1 new, 0 gone, 0 still present" "$out"
+review="$planted/review.md"; findings="$planted/findings.json"; sig="$(sig_of "$findings")"
+[ -f "$review" ] && [ -f "$findings" ] && printf '%s' "$sig" | grep -qE '^sig-[0-9a-f]{8}$' && ok "review.md and findings.json are written next to the log" || bad "review.md and findings.json" "$(ls "$planted")"
+expect_output "the header: autoplay, scenario and seed, the steps, one signature" "Played by: autoplay, scenario smoke, seed 1.*, 9 steps · session end logged.*Findings: 1 signature \(error 1\)" "$(tr '\n' ' ' < "$review")"
+timeline="$(review_section "$review" Timeline)"
+expect_output "timeline: the view" "^Views: shop$" "$timeline"
+expect_output "timeline: steps per turn, and where the finding came from" "^\| T1 \| 1-3 \| shop \| .*\| $sig \|$" "$timeline"
+body="$(review_section "$review" Findings)"
+expect_output "findings: the signature, kind and count" "^### $sig · error · [0-9]+x$" "$body"
+expect_output "findings: the text without the line number" "^- What: .*queue_free' on a null value\. \(at res://scripts/ui/shop_screen\.gd:<n> in _on_buy_pressed\(\)\).$" "$body"
+expect_output "findings: and as logged, with it" "^- As logged: .*shop_screen\.gd:[0-9]+ in _on_buy_pressed\(\)" "$body"
+expect_output "findings: the first step, turn and line" "^- First: step 1, T1, line [0-9]+$" "$body"
+expect_output "findings: the element map, for an assistant that can't see images" "^- Element map: playtesting/autoplay/smoke-1-[0-9-]+/0001-error\.elements\.json$" "$body"
+expect_output "findings: the repro" "^- Repro: playtesting/autoplay/smoke-1-[0-9-]+/repro\.json$" "$body"
+expect_output "findings: the save from before the step" "^- Save before the step: playtesting/autoplay/smoke-1-[0-9-]+/saves/before-0001\.save$" "$body"
+expect_output "findings: the replay command" "^- Replay: bash tools/autoplay\.sh --replay playtesting/autoplay/smoke-1-[0-9-]+ --until 1$" "$body"
+cover="$(review_section "$review" Coverage)"
+expect_output "coverage: the catalog's view was opened" "^- Views opened: 1 of 1 in the catalog \(shop\)$" "$cover"
+expect_output "coverage: the adapter actions taken, with their kind" "^- Adapter actions taken: buy x[0-9]+ \(ui\), next_day x3 \(ui\)$" "$cover"
+delta="$(review_section "$review" Delta)"
+expect_output "delta: against the earlier run" "^Against playtesting/autoplay/smoke-[0-9]+-[0-9-]+ \(seed [0-9]+\)\.$" "$delta"
+expect_output "delta: the error is new" "^- New:$" "$delta"
+expect_output "delta: it's named" "^  - $sig \`error: Cannot call method" "$delta"
+expect_output "delta: nothing is gone" "^- Gone: none$" "$delta"
+expect_output "delta: and nothing is still present" "^- Still present: none$" "$delta"
+grep -q '"first_step": 1,' "$findings" && grep -q '"kind": "error",' "$findings" && grep -q '"elements": "0001-error.elements.json",' "$findings" \
+  && grep -q '"repro": "repro.json",' "$findings" && grep -q '"save": "saves/before-0001.save"' "$findings" && grep -q '"against": "playtesting/autoplay/smoke-' "$findings" \
+  && ok "findings.json has the step, the files the finding names and the delta" || bad "findings.json" "$(head -n 40 "$findings")"
+grep -q "^$sig${tab}error${tab}Cannot call method 'queue_free' on a null value\. (at res://scripts/ui/shop_screen\.gd:<n> in _on_buy_pressed())${tab}unversioned${tab}unversioned\$" playtesting/signatures.tsv \
+  && ok "the signatures file has it, with the build named unversioned when the game sets no version" || bad "the signatures file has the planted error" "$(tail -n 3 playtesting/signatures.tsv)"
+# The same error two lines lower has the same signature, and is still present.
+after_line "$work/saved-shop" 'func _on_buy_pressed() -> void:' '\t# the same error, two lines lower:\n\t# the signature has no line number\n\tvar receipt: Node = null\n\treceipt.queue_free()' > scripts/ui/shop_screen.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; lower="$(latest_run smoke-1)"
+out="$(bash tools/log_review.sh "$lower" 2>&1)"; expect_status "reviews the next run" 0 $? "$out"
+[ "$lower" != "$planted" ] && [ "$(sig_of "$lower/findings.json")" = "$sig" ] && ok "the same error two lines lower has the same signature" || bad "the same signature at another line" "$(grep -h 'As logged' "$planted/review.md" "$lower/review.md")"
+delta="$(review_section "$lower/review.md" Delta)"
+expect_output "delta: still present" "^  - $sig " "$delta"
+expect_output "delta: and not new" "^- New: none$" "$delta"
+[ "$(grep -c "^$sig${tab}" playtesting/signatures.tsv)" = "1" ] && ok "and has one row in the signatures file" || bad "one row in the signatures file" "$(grep "^$sig" playtesting/signatures.tsv)"
+# The fix: a clean run. The error is gone, and --check confirms it from the signatures file.
+cp "$work/saved-shop" scripts/ui/shop_screen.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; clean="$(latest_run smoke-1)"
+out="$(bash tools/log_review.sh "$clean" 2>&1)"; expect_status "reviews the clean run" 0 $? "$out"
+expect_output "findings: none" "^None: no error" "$(review_section "$clean/review.md" Findings)"
+delta="$(review_section "$clean/review.md" Delta)"
+expect_output "delta: the error is gone" "^- Gone:$" "$delta"
+expect_output "delta: it's named" "^  - $sig " "$delta"
+expect_output "delta: nothing is new" "^- New: none$" "$delta"
+expect_output "delta: and nothing is still present" "^- Still present: none$" "$delta"
+out="$(bash tools/log_review.sh --check "$sig" 2>&1)"; expect_status "--check: absent from the newest autoplay run (exit 0)" 0 $? "$out"
+expect_output "and says what it was" "check $sig: absent from playtesting/autoplay/smoke-1-[0-9-]+ · build unversioned · scenario smoke · error: Cannot call method .* first seen in build unversioned, last seen in build unversioned" "$out"
+# The error comes back.
+after_line "$work/saved-shop" 'func _on_buy_pressed() -> void:' '\tvar receipt: Node = null\n\treceipt.queue_free()' > scripts/ui/shop_screen.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; back="$(latest_run smoke-1)"
+out="$(bash tools/log_review.sh --check "$sig" 2>&1)"; expect_status "--check: present in the newest run again (exit 1)" 1 $? "$out"
+expect_output "and says where" "check $sig: PRESENT in playtesting/autoplay/smoke-1-[0-9-]+ .* \([0-9]+x, first at step 1, T1, line [0-9]+\)" "$out"
+expect_output "delta: new again, against the clean run" "^  - $sig " "$(review_section "$back/review.md" Delta)"
+out="$(bash tools/log_review.sh "$back"/run-*.jsonl 2>&1)"; expect_status "reviews a run's .jsonl by its path" 0 $? "$out"
+cp "$work/saved-shop" scripts/ui/shop_screen.gd
+echo "autoplay"
+# --from-save: the save written before the failing step, loaded through the adapter's load_save(),
+# and the recorded actions from that step on, with the same step numbers.
+after_line "$work/saved-shop" 'func _on_sell_pressed() -> void:' '\tvar receipt: Node = null\n\treceipt.queue_free()' > scripts/ui/shop_screen.gd
+cp "$work/saved-adapter" tools/autoplay_adapter.gd
+printf '\n\nfunc save_run(path: String) -> bool:\n\tvar data: Dictionary = {"seed": RunState.get("_market").get("_seed"), "day": RunState.day, "gold": RunState.gold, "grain": RunState.grain}\n\tvar file: FileAccess = FileAccess.open(path, FileAccess.WRITE)\n\tfile.store_string(JSON.stringify(data))\n\treturn true\n\n\nfunc load_save(path: String) -> bool:\n\tvar data: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))\n\tif not (data is Dictionary):\n\t\treturn false\n\tRunState.start_run(int(data["seed"]))\n\tRunState.day = int(data["day"])\n\tRunState.gold = int(data["gold"])\n\tRunState.grain = int(data["grain"])\n\tPlayLog.set_turn(RunState.day)\n\tRunState.changed.emit()\n\treturn true\n' >> tools/autoplay_adapter.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"
+expect_output "a script error in the Sell handler, four steps in" "FAIL: smoke step 4: error: Cannot call method 'queue_free' on a null value\. \(at res://scripts/ui/shop_screen\.gd:[0-9]+ in _on_sell_pressed\(\)\)" "$out"
+run="$(latest_run smoke-1)"
+grep -q '"replay_from_save": "bash tools/autoplay.sh --replay .* --from-save"' "$run/repro.json" && grep -q '"day":2' "$run/saves/before-0004.save" \
+  && ok "its repro offers a replay from the save written before step 4" || bad "the repro offers a replay from the save" "$(head -n 14 "$run/repro.json")"
+out="$(bash tools/autoplay.sh --replay "$run" --from-save --no-images 2>&1)"; expect_status "--from-save reproduces it" 1 $? "$out"
+expect_output "at the same step" "FAIL: smoke step 4: error: Cannot call method 'queue_free' on a null value\. .*in _on_sell_pressed" "$out"
+replayed="$(ls -d "$runs"/smoke-1-*-replay* | LC_ALL=C /usr/bin/sort | tail -n 1)"
+grep -q '"text":"step 4: Sell grain (%Sell)"' "$replayed"/run-*.jsonl && ! grep -q '"text":"step [1-3]: ' "$replayed"/run-*.jsonl \
+  && ok "starting from the save, without playing steps 1 to 3" || bad "--from-save starts from the save" "$(grep -o '"text":"step [^"]*"' "$replayed"/run-*.jsonl)"
+cp "$work/saved-shop" scripts/ui/shop_screen.gd; cp "$work/saved-adapter" tools/autoplay_adapter.gd
+# An adapter whose start_run() doesn't start a run leaves the play log in the boot's temporary files.
+replace_line "$work/saved-adapter" '\tRunState.start_run(run_seed)' '\tpass' > tools/autoplay_adapter.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"
+expect_output "a play log outside the run folder after start_run() is a finding" "FAIL: smoke step 0: adapter: the play log isn't writing into the run folder after start_run\(1\)" "$out"
+cp "$work/saved-adapter" tools/autoplay_adapter.gd
+# A ui action whose click never reaches its control: an invisible panel over the whole shop.
+cp scenes/shop_screen.tscn "$work/saved-shop-scene"
+printf '\n[node name="Glass" type="Control" parent="."]\nlayout_mode = 1\nanchors_preset = 15\nanchor_right = 1.0\nanchor_bottom = 1.0\ngrow_horizontal = 2\ngrow_vertical = 2\n' >> scenes/shop_screen.tscn
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "an invisible panel over the buttons fails the run" 1 $? "$out"
+expect_output "the click that never reaches Next Day is a drive finding" "FAIL: smoke step 3: drive: the click on %NextDay \(next_day\) didn't reach it: something on top took it" "$out"
+expect_output "and smoke says it never played its turns" "FAIL: smoke step 200: smoke: played 0 of 3 turns in 200 steps" "$out"
+cp "$work/saved-shop-scene" scenes/shop_screen.tscn
+# Planted bug 2: a progress block that never clears, with nothing offered that clears it.
+cp tools/play_log.gd "$work/saved-play-log"
+# Its reason changes as the player trades, as a countdown would; it's still the same block.
+sed 's/return "the market has closed" if RunState.is_over() else ""/return "the market has closed" if RunState.is_over() else ("the grain cart is late, grain %d" % RunState.grain if RunState.day >= 2 else "")/' \
+  "$work/saved-play-log" > tools/play_log.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "planted progress block: the run fails" 1 $? "$out"
+expect_output "it's a softlock, ten actions after the block began, naming the latest reason" "FAIL: smoke step 13: softlock: progress blocked across 10 actions \(the grain cart is late, grain [0-9]+\), and nothing list_actions\(\) offers unblocks it · element map .*/0013-softlock\.elements\.json · repro " "$out"
+run="$(latest_run smoke-1)"
+[ -f "$run/0013-softlock.elements.json" ] && [ -f "$run/0003-blocked.elements.json" ] && grep -q '"step":13,"kind":"softlock"' "$run/repro.json" \
+  && ok "with element maps where it blocked and where it became a softlock, and a repro" || bad "the softlock's element maps and repro" "$(ls "$run")"
+out="$(bash tools/autoplay.sh --replay "$run" --no-images 2>&1)"; expect_output "--replay reproduces it at the same step" "FAIL: smoke step 13: softlock: " "$out"
+cp "$work/saved-play-log" tools/play_log.gd
+# Planted bug 3: a view with no default focus.
+sed '/_buy.grab_focus()/d' "$work/saved-shop" > scripts/ui/shop_screen.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "planted missing focus: the run fails" 1 $? "$out"
+expect_output "it's found when the view opens" "FAIL: smoke step 0: no-focus: the view shop has no focused control, so a keyboard or controller player can't act · element map .*/0000-no-focus\.elements\.json · repro " "$out"
+run="$(latest_run smoke-1)"
+out="$(bash tools/autoplay.sh --replay "$run" --until 0 --no-images 2>&1)"; expect_output "--replay reproduces it at the same step" "FAIL: smoke step 0: no-focus: the view shop " "$out"
+cp "$work/saved-shop" scripts/ui/shop_screen.gd
+# The other invariants: a freed view the shell still holds, the game's own invariant, a warning (a
+# note, not a failure), orphan nodes growing every turn, and an empty action list.
+cp tools/autoplay_invariants.gd "$work/saved-invariants"
+# view_node() hands out a freed node and leaves an orphan node behind at every step.
+printf '\n\nvar _made: bool = false\nvar _gone: Variant = null\n\n\nfunc view_node() -> Variant:\n\tNode.new()\n\tif not _made:\n\t\t_made = true\n\t\tvar node: Node = Node.new()\n\t\t_gone = node\n\t\tnode.free()\n\treturn _gone\n' >> tools/autoplay_adapter.gd
+replace_line "$work/saved-invariants" '\treturn problems' '\tif int(state.get("gold", 0)) < 1000:\n\t\tproblems.append("gold is below 1000")\n\treturn problems' \
+  > tools/autoplay_invariants.gd
+after_line "$work/saved-shop" 'func _on_sell_pressed() -> void:' '\tpush_warning("selling at a loss")' > scripts/ui/shop_screen.gd
+out="$(bash tools/autoplay.sh greedy_trader --no-images 2>&1)"; expect_status "the invariant fixtures fail the run" 1 $? "$out"
+expect_output "a freed view" "FAIL: greedy_trader step 0: freed-view: the view the shell holds as current \(shop\) was freed" "$out"
+expect_output "the game's own invariant" "FAIL: greedy_trader step 0: invariant: gold is below 1000" "$out"
+expect_output "a warning, as a note" "autoplay: note: greedy_trader step [0-9]+: warning: selling at a loss \(at res://scripts/ui/shop_screen\.gd:[0-9]+ in _on_sell_pressed\(\)\)" "$out"
+expect_output "orphan nodes growing every turn" "FAIL: greedy_trader step [0-9]+: orphans: the orphan-node count grew every turn for 3 turns" "$out"
+cp "$work/saved-adapter" tools/autoplay_adapter.gd; cp "$work/saved-invariants" tools/autoplay_invariants.gd; cp "$work/saved-shop" scripts/ui/shop_screen.gd
+replace_line "$work/saved-adapter" '\tif RunState.is_over():' '\tif RunState.is_over() or RunState.day >= 2:' > tools/autoplay_adapter.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"
+expect_output "no actions before the run is over" "FAIL: smoke step 3: no-actions: list_actions\(\) offers nothing, but the run isn't over \(view shop\)" "$out"
+cp "$work/saved-adapter" tools/autoplay_adapter.gd
+cp tools/autoplay_scenarios.gd "$work/saved-scenarios"
+sed 's/{"do": "buy", "expect": {"grain": 2}}/{"do": "buy", "expect": {"grain": 3}}/' "$work/saved-scenarios" > tools/autoplay_scenarios.gd
+out="$(bash tools/autoplay.sh trade_week --no-images --seed 42 2>&1)"
+expect_output "a scripted expect that fails" "FAIL: trade_week step 2: expect: after buy: grain is 2, expected 3" "$out"
+run="$(latest_run trade_week-42)"
+grep -q '"boot_seed": 42,' "$run/repro.json" && ok "the repro keeps the seed the game booted with" || bad "the repro keeps the boot seed" "$(head -n 6 "$run/repro.json")"
+out="$(bash tools/autoplay.sh --replay "$run" --no-images 2>&1)"; expect_status "--replay checks the expect again" 1 $? "$out"
+expect_output "and fails at the same step" "FAIL: trade_week step 2: expect: after buy: grain is 2, expected 3 · .*-replay/" "$out"
+replayed="$(ls -d "$runs"/trade_week-42-*-replay* | LC_ALL=C /usr/bin/sort | tail -n 1)"
+grep -q '"boot_seed": 42,' "$replayed/repro.json" && ok "booting with the same seed" || bad "the replay boots with the same seed" "$(head -n 6 "$replayed/repro.json")"
+sed 's/"kind": "smoke", "turns": 3}/"kind": "strategy", "strategy": "random"}/' "$work/saved-scenarios" > tools/autoplay_scenarios.gd
+out="$(bash tools/autoplay.sh --list 2>&1)"; expect_status "refuses scenarios without a smoke scenario" 1 $? "$out"
+expect_output "and says a smoke scenario is required" "a smoke scenario is required" "$out"
+cp "$work/saved-scenarios" tools/autoplay_scenarios.gd
+# A second view in the catalog: smoke opens it through the action whose `opens` names it and backs
+# out with the view's `back` action; without that action, the view smoke can't reach is a finding.
+cp tools/ui_screens.gd "$work/saved-screens"
+cat > scenes/ledger.tscn <<'EOF'
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/ledger_view.gd" id="1"]
+
+[node name="LedgerView" type="VBoxContainer"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("1")
+
+[node name="Close" type="Button" parent="."]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Close the ledger"
+EOF
+printf 'extends VBoxContainer\n\n\nfunc _ready() -> void:\n\tPlayLog.log_view("ledger")\n\t%%Close.pressed.connect(_on_close)\n\t%%Close.grab_focus()\n\n\nfunc _unhandled_input(event: InputEvent) -> void:\n\tif event.is_action_pressed("ui_cancel"):\n\t\t_on_close()\n\n\nfunc _on_close() -> void:\n\tget_tree().change_scene_to_file("res://scenes/shop_screen.tscn")\n' > scripts/ui/ledger_view.gd
+after_line "$work/saved-screens" '\t\t\t"states": {"default": _shop, "closed": _shop_closed}},' '\t\t{"id": "ledger", "title": "Ledger", "scene": "res://scenes/ledger.tscn"},' > tools/ui_screens.gd
+after_line "$work/saved-adapter" '\tvar actions: Array[Dictionary] = []' '\tif current_view() == "ledger":\n\t\tactions.append({"id": "close_ledger", "label": "Close", "kind": "ui", "node": "%Close", "back": true})\n\t\treturn actions\n\tactions.append({"id": "open_ledger", "label": "Ledger", "kind": "api", "opens": "ledger"})' \
+  > "$work/adapter-ledger"
+after_line "$work/adapter-ledger" '\tmatch str(action["id"]):' '\t\t"open_ledger":\n\t\t\ttree.change_scene_to_file("res://scenes/ledger.tscn")\n\t\t\treturn true' > tools/autoplay_adapter.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "smoke opens a second catalog view and backs out of it" 0 $? "$out"
+run="$(latest_run smoke-1)"
+grep -q '"text":"step 1: Ledger (api)"' "$run"/run-*.jsonl && grep -q '"text":"step 2: Close (%Close)"' "$run"/run-*.jsonl \
+  && grep -q '"screen": "ledger", "state": "view"' "$run/0001-view.elements.json" && [ -f "$run/0002-view.elements.json" ] \
+  && ok "through the open action and the view's back action, with an element map at each view change" || bad "smoke's view opening" "$(ls "$run")"
+grep -v '"id": "open_ledger"' tools/autoplay_adapter.gd > "$work/adapter-no-open" && cp "$work/adapter-no-open" tools/autoplay_adapter.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"
+expect_output "a catalog view no action opens is a finding" "FAIL: smoke step 0: smoke: no action opens the view ledger from the views smoke reached" "$out"
+# Key routes: the ledger opens with Page Down (an `input` action the shop handles) and has no back
+# action, so smoke backs out with ui_cancel (Escape); both presses must register as their actions.
+after_line "$work/saved-adapter" '\tvar actions: Array[Dictionary] = []' '\tif current_view() == "ledger":\n\t\tactions.append({"id": "ledger_tab", "label": "Next entry (Tab)", "kind": "ui", "input": "ui_focus_next"})\n\t\treturn actions\n\tactions.append({"id": "open_ledger", "label": "Ledger (Page Down)", "kind": "ui", "input": "ui_page_down", "opens": "ledger"})' \
+  > tools/autoplay_adapter.gd
+printf '\n\nfunc _unhandled_input(event: InputEvent) -> void:\n\tif event.is_action_pressed("ui_page_down"):\n\t\tget_tree().change_scene_to_file("res://scenes/ledger.tscn")\n' >> scripts/ui/shop_screen.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "smoke opens a view with a key and backs out with ui_cancel" 0 $? "$out"
+run="$(latest_run smoke-1)"
+grep -q '"text":"step 1: Ledger (Page Down) (input ui_page_down)"' "$run"/run-*.jsonl && grep -q '"text":"step 2: back (ui_cancel) (input ui_cancel)"' "$run"/run-*.jsonl \
+  && grep -q '"event":"input.action","text":"ui_page_down"' "$run"/run-*.jsonl && grep -q '"event":"input.action","text":"ui_cancel"' "$run"/run-*.jsonl \
+  && ok "both key presses register as their InputMap actions" || bad "the key routes" "$(grep -o '"text":"step [^"]*"' "$run"/run-*.jsonl | head -n 3)"
+cp "$work/saved-screens" tools/ui_screens.gd; cp "$work/saved-adapter" tools/autoplay_adapter.gd; cp "$work/saved-shop" scripts/ui/shop_screen.gd
+rm -f scenes/ledger.tscn scenes/ledger.tscn.uid scripts/ui/ledger_view.gd scripts/ui/ledger_view.gd.uid
+# With a display: screenshots and map images at the requested size, and the planted error's screenshot.
+out="$(bash tools/autoplay.sh smoke --size 1280x720 2>&1)"; status=$?
+if [ "$status" -eq 3 ]; then
+  echo "  skip  autoplay with a display: $(printf '%s' "$out" | tail -n 1)"
+else
+  expect_status "smoke with a display" 0 "$status" "$out"
+  run="$(latest_run smoke-1)"
+  [ -f "$run/0000-start.png" ] && [ -f "$run/0000-start.map.png" ] && [ -f "$run/0003-snapshot.png" ] && [ -f "$run/0009-end.png" ] \
+    && [ "$(od -An -tu1 -j16 -N8 "$run/0000-start.png" | tr -s ' ' | sed 's/^ //')" = "0 0 5 0 0 0 2 208" ] \
+    && grep -q '"size": \[1280, 720\]' "$run/0000-start.elements.json" \
+    && ok "writes a screenshot, an element map and a map image at each moment, at the requested size (1280x720)" \
+    || bad "writes a screenshot, an element map and a map image at each moment, at the requested size" "$(ls "$run")"
+  after_line "$work/saved-shop" 'func _on_buy_pressed() -> void:' '\tvar receipt: Node = null\n\treceipt.queue_free()' > scripts/ui/shop_screen.gd
+  out="$(bash tools/autoplay.sh smoke 2>&1)"
+  expect_output "the planted error's finding names its screenshot" "FAIL: smoke step 1: error: .* · screenshot playtesting/autoplay/smoke-1-[0-9-]+/0001-error\.png · repro " "$out"
+  run="$(latest_run smoke-1)"
+  [ -f "$run/0001-error.png" ] && [ -f "$run/0001-error.map.png" ] && grep -q '"screenshot":"0001-error.png"' "$run/repro.json" \
+    && ok "and writes it" || bad "the planted error's screenshot" "$(ls "$run")"
+  cp "$work/saved-shop" scripts/ui/shop_screen.gd
+fi
+rm -rf "$runs"
+out="$(bash tools/log_review.sh --latest 2>&1)"; expect_status "log review with no autoplay run says so (exit 3)" 3 $? "$out"
+expect_output "and names where runs come from" "no autoplay run with a play log in playtesting/autoplay" "$out"
+
+
+# --- autoplay in the check -----------------------------------------------------------------------
+# tools/check.cfg > [autoplay]: smoke played headless once the rest passed. A finding fails the check
+# only for a scenario under enforce; with the keys missing or check_in_check=false the check is what it
+# was. A game made from the seeds is played or skipped cleanly, whatever it has registered.
+echo "autoplay in the check"
+cp tools/check.cfg "$work/saved-check-cfg"; cp scripts/ui/shop_screen.gd "$work/saved-shop"
+set_autoplay() { # set_autoplay <check_in_check> <enforce as JSON>
+  sed -e "s/^check_in_check=.*/check_in_check=$1/" -e "s/^enforce=.*/enforce=$2/" "$work/saved-check-cfg" > tools/check.cfg
+}
+rm -rf "$runs"
+set_autoplay true '["smoke"]'
+out="$(bash tools/check.sh 2>&1)"; expect_status "check_in_check with smoke under enforce passes on the clean example" 0 $? "$out"
+expect_output "and says what smoke played" "check: note: autoplay: smoke · seed 1 · [0-9]+ steps · [0-9]+ turns · 0 findings$" "$out"
+[ -z "$(ls "$runs" 2>/dev/null)" ] && ok "and keeps no run folder for a clean run" || bad "and keeps no run folder for a clean run" "$(ls "$runs")"
+after_line "$work/saved-shop" 'func _on_buy_pressed() -> void:' '\tvar receipt: Node = null\n\treceipt.queue_free()' > scripts/ui/shop_screen.gd
+out="$(bash tools/check.sh 2>&1)"; expect_status "a finding in smoke under enforce fails the check" 1 $? "$out"
+expect_output "as GDIR-FAIL: autoplay, with the scenario, step, kind and summary" "GDIR-FAIL: autoplay: smoke step 1: error: Cannot call method 'queue_free' on a null value\." "$out"
+expect_output "and names the element map and the repro folder" "0001-error\.elements\.json · repro playtesting/autoplay/smoke-1-" "$out"
+expect_output "and says how to read and replay it" "log_review\.sh --latest.*autoplay\.sh --replay" "$out"
+[ -f "$(latest_run smoke-1)/repro.json" ] && ok "the run with the finding keeps its folder, with the repro" || bad "the run with the finding keeps its folder" "$(ls "$runs" 2>&1)"
+set_autoplay true '[]'
+out="$(bash tools/check.sh 2>&1)"; expect_status "with enforce empty the same finding doesn't fail the check" 0 $? "$out"
+expect_output "and is a note, marked as not enforced" "check: note: \(not enforced\) autoplay: smoke step 1: error: Cannot call method 'queue_free'" "$out"
+grep -v '^enforce=' "$work/saved-check-cfg" > tools/check.cfg
+out="$(bash tools/check.sh 2>&1)"; expect_status "with check_in_check on and enforce missing, smoke is a note too" 0 $? "$out"
+set_autoplay true '["*"]'
+cp "$work/saved-shop" scripts/ui/shop_screen.gd
+out="$(bash tools/check.sh 2>&1)"; expect_status "enforce [\"*\"] plays every scenario, clean" 0 $? "$out"
+[ "$(printf '%s\n' "$out" | grep -c '^check: note: autoplay: .* · 0 findings$')" = "3" ] && ok "one note per scenario" || bad "one note per scenario" "$out"
+after_line "$work/saved-shop" 'func _on_buy_pressed() -> void:' '\tvar receipt: Node = null\n\treceipt.queue_free()' > scripts/ui/shop_screen.gd
+set_autoplay false '["smoke"]'
+rm -f .godot/godot-director/autoplay_check.log; rm -rf "$runs"
+out="$(bash tools/check.sh 2>&1)"; expect_status "with check_in_check=false the same finding doesn't fail the check" 0 $? "$out"
+if ! printf '%s' "$out" | grep -qi 'autoplay' && [ ! -e .godot/godot-director/autoplay_check.log ] && [ ! -e "$runs" ]; then
+  ok "and the check plays nothing: no mention, no autoplay log, no run folder"
+else
+  bad "and the check plays nothing: no mention, no autoplay log, no run folder" "$out"
+fi
+grep -v -e '^check_in_check=' -e '^enforce=' "$work/saved-check-cfg" > tools/check.cfg
+out="$(bash tools/check.sh 2>&1)"; expect_status "with both keys missing the check reads autoplay as off" 0 $? "$out"
+expect_no_output "and says nothing about it" "autoplay" "$out"
+awk '/^\[autoplay\]$/ { skip = 1; next } /^\[/ { skip = 0 } !skip' "$work/saved-check-cfg" > tools/check.cfg
+out="$(bash tools/check.sh 2>&1)"; expect_status "with no [autoplay] section at all the check is what it was" 0 $? "$out"
+expect_no_output "and says nothing about it either" "autoplay" "$out"
+fp_before="$(bash tools/check.sh --fingerprint)"
+set_autoplay false '[]'
+[ "$fp_before" != "$(bash tools/check.sh --fingerprint)" ] && ok "the check's fingerprint covers tools/check.cfg" || bad "the check's fingerprint covers tools/check.cfg"
+cp "$work/saved-check-cfg" tools/check.cfg; cp "$work/saved-shop" scripts/ui/shop_screen.gd
+rm -rf "$runs"
+
+# A game made from the seeds, with nothing wired yet: the new project's seed has autoplay in the check
+# on, smoke exits 0 and says what to wire at each stage, the check passes, and nothing is written.
+fresh="$work/fresh-game"; mkdir -p "$fresh"
+printf 'config_version=5\n\n[application]\nconfig/name="Fresh"\nconfig/features=PackedStringArray("4.5")\n' > "$fresh/project.godot"
+printf '[gd_scene format=3]\n\n[node name="Main" type="Control"]\n' > "$fresh/main.tscn"
+(cd "$fresh" && git init -q && git config core.autocrlf false && git add -A && git_q commit -qm init) || exit 1
+out="$(bash "$src/install.sh" "$fresh" 2>&1)"; expect_status "installs into a fresh game" 0 $? "$out"
+if grep -q '^\[autoplay\]$' "$fresh/tools/check.cfg" && grep -q '^check_in_check=true$' "$fresh/tools/check.cfg" && grep -q '^enforce=\["smoke"\]$' "$fresh/tools/check.cfg" \
+    && ! printf '%s' "$out" | grep -q 'autoplay in the check off'; then
+  ok "a new project's tools/check.cfg has autoplay in the check on, with smoke enforced"
+else
+  bad "a new project's tools/check.cfg has autoplay in the check on, with smoke enforced" "$out"
+fi
+fresh_play() { (cd "$fresh" && GODOT_BIN="$godot" bash tools/autoplay.sh smoke --no-images 2>&1); }
+out="$(fresh_play)"; expect_status "smoke in a fresh game with no PlayLog and no main scene exits 0" 0 $? "$out"
+expect_output "and says to register the PlayLog" "autoplay: smoke · seed 1 · skipped: the game has no PlayLog autoload built on tools/play_log_base\.gd yet" "$out"
+printf '\n[autoload]\n\nPlayLog="*res://tools/play_log.gd"\n' >> "$fresh/project.godot"
+out="$(fresh_play)"; expect_status "with the PlayLog registered and no main scene it exits 0" 0 $? "$out"
+expect_output "and says to set a main scene" "skipped: the project has no main scene yet" "$out"
+after_line "$fresh/project.godot" 'config/name="Fresh"' 'run/main_scene="res://main.tscn"' > "$work/fresh-project" && cp "$work/fresh-project" "$fresh/project.godot"
+out="$(fresh_play)"; expect_status "with a main scene and the seed's adapter it exits 0" 0 $? "$out"
+expect_output "and says to fill in the adapter" "skipped: tools/autoplay_adapter\.gd isn't filled in yet, so there is no run to play" "$out"
+out="$(cd "$fresh" && GODOT_BIN="$godot" bash tools/autoplay.sh --all --no-images 2>&1)"; expect_status "--all in the fresh game exits 0 too" 0 $? "$out"
+[ -z "$(ls "$fresh/playtesting/autoplay" 2>/dev/null)" ] && ok "a skip writes no run folder and no boot log" || bad "a skip writes no run folder and no boot log" "$(ls -R "$fresh/playtesting/autoplay")"
+out="$(cd "$fresh" && GODOT_BIN="$godot" bash tools/check.sh 2>&1)"; expect_status "the check passes in the fresh game with autoplay on and smoke enforced" 0 $? "$out"
+expect_output "and notes that smoke was skipped, naming the adapter" "check: note: autoplay: smoke · seed 1 · skipped: tools/autoplay_adapter\.gd isn't filled in yet" "$out"
+# An upgrade that gets a new tools/check.cfg gets it with autoplay in the check off.
+rm -f "$fresh/tools/check.cfg"
+out="$(bash "$src/install.sh" "$fresh" 2>&1)"; expect_status "upgrades the fresh game" 0 $? "$out"
+if grep -q '^check_in_check=false$' "$fresh/tools/check.cfg" && grep -q '^enforce=\[\]$' "$fresh/tools/check.cfg" \
+    && printf '%s' "$out" | grep -q 'with autoplay in the check off: \[autoplay\] check_in_check=false, enforce=\[\]'; then
+  ok "an upgrade writes a new tools/check.cfg with autoplay in the check off, and says so"
+else
+  bad "an upgrade writes a new tools/check.cfg with autoplay in the check off" "$out"
+fi
+grep -q 'Wire autoplay' "$src/CHANGELOG.md" && grep -q 'enforce=\["smoke"\]' "$src/CHANGELOG.md" && grep -q 'a missing section reads as off' "$src/CHANGELOG.md" \
+  && ok "and the changelog's upgrade step adds the \"Wire autoplay\" item and says how to turn the check on" || bad "the changelog's upgrade step for autoplay"
+
 
 finish

@@ -8,7 +8,7 @@
 #   bash tools/ui_capture.sh <screen> --verify  capture the screen, then check it against its spec
 #                                               (design/ui/<screen>.md) and write the compare images
 # Exit codes: 0 = done (lint findings don't count) · 1 = a screen failed, or --verify found
-# deviations · 3 = couldn't run (no Godot, Godot older than 4.3, or no display), or --verify had no
+# deviations · 3 = couldn't run (no Godot, Godot older than 4.5, or no display), or --verify had no
 # spec or capture to check
 #
 # For every screen in tools/ui_screens.gd, state and size in tools/ui_capture.cfg, it writes
@@ -68,8 +68,8 @@ if [ -z "$major" ] || [ -z "$minor" ]; then
   echo "ui_capture: couldn't read a version from '$godot' (on Windows, use the *_console.exe build)." >&2
   exit 3
 fi
-if [ "$major" -lt 4 ] || { [ "$major" -eq 4 ] && [ "$minor" -lt 3 ]; }; then
-  echo "ui_capture: needs Godot 4.3 or newer; '$godot' is $version." >&2
+if [ "$major" -lt 4 ] || { [ "$major" -eq 4 ] && [ "$minor" -lt 5 ]; }; then
+  echo "ui_capture: needs Godot 4.5 or newer; '$godot' is $version." >&2
   exit 3
 fi
 if [ ! -f project.godot ]; then

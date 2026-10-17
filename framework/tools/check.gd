@@ -5,7 +5,8 @@ extends SceneTree
 ## Godot's output for errors this script can't see (a parse error is printed, not returned).
 ## Configure it in res://tools/check.cfg; don't edit this file in a project.
 ##
-## Steps: load every script, scene and resource · screen scripts hold no game rules · tests.
+## Steps: load every script, scene and resource (also the views a game only loads when they open,
+## which a run of the main scene never parses) · screen scripts hold no game rules · tests.
 ## While it runs, Engine.has_meta("godot_director_check") is true, so autoloads (which run too)
 ## can skip reading and writing player data. The 2.x name, "claude4godot_check", is set too until
 ## 4.0, so games not yet migrated keep working; it is deprecated.

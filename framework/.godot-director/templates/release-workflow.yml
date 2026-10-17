@@ -24,7 +24,7 @@ jobs:
     if: ${{ !inputs.promote }}
     runs-on: ubuntu-latest
     container:
-      image: barichello/godot-ci:4.3 # FILL IN: an image with your project's Godot version and its export templates
+      image: barichello/godot-ci:4.5 # FILL IN: an image with your project's Godot version and its export templates
     steps:
       - uses: actions/checkout@v4
       - name: Export every preset

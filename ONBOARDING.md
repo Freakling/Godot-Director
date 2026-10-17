@@ -52,7 +52,7 @@ Run `bash "$GDIR/install.sh" --tools <claude|none> .` for a first install. For a
   6. Go to step 9.
 
 ## 3. Godot for this clone
-Run `bash tools/setup-clone.sh --skip-hook`, adding the Godot path if the human gave one. It finds Godot 4.3+ and saves the path in `tools/godot_bin.local`, which is gitignored and never committed. If it exits 3, ask the human where Godot is and rerun it with the path. On Windows, prefer the `*_console.exe` build.
+Run `bash tools/setup-clone.sh --skip-hook`, adding the Godot path if the human gave one. It finds Godot 4.5+ and saves the path in `tools/godot_bin.local`, which is gitignored and never committed. If it exits 3, ask the human where Godot is and rerun it with the path. On Windows, prefer the `*_console.exe` build.
 
 Then run `bash tools/check.sh` once and keep the result. An existing game often fails at first; that's information, not a blocker. The pre-commit hook is installed at the very end (step 9), so the install commit isn't blocked.
 
@@ -92,8 +92,12 @@ Every project has `design/director-gdd.md`: the human's own Game Design Document
    config/name="<game name>"
    config/features=PackedStringArray("<major.minor>")
 
+   [autoload]
+   PlayLog="*res://tools/play_log.gd"
+
    [debug]
    gdscript/warnings/untyped_declaration=2
+   settings/gdscript/always_track_call_stacks=true
 
    [rendering]
    renderer/rendering_method="forward_plus"
@@ -104,7 +108,7 @@ Every project has `design/director-gdd.md`: the human's own Game Design Document
    3. the core loop: moment to moment, session, run or campaign, and starting conditions;
    4. platforms, input, 2D or 3D, camera, art direction and target aspect ratios.
 3. **Record it.** Write the answers into the GDD as the current design, and add a line to `design/decisions.md` for each. Anything undecided becomes a `Q<n>`.
-4. **Seed TASKS.md,** each item with Size, `Touches` and tagged `Done when`: the folder layout, a first autoload for game state, a first rule class with a test, and the first playable grey-box scene set as the main scene.
+4. **Seed TASKS.md,** each item with Size, `Touches` and tagged `Done when`: the folder layout, a first autoload for game state, a first rule class with a test, and the first playable grey-box scene set as the main scene, with the play log wired into its run (`PlayLog.begin_run()`, and `log_snapshot()` where the player may act) and the autoplay adapter filled in (`tools/autoplay_adapter.gd`: start a run with a seed, every player action in `list_actions()`, `state()`), so `bash tools/autoplay.sh smoke` plays it. A new game's `tools/check.cfg` starts with `[autoplay]` on (`check_in_check=true`, `enforce=["smoke"]`): the check plays smoke headless, and skips it with a note while the adapter is still the seed's, so a game with nothing registered yet passes.
 
 ### Existing game
 1. **AGENTS.md › Architecture:** one row per autoload, per area of rule code, and per group of screens. Take "Owns" from the scripts' top comments and public methods, not from guesses.
@@ -116,9 +120,10 @@ Every project has `design/director-gdd.md`: the human's own Game Design Document
 5. **Check failures** from step 3 become the first items. Crashes are `high`.
 6. **Existing test suites.** Write `tools/check.local.sh` to run them headless. GUT: `"$GODOT_BIN" --headless -s addons/gut/gut_cmdln.gd -gexit`. gdUnit4: its command-line tool, with `--ignoreHeadlessMode`. The check itself skips their test files.
 7. **Typed GDScript.** Add `gdscript/warnings/untyped_declaration=2` under `[debug]` in `project.godot`. If the check then fails with many untyped declarations, set it to `1`, and add an item: "Type the remaining untyped declarations, then set untyped_declaration to 2". To list them later, set it to 2 temporarily.
+8. **Autoplay.** The seeds of `tools/check.cfg` start `[autoplay]` on, which suits a new game: set `check_in_check=false` and `enforce=[]` there, so the check plays nothing until the adapter works. Add an item "Wire autoplay" as the Autoplay upgrade step in the changelog describes (the play log wired, then the adapter, smoke and a scripted scenario for the core loop, ending with `bash tools/autoplay.sh --all` exiting 0 and `[autoplay]` turned on).
 
 ### Migrate from Godot Director 1.x
-Rewrite the old files into the new format (`$GDIR/project/` shows the target shape of each, and `.godot-director/tasks.md` the item format), then delete what's obsolete; git keeps the history. IDs carry over: T and B numbers stay the same, and §11 questions become `Q<n>` with the same number. Also do steps 4-7 of Existing game above, for the screens, the check failures, the test suites and the typing setting.
+Rewrite the old files into the new format (`$GDIR/project/` shows the target shape of each, and `.godot-director/tasks.md` the item format), then delete what's obsolete; git keeps the history. IDs carry over: T and B numbers stay the same, and §11 questions become `Q<n>` with the same number. Also do steps 4-8 of Existing game above, for the screens, the check failures, the test suites, the typing setting and autoplay.
 
 | 1.x | 2.x |
 |---|---|
@@ -146,8 +151,8 @@ Finally, search the documents for leftovers and fix them. Use `git grep -n -e �
 
 ## 6. Project facts and settings
 - **AGENTS.md:** name, pitch, Godot version, dimension, platforms and rendering. Fill in the Layout table from the real folders (delete rows that don't apply), and the Architecture table (from step 5).
-- **`tools/check.cfg`:** set `[screens] dirs` to the real UI folders, and `known` as in step 5. Use `allow_writes_to` only for an autoload a screen legitimately edits, such as Settings, and ask the human first. Put third-party folders in `[scan] skip`.
-- **`project.godot`:** it has `untyped_declaration` (step 5).
+- **`tools/check.cfg`:** set `[screens] dirs` to the real UI folders, and `known` as in step 5. Use `allow_writes_to` only for an autoload a screen legitimately edits, such as Settings, and ask the human first. Put third-party folders in `[scan] skip`. `[autoplay]` starts on for a new game and off for an existing or migrated one (step 8 of Existing game).
+- **`project.godot`:** it has `untyped_declaration` (step 5); `settings/gdscript/always_track_call_stacks=true` under `[debug]`, so the play log names the script line of an error in release builds too; and the `PlayLog` autoload first under `[autoload]`: `PlayLog="*res://tools/play_log.gd"` (the seed, which extends the framework's `tools/play_log_base.gd`). If the game already has its own `PlayLog`, or another play log, keep it registered as it is and leave the seed unregistered; add an item: "Migrate PlayLog to extend tools/play_log_base.gd, keeping its line formats" (`HH:MM:SS T<turn> [category] text`, so existing logs stay readable). For an existing or migrated game, also add an item to wire the play log: fill the seed's hooks, call `begin_run()` or `continue_run()`, `log_snapshot()` where the player may act, and log each player action from its system (`rules.md` › Everything is logged).
 - **Exports.** Offer the export step: the target platforms and where exports run (this machine, a build container, or a hosted service such as GitHub Actions). Follow `.godot-director/procedures/export.md` › Set up exports, in its voice: short rounds, options with a recommendation. Skip what the project already answers: an existing `export_presets.cfg` and the platforms in the GDD. The human can skip the step. A skip adds the open question and the "Set up exports" item that `export.md` › "When the human skips it" describes, so `/design Q<n>` runs the step later and `/next-task` builds the setup.
 - **Release.** Offer the release step once exports are set up: the command that uploads each preset's build to a platform's UAT branch or channel, the command for production, and the names of the CI secrets the commands need (values are never written in the repo or the chat). Follow `.godot-director/procedures/release.md` › Set up release, in its voice. The human can skip the step. A skip adds the open question and the "Set up release" item that `release.md` › "When the human skips it" describes.
 
@@ -193,6 +198,18 @@ If they want it:
   - L: claude-opus-5-5
   - XL: claude-opus-5-5
   ```
+- Dev menu: **ask the human whether the game should have one, and how it is enabled; recommend in game.** The dev menu (`tools/dev_menu_base.gd`, with the game's seed `tools/dev_menu.gd`) has one tab per system with its actions and an inspector for its hidden values, and a Log tab with the play log's tail; it is how an assistant sees what the editor's Remote tree would show. Offer the ways to enable it (any combination):
+  - **In game** (recommended): F12 opens it, in debug builds only.
+  - **A setting:** `debug/dev_menu=true` under `[debug]` in `project.godot`, or a toggle in the game's own Settings (the seed's `setting_enabled()`), so it works in any build, release too.
+  - **A command-line flag:** the game started with `-- --dev-menu`, in any build.
+
+  Write the answer into AGENTS.md › Project rules, in this exact format (the ways joined with commas; `none` when the human doesn't want one), and tell the human what each means:
+  ```
+  Dev menu: in game (F12, debug builds only)
+  Dev menu: in game (F12, debug builds only), setting (debug/dev_menu), flag (-- --dev-menu)
+  Dev menu: none
+  ```
+  For any answer but `none`: with the editor closed, register the seed last under `[autoload]` in `project.godot`, `DevMenu="*res://tools/dev_menu.gd"`, set `enabled_by` in the seed's `_init` to the chosen ways (`MODE_IN_GAME`, `MODE_SETTING`, `MODE_FLAG`), and write `debug/dev_menu=false` under `[debug]` when the setting is chosen, so the human finds it. A new game registers each system from the seed's `_ready` as it adds it (`register_system("Run", RunState, ["next_day"])`, with the system's `debug_*` methods as actions and a `debug_inspect() -> Dictionary` for what only code can see). An existing game gets an item "Wire the dev menu: register its autoloads and systems, with their debug hooks". With `none`, leave the seed unregistered. A release export preset that excludes `tools/` keeps `tools/dev_menu_base.gd` and `tools/dev_menu.gd` when the answer includes the setting or the flag.
 - Reviews: by default after `L` and `XL` items, and after `M` items that change saves or a system's public methods.
 
 ## 8. Playtest template

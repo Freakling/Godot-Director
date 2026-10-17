@@ -4,9 +4,39 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T15 · B3 · R1
+**Next IDs:** T20 · B3 · R1
 
 ## Queue
+
+### T19 · /autoplay and the workflow hooks · done · M · agent
+- Touches: framework/.godot-director/procedures/autoplay.md (new), framework/.claude/skills/autoplay/SKILL.md (new), framework/.godot-director/rules.md, tasks.md, procedures/next-task.md, build.md, review.md, function-check.md, playtest.md, align.md, framework/playtesting/README.md, framework/tools/check.sh, autoplay.sh, autoplay.gd, autoplay_adapter_base.gd, play_log_base.gd, project/tools/check.cfg, project/tools/autoplay_adapter.gd, examples/market-day/tools/check.cfg, framework/.claude/settings.json, install.sh, README.md, ONBOARDING.md, tests/play-log/selftest_play_log.gd, selftest.sh, CHANGELOG.md
+- Done when: the procedure and skill run, review and replay as spec section 3.4 says, every named procedure uses autoplay as the spec says, the check runs smoke headless under `[autoplay] check_in_check` with `enforce` (on for new projects, off on upgrade, missing keys read as off), a new project gets everything wired so that `bash tools/autoplay.sh smoke` exits 0 in a fresh project made by the skill (a clean skip that names what to wire) and an upgrade gets the seeds plus a TASKS item (spec section 5), and the docs say what is framework-owned and what is project-owned and how an assistant without image viewing reviews from element maps (spec section 6) (check) · the play log names the current view when a run starts without a view change, so a run's log and review always carry its first view (check) · the whole feature is one open pull request, each stage one commit, with the selftest passing (check)
+- GDD: (none)
+- Source: Director-Driven-Development T131
+
+### T18 · The dev menu base and its onboarding step · done · M · agent
+- Touches: framework/tools/dev_menu_base.gd (new), project/tools/dev_menu.gd (new), framework/.godot-director/rules.md, ONBOARDING.md, README.md, project/AGENTS.md, examples/market-day/tools/dev_menu.gd (new), examples/market-day/tests/test_dev_menu.gd (new), examples/market-day/scripts/autoload/run_state.gd, examples/market-day/project.godot, examples/market-day/AGENTS.md, examples/market-day/.gitignore, examples/market-day/.gitattributes, tests/dev-menu/selftest_dev_menu.gd (new), install.sh, selftest.sh, CHANGELOG.md
+- Done when: a framework-owned dev menu base (one tab per system through public APIs and debug hooks, an inspector for hidden values, a Log tab from the play log's tail, debug builds only) ships with a project seed, and onboarding asks whether the director wants a dev menu in the game and how to enable it (a setting, in game, or a command-line flag at start), recording the answer in the project's rules (check)
+- GDD: (none)
+- Source: Director-Driven-Development T130
+
+### T17 · Log review with stable signatures · done · M · agent
+- Touches: framework/tools/log_review.sh (new), framework/tools/log_review.gd (new), project/playtesting/signatures.tsv (new), examples/market-day/playtesting/signatures.tsv (new), examples/market-day/.gitignore, examples/market-day/.gitattributes, tests/log-review/signature-cases.tsv (new), install.sh, selftest.sh, CHANGELOG.md
+- Done when: `bash tools/log_review.sh [<run>|--latest|--player]` writes review.md and findings.json with the timeline, the findings by signature (the normalisation from the spec, with a fixture carrying signatures.py's cases), coverage and the delta against the previous run, and `--check sig-xxxx` confirms a fix from signatures.tsv (check)
+- GDD: (none)
+- Source: Director-Driven-Development T129
+
+### T16 · Autoplay drives the real game · done · L · agent
+- Touches: framework/tools/autoplay.sh (new), framework/tools/autoplay.gd (new), framework/tools/autoplay_adapter_base.gd (new), framework/tools/autoplay_catalog.gd (new), framework/tools/ui_lint.gd, framework/tools/ui_capture.gd, project/tools/autoplay_adapter.gd (new), project/tools/autoplay_scenarios.gd (new), project/tools/autoplay_invariants.gd (new), install.sh, examples/market-day/tools/autoplay_adapter.gd (new), examples/market-day/tools/autoplay_scenarios.gd (new), examples/market-day/tools/autoplay_invariants.gd (new), examples/market-day/.gitignore, examples/market-day/.gitattributes, selftest.sh, CHANGELOG.md
+- Done when: `bash tools/autoplay.sh <scenario|--all>` launches the real game through the main scene with the autoplay meta, drives it through the adapter by real input and API calls from scripted and strategy scenarios, requires a smoke scenario, writes screenshots and element maps at the spec's moments into `playtesting/autoplay/<run>/`, checks the framework invariants and the project's, writes a replayable repro on every failure, replays with `--replay`, and is deterministic from a seed (check) · the three planted bugs (a script error in a view's button handler, a progress block that never clears, a view with no default focus) are found with a signature-ready line, step, screenshot and repro, and `--replay` reproduces each at the same step (check)
+- GDD: (none)
+- Source: Director-Driven-Development T128
+
+### T15 · The play log base and the logging rules · done · L · agent
+- Touches: framework/tools/play_log_base.gd (new), project/tools/play_log.gd (new), framework/.godot-director/rules.md, framework/tools/check.sh, framework/tools/check.gd, framework/tools/setup-clone.sh, framework/tools/ui_capture.sh, framework/.godot-director/procedures/ui-design.md, framework/.godot-director/templates/release-workflow.yml, install.sh, examples/market-day/project.godot, examples/market-day/AGENTS.md, examples/market-day/.gitignore, examples/market-day/.gitattributes, examples/market-day/tools/play_log.gd (new), examples/market-day/scripts/autoload/run_state.gd, examples/market-day/scripts/ui/shop_screen.gd, examples/market-day/tests/test_play_log.gd (new), tests/play-log/selftest_play_log.gd (new), skills/godot-director/SKILL.md, README.md, ONBOARDING.md, PRIVACY.md, CLAUDE.md, selftest.sh, CHANGELOG.md
+- Done when: the play log base writes the per-run text log and its JSONL twin with stable event ids, the session header, startup buffering, flush per line, the engine Logger, the tail, `start_capture()` for tests and scrubbing, writes nothing under the check, and has the project hooks `_session_extras()`, `_build_snapshot()`, `log_snapshot()` and `progress_block_reason()` (check) · `rules.md` has the logging, drivability, agent-visible state, seeded randomness and privacy rules (check) · the minimum Godot is 4.5 everywhere it's stated and checked, and the selftest proves the check fails on a compile error in a view that only loads when it opens (check)
+- GDD: (none)
+- Source: Director-Driven-Development T127
 
 ### T13 · The human-written GDD · done · S · agent
 - Touches: project/design/director-gdd.md (new), examples/market-day/design/director-gdd.md (new), ONBOARDING.md, README.md, selftest.sh, CHANGELOG.md

@@ -12,15 +12,18 @@ config_version=5
 
 config/name="Market Day"
 run/main_scene="res://scenes/shop_screen.tscn"
-config/features=PackedStringArray("4.3", "GL Compatibility")
+config/features=PackedStringArray("4.5", "GL Compatibility")
 
 [autoload]
 
+PlayLog="*res://tools/play_log.gd"
 RunState="*res://scripts/autoload/run_state.gd"
+DevMenu="*res://tools/dev_menu.gd"
 
 [debug]
 
 gdscript/warnings/untyped_declaration=2
+settings/gdscript/always_track_call_stacks=true
 
 [display]
 
