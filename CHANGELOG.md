@@ -2,7 +2,7 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
-## Unreleased
+## 4.0.0 (2026-10-17)
 
 - **New: the play log.** Every game gets a log of what happened in each run, one plain-text line for you and one JSON line for tools, so an assistant can read what a playtest did. The framework owns `tools/play_log_base.gd`; the game's `PlayLog` autoload, `tools/play_log.gd` (a new seed, like `tools/ui_screens.gd`), extends it and fills its hooks. It works in debug and release builds.
   - **Two files per run, one call.** `PlayLog.log_event(category, event, text, data)` writes `HH:MM:SS T<turn> [category] text` to `user://logs/play/run-<datetime>.log`, and `{"t": ms, "turn": n, "cat": "...", "event": "<stable_id>", "text": "...", "data": {...}}` to the `.jsonl` beside it. Tools read the stable `event` id; the text is free to change. Each line is flushed as it's written, so a crash keeps everything up to it. Only the newest `keep_files` runs are kept (20 by default).
