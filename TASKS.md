@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T18 · B3 · R1
+**Next IDs:** T19 · B3 · R1
 
 ## Queue
+
+### T18 · The dev menu base and its onboarding step · done · M · agent
+- Touches: framework/tools/dev_menu_base.gd (new), project/tools/dev_menu.gd (new), framework/.godot-director/rules.md, ONBOARDING.md, README.md, project/AGENTS.md, examples/market-day/tools/dev_menu.gd (new), examples/market-day/tests/test_dev_menu.gd (new), examples/market-day/scripts/autoload/run_state.gd, examples/market-day/project.godot, examples/market-day/AGENTS.md, examples/market-day/.gitignore, examples/market-day/.gitattributes, tests/dev-menu/selftest_dev_menu.gd (new), install.sh, selftest.sh, CHANGELOG.md
+- Done when: a framework-owned dev menu base (one tab per system through public APIs and debug hooks, an inspector for hidden values, a Log tab from the play log's tail, debug builds only) ships with a project seed, and onboarding asks whether the director wants a dev menu in the game and how to enable it (a setting, in game, or a command-line flag at start), recording the answer in the project's rules (check)
+- GDD: (none)
+- Source: Director-Driven-Development T130
 
 ### T17 · Log review with stable signatures · done · M · agent
 - Touches: framework/tools/log_review.sh (new), framework/tools/log_review.gd (new), project/playtesting/signatures.tsv (new), examples/market-day/playtesting/signatures.tsv (new), examples/market-day/.gitignore, examples/market-day/.gitattributes, tests/log-review/signature-cases.tsv (new), install.sh, selftest.sh, CHANGELOG.md

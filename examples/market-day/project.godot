@@ -18,6 +18,7 @@ config/features=PackedStringArray("4.5", "GL Compatibility")
 
 PlayLog="*res://tools/play_log.gd"
 RunState="*res://scripts/autoload/run_state.gd"
+DevMenu="*res://tools/dev_menu.gd"
 
 [debug]
 

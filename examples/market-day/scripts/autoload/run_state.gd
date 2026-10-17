@@ -86,3 +86,17 @@ func is_won() -> bool:
 func _start_day() -> void:
 	PlayLog.set_turn(day)
 	PlayLog.log_snapshot()
+
+
+# --- the dev menu's hooks (tools/dev_menu.gd registers this autoload) ---------------------------
+
+## Dev menu: what only code can see.
+func debug_inspect() -> Dictionary:
+	return {"price today": price(), "can buy": can_buy(), "over": is_over(), "won": is_won()}
+
+
+## Dev menu: gives (or takes, when negative) gold, to reach a state without playing to it.
+func debug_add_gold(amount: int) -> void:
+	gold = maxi(0, gold + amount)
+	PlayLog.log_event("run", "run.debug_gold", "dev menu changed gold by %d: gold %d" % [amount, gold], {"amount": amount, "gold": gold})
+	changed.emit()

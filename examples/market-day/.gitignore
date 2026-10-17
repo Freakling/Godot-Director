@@ -28,6 +28,7 @@
 /tools/autoplay_catalog.gd
 /tools/log_review.sh
 /tools/log_review.gd
+/tools/dev_menu_base.gd
 /playtesting/README.md
 
 # Godot Director

@@ -334,6 +334,35 @@ grep -q '"/tools/log_review\.gd text eol=lf"' "$src/install.sh" && grep -q '"/pl
   && grep -q '^/tools/log_review\.sh$' "$src/examples/market-day/.gitignore" && grep -q '^/tools/log_review\.gd$' "$src/examples/market-day/.gitignore" || wired="$wired installer lines"
 [ -z "$wired" ] && ok "log review is wired in: tool, wrapper, the signatures.tsv seed with its header, the fixture and the installer's lines" \
   || bad "log review isn't wired into:$wired"
+# The dev menu: the base, the game's seed (PLACEHOLDER marked), the example's wiring, the rules,
+# onboarding's question and recorded answer, the upgrade step and the installer's lines.
+wired=""
+for file in framework/tools/dev_menu_base.gd project/tools/dev_menu.gd examples/market-day/tools/dev_menu.gd \
+    examples/market-day/tests/test_dev_menu.gd tests/dev-menu/selftest_dev_menu.gd; do
+  [ -f "$src/$file" ] || wired="$wired $file"
+done
+grep -q '^extends "res://tools/dev_menu_base\.gd"$' "$src/project/tools/dev_menu.gd" \
+  && [ "$(grep -c 'PLACEHOLDER' "$src/project/tools/dev_menu.gd")" -ge 3 ] \
+  && grep -q '^func setting_enabled() -> bool:$' "$src/project/tools/dev_menu.gd" || wired="$wired dev_menu.gd seed"
+for hook in 'register_system(system_name: String, node: Object' 'is_available() -> bool' 'actions_of(system_name: String)' \
+    'inspect(system_name: String) -> Dictionary' 'inspect_text(system_name: String) -> String' 'log_text() -> String' \
+    'run_action(system_name: String, method: String'; do
+  grep -qF "func $hook" "$src/framework/tools/dev_menu_base.gd" || wired="$wired base($hook)"
+done
+grep -q '"debug/dev_menu"' "$src/framework/tools/dev_menu_base.gd" && grep -q '"--dev-menu"' "$src/framework/tools/dev_menu_base.gd" \
+  && grep -q 'KEY_F12' "$src/framework/tools/dev_menu_base.gd" || wired="$wired base(setting, flag, F12)"
+grep -q '^DevMenu="\*res://tools/dev_menu\.gd"$' "$src/examples/market-day/project.godot" \
+  && grep -q '^- Dev menu: in game (F12, debug builds only)$' "$src/examples/market-day/AGENTS.md" || wired="$wired example project.godot, AGENTS.md"
+grep -q 'register_system(name, node)' "$proc/rules.md" && grep -q 'tools/dev_menu_base\.gd' "$proc/rules.md" && grep -q 'debug_inspect()' "$proc/rules.md" || wired="$wired rules.md(dev menu base, registration)"
+grep -q '^- Dev menu: \*\*ask the human' "$src/ONBOARDING.md" && grep -q '^  Dev menu: in game (F12, debug builds only)$' "$src/ONBOARDING.md" \
+  && grep -q '`debug/dev_menu=true`' "$src/ONBOARDING.md" && grep -q -- '`-- --dev-menu`' "$src/ONBOARDING.md" \
+  && grep -q 'AGENTS.md › Project rules' "$src/ONBOARDING.md" || wired="$wired ONBOARDING.md(dev menu step)"
+grep -q '^7\. \*\*The dev menu\.\*\*' "$src/CHANGELOG.md" || wired="$wired CHANGELOG.md(upgrade step)"
+grep -q '^- Dev menu: ' "$src/project/AGENTS.md" && grep -q 'tools/dev_menu_base\.gd' "$src/README.md" || wired="$wired project/AGENTS.md, README.md"
+grep -q '"/tools/dev_menu_base\.gd text eol=lf"' "$src/install.sh" && grep -q '^/tools/dev_menu_base\.gd$' "$src/examples/market-day/.gitignore" \
+  && grep -q '^/tools/dev_menu_base\.gd text eol=lf$' "$src/examples/market-day/.gitattributes" || wired="$wired installer lines"
+[ -z "$wired" ] && ok "the dev menu is wired in: base, seed, example, the rule, onboarding's question and answer format, the upgrade step and the installer's lines" \
+  || bad "the dev menu isn't wired into:$wired"
 # The minimum Godot is 4.5 (the engine Logger) everywhere it's stated and checked.
 stale="$(cd "$src" && grep -nE '4\.3([^0-9]|$)|-lt [0-4] \]; \}|-ge [0-4] \]; \}' README.md ONBOARDING.md CLAUDE.md \
   skills/godot-director/SKILL.md selftest.sh framework/tools/check.sh framework/tools/setup-clone.sh framework/tools/ui_capture.sh framework/tools/autoplay.sh \
@@ -423,6 +452,12 @@ if [ -x tools/log_review.sh ] && [ -f tools/log_review.gd ] && cut -f2 .godot-di
   ok "installs log review, the signatures.tsv seed and the .gitattributes lines for both"
 else
   bad "installs log review, the signatures.tsv seed and the .gitattributes lines for both" "$out"
+fi
+if [ -f tools/dev_menu_base.gd ] && cut -f2 .godot-director/manifest | grep -q '^tools/dev_menu_base\.gd$' && grep -q 'register_system("Run", RunState' tools/dev_menu.gd \
+    && grep -q '^/tools/dev_menu_base\.gd text eol=lf$' .gitattributes; then
+  ok "installs the dev menu base and its .gitattributes line, keeping the game's own DevMenu"
+else
+  bad "installs the dev menu base and its .gitattributes line, keeping the game's own DevMenu" "$out"
 fi
 grep -q "Market Day" AGENTS.md && ok "keeps the project's own files" || bad "keeps the project's own files"
 [ -z "$(git status --porcelain)" ] && ok "adds no duplicate .gitignore/.gitattributes lines" || bad "adds no duplicate lines" "$(git status --porcelain)"
@@ -544,6 +579,12 @@ if git -C "$src" rev-parse -q --verify 'v3.10.0^{commit}' >/dev/null 2>&1; then
   else
     bad "the upgrade adds log review, the signatures.tsv seed and its .gitattributes line" "$out"
   fi
+  if cmp -s "$upgraded/tools/dev_menu.gd" "$src/project/tools/dev_menu.gd" && grep -q 'tools/dev_menu_base\.gd$' "$upgraded/.godot-director/manifest" \
+      && grep -q '^/tools/dev_menu_base\.gd text eol=lf$' "$upgraded/.gitattributes" && ! grep -q '^DevMenu=' "$upgraded/project.godot"; then
+    ok "the upgrade adds the dev menu base and its seed, and leaves it unregistered until the human answers"
+  else
+    bad "the upgrade adds the dev menu base and its seed, and leaves it unregistered until the human answers" "$out"
+  fi
   cmp -s "$upgraded/AGENTS.md" "$work/up-agents" && cmp -s "$upgraded/tools/check.cfg" "$work/up-check-cfg" \
     && ok "the upgrade keeps the game's own AGENTS.md and tools/check.cfg" || bad "the upgrade keeps the game's own AGENTS.md and tools/check.cfg"
   if grep -q '^check_in_check=false$' "$upgraded/tools/ui_capture.cfg" && grep -q '^enforce=\[\]$' "$upgraded/tools/ui_capture.cfg"; then
@@ -598,6 +639,11 @@ if [ -x "$core_only/tools/log_review.sh" ] && [ -f "$core_only/tools/log_review.
   ok "a new game gets log review and the signatures.tsv seed, even with --tools none"
 else
   bad "a new game gets log review and the signatures.tsv seed, even with --tools none" "$out"
+fi
+if [ -f "$core_only/tools/dev_menu_base.gd" ] && cmp -s "$core_only/tools/dev_menu.gd" "$src/project/tools/dev_menu.gd"; then
+  ok "a new game gets the dev menu base and the DevMenu seed, even with --tools none"
+else
+  bad "a new game gets the dev menu base and the DevMenu seed, even with --tools none" "$out"
 fi
 if [ -f "$core_only/design/director-gdd.md" ] && grep -q '^# Game Design Document (GDD): ' "$core_only/design/director-gdd.md"; then
   ok "a new game gets the human-written GDD template, even with --tools none"
@@ -710,7 +756,7 @@ printf '\357\273\277%s  \r\n' "$godot" > tools/godot_bin.local
 echo "check"
 out="$(bash tools/check.sh 2>&1)"; status=$?
 expect_status "passes on a fresh clone of the example (Godot path with BOM and spaces)" 0 "$status" "$out"
-expect_output "runs the example's tests" "10 tests passed" "$out"
+expect_output "runs the example's tests" "12 tests passed" "$out"
 expect_output "scans the screen scripts" "1 screen script scanned" "$out"
 expect_no_output "reports no missing hook" "no Godot Director pre-commit hook" "$out"
 out="$(bash tools/check.sh --if-changed 2>&1)"; expect_output "--if-changed reuses the last pass" "nothing changed since the last passing run" "$out"
@@ -768,7 +814,7 @@ cp "$work/saved-state" scripts/autoload/run_state.gd; cp "$work/saved-screen" sc
 printf 'extends "res://tools/test_case.gd"\n\nfunc test_check_meta() -> void:\n\texpect(Engine.has_meta("godot_director_check"))\n\texpect(Engine.has_meta("claude4godot_check"))\n\nfunc test_ignore_markers() -> void:\n\tprint("GDIR-IGNORE:selftest expected error one")\n\tpush_error("selftest expected error one")\n\tprint("C4G-IGNORE:selftest expected error two")\n\tpush_error("selftest expected error two")\n' > tests/test_selftest_meta.gd
 out="$(bash tools/check.sh 2>&1)"; status=$?
 expect_status "accepts expected errors marked GDIR-IGNORE, or C4G-IGNORE as in 2.x" 0 "$status" "$out"
-expect_output "sets the check meta under the new and the deprecated 2.x name" "12 tests passed" "$out"
+expect_output "sets the check meta under the new and the deprecated 2.x name" "14 tests passed" "$out"
 rm -f tests/test_selftest_meta.gd tests/test_selftest_meta.gd.uid
 
 out="$(bash tools/check.sh 2>&1)"; expect_status "passes again after the faults are removed" 0 $? "$out"
@@ -804,6 +850,24 @@ printf '%s\n' "$out" | grep -q '^DONE$' && ok "the play log's own test ran to th
   && ok "neither the check nor a tool script writes a play log in the game's user://" \
   || bad "neither the check nor a tool script writes a play log in the game's user://" "$(/usr/bin/find "$user_data" -type f -name 'run-*' -newer "$work/before-play-log")"
 rm -f tools/selftest_play_log.gd tools/selftest_play_log.gd.uid
+
+# --- dev menu -----------------------------------------------------------------------------------
+# tests/dev-menu/selftest_dev_menu.gd builds the menu headless and runs it, with the real flag on the
+# command line. A script error in it must fail too, so its output is searched for one.
+echo "dev menu"
+cp "$src/tests/dev-menu/selftest_dev_menu.gd" tools/selftest_dev_menu.gd
+out="$("$godot" --headless --path . --script tools/selftest_dev_menu.gd -- --dev-menu 2>&1 | tr -d '\r')"
+while IFS= read -r line; do
+  case "$line" in
+    "PASS "*) ok "${line#PASS }" ;;
+    "FAIL "*) bad "${line#FAIL }" ;;
+  esac
+done <<EOF
+$out
+EOF
+printf '%s\n' "$out" | grep -q '^DONE$' && ok "the dev menu's own test ran to the end" || bad "the dev menu's own test ran to the end" "$out"
+expect_no_output "and raised no script error" "SCRIPT ERROR|Parse Error" "$out"
+rm -f tools/selftest_dev_menu.gd tools/selftest_dev_menu.gd.uid
 
 # --- Stop hook ----------------------------------------------------------------------------------
 echo "stop hook"

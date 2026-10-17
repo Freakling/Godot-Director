@@ -29,6 +29,7 @@ One row per system: what it owns and where its boundary is. Screens depend on sy
 | `Market` | price per day, whether a trade is allowed, end and win conditions | `scripts/systems/market.gd` | reads `MarketConfig` |
 | `MarketConfig` | tunable market values | `scripts/resources/market_config.gd`, `data/market_config.tres` | (none) |
 | `PlayLog` (autoload) | the play log: a `.log` and a `.jsonl` per run in `user://logs/play/`, the snapshot of each day, what blocks Next Day | `tools/play_log.gd` (extends the framework's `tools/play_log_base.gd`) | reads `RunState`; `RunState` and the shop screen log to it |
+| `DevMenu` (autoload) | the dev menu: a Run tab with Buy, Sell, Next Day, RunState's debug hooks and its hidden values, and a Log tab with the play log's tail | `tools/dev_menu.gd` (extends the framework's `tools/dev_menu_base.gd`) | registers `RunState`; reads `PlayLog` |
 | Shop screen | shows the run; buttons call `RunState` | `scenes/shop_screen.tscn`, `scripts/ui/shop_screen.gd` | reads `RunState`, listens to `changed` |
 
 ## Ownership
@@ -44,3 +45,4 @@ One row per system: what it owns and where its boundary is. Screens depend on sy
 
 ## Project rules
 - No git remote: never push.
+- Dev menu: in game (F12, debug builds only)

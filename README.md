@@ -131,6 +131,7 @@ your-game/
 ├── tools/ui_screens.gd         the screen catalog: every screen, how to open it in a state, the overlays it shows
 ├── tools/ui_capture.cfg        capture sizes and seed, lint thresholds, which screens the check lints, verify tolerance
 ├── tools/play_log.gd           the PlayLog autoload: what the play log's header, snapshots and progress line say for this game
+├── tools/dev_menu.gd           the DevMenu autoload, if you want one: how it is enabled and which systems it shows
 ├── design/ui/                  one spec per screen (and a gitignored captures/ folder); README.md says how to draw
 ├── director/ui/                your screen drawings (you create it; the agent only reads it)
 │
@@ -142,6 +143,7 @@ your-game/
 ├── tools/check.sh, check.gd    the check;  tools/test_case.gd: base for tests in tests/
 ├── tools/ui_capture.sh, ui_*.gd  screen capture, element map, layout lint, drawing reader, compare and verify
 ├── tools/play_log_base.gd      the play log: a .log and a .jsonl per run in user://logs/play/, engine errors, scrubbing
+├── tools/dev_menu_base.gd      the dev menu: a tab per system with its actions and hidden values, and the play log's tail
 ├── tools/setup-clone.sh        per clone: finds Godot, installs the pre-commit hook
 ├── tools/release.sh            runs the upload commands release.cfg names, per export preset
 ├── .githooks/pre-commit        runs the check before commits that touch code, scenes or data
@@ -162,6 +164,7 @@ The full rules are in `.godot-director/rules.md`, and the assistant reads them e
 - **Each fact lives in one place,** and is updated in the same change that makes it untrue.
 - **Rules live in systems, not screens.** They sit in plain classes that tests can build directly. Saves are JSON in `user://`, never Resources, which can run scripts when loaded.
 - **Everything is logged.** Every player action, turn step, view change and blocked progress button writes a line to the play log, a `.log` for you and a `.jsonl` for tools per run, and tests assert on those lines. The log ships in every build, never leaves the machine, and leaves out the user name, the home path and the install id.
+- **A dev menu, if you want one.** Onboarding asks, and recommends F12 in debug builds. A tab per system shows its `debug_*` actions and the values only code can see (`debug_inspect()`), plus the play log's tail, so an assistant can look inside the game. You choose how it is enabled: in game (the key, debug builds), a setting (`debug/dev_menu`), a command-line flag (`-- --dev-menu`), or none.
 - **Done means the check passes,** and the work is committed only with your approval.
 - **Guarded git:** in Claude Code, force-push, `reset --hard`, `--no-verify` and other work-destroying commands are blocked by a hook that checks the whole command line. It's a strong safety net, not a guarantee.
 

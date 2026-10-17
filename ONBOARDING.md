@@ -197,6 +197,18 @@ If they want it:
   - L: claude-opus-5-5
   - XL: claude-opus-5-5
   ```
+- Dev menu: **ask the human whether the game should have one, and how it is enabled; recommend in game.** The dev menu (`tools/dev_menu_base.gd`, with the game's seed `tools/dev_menu.gd`) has one tab per system with its actions and an inspector for its hidden values, and a Log tab with the play log's tail; it is how an assistant sees what the editor's Remote tree would show. Offer the ways to enable it (any combination):
+  - **In game** (recommended): F12 opens it, in debug builds only.
+  - **A setting:** `debug/dev_menu=true` under `[debug]` in `project.godot`, or a toggle in the game's own Settings (the seed's `setting_enabled()`), so it works in any build, release too.
+  - **A command-line flag:** the game started with `-- --dev-menu`, in any build.
+
+  Write the answer into AGENTS.md › Project rules, in this exact format (the ways joined with commas; `none` when the human doesn't want one), and tell the human what each means:
+  ```
+  Dev menu: in game (F12, debug builds only)
+  Dev menu: in game (F12, debug builds only), setting (debug/dev_menu), flag (-- --dev-menu)
+  Dev menu: none
+  ```
+  For any answer but `none`: with the editor closed, register the seed last under `[autoload]` in `project.godot`, `DevMenu="*res://tools/dev_menu.gd"`, set `enabled_by` in the seed's `_init` to the chosen ways (`MODE_IN_GAME`, `MODE_SETTING`, `MODE_FLAG`), and write `debug/dev_menu=false` under `[debug]` when the setting is chosen, so the human finds it. A new game registers each system from the seed's `_ready` as it adds it (`register_system("Run", RunState, ["next_day"])`, with the system's `debug_*` methods as actions and a `debug_inspect() -> Dictionary` for what only code can see). An existing game gets an item "Wire the dev menu: register its autoloads and systems, with their debug hooks". With `none`, leave the seed unregistered. A release export preset that excludes `tools/` keeps `tools/dev_menu_base.gd` and `tools/dev_menu.gd` when the answer includes the setting or the flag.
 - Reviews: by default after `L` and `XL` items, and after `M` items that change saves or a system's public methods.
 
 ## 8. Playtest template
