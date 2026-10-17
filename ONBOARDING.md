@@ -52,7 +52,7 @@ Run `bash "$GDIR/install.sh" --tools <claude|none> .` for a first install. For a
   6. Go to step 9.
 
 ## 3. Godot for this clone
-Run `bash tools/setup-clone.sh --skip-hook`, adding the Godot path if the human gave one. It finds Godot 4.3+ and saves the path in `tools/godot_bin.local`, which is gitignored and never committed. If it exits 3, ask the human where Godot is and rerun it with the path. On Windows, prefer the `*_console.exe` build.
+Run `bash tools/setup-clone.sh --skip-hook`, adding the Godot path if the human gave one. It finds Godot 4.5+ and saves the path in `tools/godot_bin.local`, which is gitignored and never committed. If it exits 3, ask the human where Godot is and rerun it with the path. On Windows, prefer the `*_console.exe` build.
 
 Then run `bash tools/check.sh` once and keep the result. An existing game often fails at first; that's information, not a blocker. The pre-commit hook is installed at the very end (step 9), so the install commit isn't blocked.
 
@@ -92,8 +92,12 @@ Every project has `design/director-gdd.md`: the human's own Game Design Document
    config/name="<game name>"
    config/features=PackedStringArray("<major.minor>")
 
+   [autoload]
+   PlayLog="*res://tools/play_log.gd"
+
    [debug]
    gdscript/warnings/untyped_declaration=2
+   settings/gdscript/always_track_call_stacks=true
 
    [rendering]
    renderer/rendering_method="forward_plus"
@@ -104,7 +108,7 @@ Every project has `design/director-gdd.md`: the human's own Game Design Document
    3. the core loop: moment to moment, session, run or campaign, and starting conditions;
    4. platforms, input, 2D or 3D, camera, art direction and target aspect ratios.
 3. **Record it.** Write the answers into the GDD as the current design, and add a line to `design/decisions.md` for each. Anything undecided becomes a `Q<n>`.
-4. **Seed TASKS.md,** each item with Size, `Touches` and tagged `Done when`: the folder layout, a first autoload for game state, a first rule class with a test, and the first playable grey-box scene set as the main scene.
+4. **Seed TASKS.md,** each item with Size, `Touches` and tagged `Done when`: the folder layout, a first autoload for game state, a first rule class with a test, and the first playable grey-box scene set as the main scene, with the play log wired into its run (`PlayLog.begin_run()`, and `log_snapshot()` where the player may act).
 
 ### Existing game
 1. **AGENTS.md › Architecture:** one row per autoload, per area of rule code, and per group of screens. Take "Owns" from the scripts' top comments and public methods, not from guesses.
@@ -147,7 +151,7 @@ Finally, search the documents for leftovers and fix them. Use `git grep -n -e �
 ## 6. Project facts and settings
 - **AGENTS.md:** name, pitch, Godot version, dimension, platforms and rendering. Fill in the Layout table from the real folders (delete rows that don't apply), and the Architecture table (from step 5).
 - **`tools/check.cfg`:** set `[screens] dirs` to the real UI folders, and `known` as in step 5. Use `allow_writes_to` only for an autoload a screen legitimately edits, such as Settings, and ask the human first. Put third-party folders in `[scan] skip`.
-- **`project.godot`:** it has `untyped_declaration` (step 5).
+- **`project.godot`:** it has `untyped_declaration` (step 5); `settings/gdscript/always_track_call_stacks=true` under `[debug]`, so the play log names the script line of an error in release builds too; and the `PlayLog` autoload first under `[autoload]`: `PlayLog="*res://tools/play_log.gd"` (the seed, which extends the framework's `tools/play_log_base.gd`). If the game already has its own `PlayLog`, or another play log, keep it registered as it is and leave the seed unregistered; add an item: "Migrate PlayLog to extend tools/play_log_base.gd, keeping its line formats" (`HH:MM:SS T<turn> [category] text`, so existing logs stay readable). For an existing or migrated game, also add an item to wire the play log: fill the seed's hooks, call `begin_run()` or `continue_run()`, `log_snapshot()` where the player may act, and log each player action from its system (`rules.md` › Everything is logged).
 - **Exports.** Offer the export step: the target platforms and where exports run (this machine, a build container, or a hosted service such as GitHub Actions). Follow `.godot-director/procedures/export.md` › Set up exports, in its voice: short rounds, options with a recommendation. Skip what the project already answers: an existing `export_presets.cfg` and the platforms in the GDD. The human can skip the step. A skip adds the open question and the "Set up exports" item that `export.md` › "When the human skips it" describes, so `/design Q<n>` runs the step later and `/next-task` builds the setup.
 - **Release.** Offer the release step once exports are set up: the command that uploads each preset's build to a platform's UAT branch or channel, the command for production, and the names of the CI secrets the commands need (values are never written in the repo or the chat). Follow `.godot-director/procedures/release.md` › Set up release, in its voice. The human can skip the step. A skip adds the open question and the "Set up release" item that `release.md` › "When the human skips it" describes.
 

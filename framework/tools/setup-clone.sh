@@ -5,7 +5,7 @@
 #   bash tools/setup-clone.sh --skip-hook [path to Godot]  only the Godot path
 #
 # Run it once in every new clone or worktree; running it again is harmless.
-# 1. Finds Godot 4.3+ (the given path, the saved one, $GODOT_BIN, PATH, then the usual install
+# 1. Finds Godot 4.5+ (the given path, the saved one, $GODOT_BIN, PATH, then the usual install
 #    folders) and saves it as the first line of tools/godot_bin.local (gitignored, per machine).
 # 2. Installs a small pre-commit hook in .git/hooks that runs the committed .githooks/pre-commit.
 #    Other hooks, such as Git LFS's, keep working; an existing pre-commit is never overwritten.
@@ -23,7 +23,7 @@ new_enough() { # new_enough <version>
   local major="${1%%.*}" rest="${1#*.}" minor
   minor="${rest%%.*}"
   case "$major$minor" in ''|*[!0-9]*) return 1 ;; esac
-  [ "$major" -gt 4 ] || { [ "$major" -eq 4 ] && [ "$minor" -ge 3 ]; }
+  [ "$major" -gt 4 ] || { [ "$major" -eq 4 ] && [ "$minor" -ge 5 ]; }
 }
 saved() {
   [ -f tools/godot_bin.local ] || return 0
@@ -57,12 +57,12 @@ while IFS= read -r candidate; do
   command -v "$candidate" >/dev/null 2>&1 || [ -x "$candidate" ] || continue
   found="$(version_of "$candidate")"
   if new_enough "$found"; then godot="$candidate"; version="$found"; break; fi
-  echo "setup: skipping $candidate (version '${found:-unknown}', need 4.3 or newer)"
+  echo "setup: skipping $candidate (version '${found:-unknown}', need 4.5 or newer)"
 done <<EOF
 $(candidates)
 EOF
 if [ -z "$godot" ]; then
-  echo "setup: no Godot 4.3 or newer found. Pass its path: bash tools/setup-clone.sh \"C:/Tools/Godot/Godot_v4.x_console.exe\""
+  echo "setup: no Godot 4.5 or newer found. Pass its path: bash tools/setup-clone.sh \"C:/Tools/Godot/Godot_v4.x_console.exe\""
   exit 3
 fi
 if [ "$(saved)" != "$godot" ]; then printf '%s\n' "$godot" > tools/godot_bin.local; fi

@@ -31,7 +31,7 @@ AI writes game code fast. Without structure, that speed goes wrong in familiar w
 
 ### Install
 
-Your game needs git (`git init` if it has none) and no uncommitted changes. You also need Godot 4.3 or newer, and bash (on Windows it comes with Git for Windows).
+Your game needs git (`git init` if it has none) and no uncommitted changes. You also need Godot 4.5 or newer, and bash (on Windows it comes with Git for Windows).
 
 **Option 1: the skill.** In your game's folder, run:
 
@@ -130,6 +130,7 @@ your-game/
 ├── tools/check.cfg             check settings: screen folders, folders to skip
 ├── tools/ui_screens.gd         the screen catalog: every screen, how to open it in a state, the overlays it shows
 ├── tools/ui_capture.cfg        capture sizes and seed, lint thresholds, which screens the check lints, verify tolerance
+├── tools/play_log.gd           the PlayLog autoload: what the play log's header, snapshots and progress line say for this game
 ├── design/ui/                  one spec per screen (and a gitignored captures/ folder); README.md says how to draw
 ├── director/ui/                your screen drawings (you create it; the agent only reads it)
 │
@@ -140,6 +141,7 @@ your-game/
 ├── .godot-director/research-domain.md  what the researcher adds for Godot: the docs and engine version, plugin and asset licences, export and store requirements
 ├── tools/check.sh, check.gd    the check;  tools/test_case.gd: base for tests in tests/
 ├── tools/ui_capture.sh, ui_*.gd  screen capture, element map, layout lint, drawing reader, compare and verify
+├── tools/play_log_base.gd      the play log: a .log and a .jsonl per run in user://logs/play/, engine errors, scrubbing
 ├── tools/setup-clone.sh        per clone: finds Godot, installs the pre-commit hook
 ├── tools/release.sh            runs the upload commands release.cfg names, per export preset
 ├── .githooks/pre-commit        runs the check before commits that touch code, scenes or data
@@ -159,6 +161,7 @@ The full rules are in `.godot-director/rules.md`, and the assistant reads them e
 - **Areas you own are never generated.** Onboarding asks who owns art, audio, scenes, tunables and text. Human-owned areas get a documented placeholder policy instead of generated content. `director/` is an optional protected workspace; the AI reads it for context but never creates, modifies or deletes anything inside it.
 - **Each fact lives in one place,** and is updated in the same change that makes it untrue.
 - **Rules live in systems, not screens.** They sit in plain classes that tests can build directly. Saves are JSON in `user://`, never Resources, which can run scripts when loaded.
+- **Everything is logged.** Every player action, turn step, view change and blocked progress button writes a line to the play log, a `.log` for you and a `.jsonl` for tools per run, and tests assert on those lines. The log ships in every build, never leaves the machine, and leaves out the user name, the home path and the install id.
 - **Done means the check passes,** and the work is committed only with your approval.
 - **Guarded git:** in Claude Code, force-push, `reset --hard`, `--no-verify` and other work-destroying commands are blocked by a hook that checks the whole command line. It's a strong safety net, not a guarantee.
 
@@ -182,7 +185,7 @@ The orchestrator and the builder are deliberately separate contexts. Each optimi
 ### The check
 `bash tools/check.sh` runs four steps:
 1. Godot's import pass;
-2. loads every script, scene and resource, checks screen scripts for game rules, and runs `tests/**/test_*.gd`;
+2. loads every script, scene and resource (views that only load when opened too), checks screen scripts for game rules, and runs `tests/**/test_*.gd`;
 3. scans Godot's output for errors;
 4. runs `tools/check.local.sh`, if the game has one.
 

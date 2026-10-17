@@ -21,6 +21,7 @@
 /tools/ui_overlay.gd
 /tools/ui_drawing.gd
 /tools/ui_verify.gd
+/tools/play_log_base.gd
 /playtesting/README.md
 
 # Godot Director

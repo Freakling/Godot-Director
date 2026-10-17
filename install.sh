@@ -281,7 +281,7 @@ ensure_lines "$dest/.gitignore" ".godot/" "/tools/godot_bin.local" "/.claude/set
 # LF everywhere Godot Director writes: bash can't run CRLF scripts, and upgrades compare contents.
 ensure_lines "$dest/.gitattributes" "*.sh text eol=lf" "/.githooks/** text eol=lf" "/.godot-director/** text eol=lf" \
   "/.claude/** text eol=lf" "/tools/check.gd text eol=lf" "/tools/test_case.gd text eol=lf" "/tools/ui_*.gd text eol=lf" \
-  "/playtesting/README.md text eol=lf"
+  "/tools/play_log_base.gd text eol=lf" "/playtesting/README.md text eol=lf"
 
 # --- report ---------------------------------------------------------------------------------------
 if [ -z "$old_version" ]; then action="installed $version"

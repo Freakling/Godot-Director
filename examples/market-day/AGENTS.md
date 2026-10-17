@@ -5,7 +5,7 @@ A five-day grain market in one screen. Each day the price moves; buy low, sell h
 Instructions for AI assistants working on this game. The workflow is Godot Director: its rules are in `.godot-director/rules.md`, which names the procedure for each kind of request. Read it before any work, unless your tool has already loaded it (Claude Code imports it: @.godot-director/rules.md).
 
 ## Project facts
-- Godot 4.3+ · GDScript · 2D (UI only) · desktop
+- Godot 4.5+ · GDScript · 2D (UI only) · desktop
 - Rendering and window: Compatibility renderer, 640×360, stretch mode `canvas_items`
 
 ## Layout
@@ -28,6 +28,7 @@ One row per system: what it owns and where its boundary is. Screens depend on sy
 | `RunState` (autoload) | the current run: day, gold, grain; applies trades | `scripts/autoload/run_state.gd` | uses `Market`; emits `changed` |
 | `Market` | price per day, whether a trade is allowed, end and win conditions | `scripts/systems/market.gd` | reads `MarketConfig` |
 | `MarketConfig` | tunable market values | `scripts/resources/market_config.gd`, `data/market_config.tres` | (none) |
+| `PlayLog` (autoload) | the play log: a `.log` and a `.jsonl` per run in `user://logs/play/`, the snapshot of each day, what blocks Next Day | `tools/play_log.gd` (extends the framework's `tools/play_log_base.gd`) | reads `RunState`; `RunState` and the shop screen log to it |
 | Shop screen | shows the run; buttons call `RunState` | `scenes/shop_screen.tscn`, `scripts/ui/shop_screen.gd` | reads `RunState`, listens to `changed` |
 
 ## Ownership

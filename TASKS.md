@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T15 · B3 · R1
+**Next IDs:** T16 · B3 · R1
 
 ## Queue
+
+### T15 · The play log base and the logging rules · done · L · agent
+- Touches: framework/tools/play_log_base.gd (new), project/tools/play_log.gd (new), framework/.godot-director/rules.md, framework/tools/check.sh, framework/tools/check.gd, framework/tools/setup-clone.sh, framework/tools/ui_capture.sh, framework/.godot-director/procedures/ui-design.md, framework/.godot-director/templates/release-workflow.yml, install.sh, examples/market-day/project.godot, examples/market-day/AGENTS.md, examples/market-day/.gitignore, examples/market-day/.gitattributes, examples/market-day/tools/play_log.gd (new), examples/market-day/scripts/autoload/run_state.gd, examples/market-day/scripts/ui/shop_screen.gd, examples/market-day/tests/test_play_log.gd (new), tests/play-log/selftest_play_log.gd (new), skills/godot-director/SKILL.md, README.md, ONBOARDING.md, PRIVACY.md, CLAUDE.md, selftest.sh, CHANGELOG.md
+- Done when: the play log base writes the per-run text log and its JSONL twin with stable event ids, the session header, startup buffering, flush per line, the engine Logger, the tail, `start_capture()` for tests and scrubbing, writes nothing under the check, and has the project hooks `_session_extras()`, `_build_snapshot()`, `log_snapshot()` and `progress_block_reason()` (check) · `rules.md` has the logging, drivability, agent-visible state, seeded randomness and privacy rules (check) · the minimum Godot is 4.5 everywhere it's stated and checked, and the selftest proves the check fails on a compile error in a view that only loads when it opens (check)
+- GDD: (none)
+- Source: Director-Driven-Development T127
 
 ### T13 · The human-written GDD · done · S · agent
 - Touches: project/design/director-gdd.md (new), examples/market-day/design/director-gdd.md (new), ONBOARDING.md, README.md, selftest.sh, CHANGELOG.md

@@ -3,7 +3,7 @@
 # and tests the installer, the project check, the per-clone setup, the Claude Code hooks and the
 # pre-commit hook. Run it after every change to the framework.
 #
-#   bash selftest.sh [path to Godot 4.3+]      (or set GODOT_BIN)
+#   bash selftest.sh [path to Godot 4.5+]      (or set GODOT_BIN)
 #
 # Without Godot, only the parts that don't need it are tested. KEEP=1 keeps the temporary folder.
 
@@ -259,6 +259,47 @@ grep -q '(`/ui-design`)' "$src/README.md" && grep -q 'tools/ui_screens\.gd' "$sr
 grep -q 'verify <screen>' "$src/framework/.claude/skills/ui-design/SKILL.md" || wired="$wired skills/ui-design(verify)"
 [ -z "$wired" ] && ok "ui-design verify, the build, review, function check and align hooks, the lint in the check and overlays are wired in" \
   || bad "ui-design verify and the hooks aren't wired into:$wired"
+# The play log: the framework's base, the game's seed (hooks marked PLACEHOLDER), the example's wiring,
+# the five rules, onboarding's autoload line and the installer's lines.
+wired=""
+for file in framework/tools/play_log_base.gd project/tools/play_log.gd examples/market-day/tools/play_log.gd \
+    examples/market-day/tests/test_play_log.gd tests/play-log/selftest_play_log.gd; do
+  [ -f "$src/$file" ] || wired="$wired $file"
+done
+grep -q '^extends "res://tools/play_log_base\.gd"$' "$src/project/tools/play_log.gd" \
+  && [ "$(grep -c '## PLACEHOLDER' "$src/project/tools/play_log.gd")" -ge 3 ] || wired="$wired play_log.gd seed"
+for hook in '_session_extras() -> Dictionary' '_build_snapshot() -> Dictionary' 'progress_block_reason() -> String' \
+    'log_snapshot() -> void' 'start_capture() -> void' 'begin_run() -> String' 'continue_run(id: String) -> void'; do
+  grep -qF "func $hook" "$src/framework/tools/play_log_base.gd" || wired="$wired base($hook)"
+done
+grep -q 'OS\.add_logger' "$src/framework/tools/play_log_base.gd" && grep -q 'extends Logger' "$src/framework/tools/play_log_base.gd" || wired="$wired base(Logger)"
+grep -q '^PlayLog="\*res://tools/play_log\.gd"$' "$src/examples/market-day/project.godot" \
+  && grep -q '^settings/gdscript/always_track_call_stacks=true$' "$src/examples/market-day/project.godot" || wired="$wired example project.godot"
+grep -q '^   settings/gdscript/always_track_call_stacks=true$' "$src/ONBOARDING.md" || wired="$wired ONBOARDING.md(call stacks)"
+grep -q '^func _install_id() -> String:$' "$src/project/tools/play_log.gd" || wired="$wired play_log.gd seed(_install_id)"
+grep -q 'PlayLog="\*res://tools/play_log\.gd"' "$src/ONBOARDING.md" && grep -q 'Migrate PlayLog to extend tools/play_log_base\.gd' "$src/ONBOARDING.md" || wired="$wired ONBOARDING.md"
+grep -q '"/tools/play_log_base\.gd text eol=lf"' "$src/install.sh" && grep -q '^/tools/play_log_base\.gd$' "$src/examples/market-day/.gitignore" \
+  && grep -q '^/tools/play_log_base\.gd text eol=lf$' "$src/examples/market-day/.gitattributes" || wired="$wired installer lines"
+for rule in 'Everything is logged' 'Every action is drivable' 'Agent-visible state' 'Seeded randomness' 'Privacy'; do
+  grep -q "^- \*\*$rule\.\*\*" "$proc/rules.md" || wired="$wired rules.md($rule)"
+done
+grep -q "use the editor's Remote scene tree instead" "$proc/rules.md" && wired="$wired rules.md(the Remote tree sentence is still there)"
+grep -q 'start_capture()' "$proc/rules.md" && grep -q 'dev menu' "$proc/rules.md" || wired="$wired rules.md(start_capture, dev menu)"
+grep -q 'tools/play_log_base\.gd' "$src/README.md" && grep -q 'tools/play_log\.gd' "$src/README.md" || wired="$wired README.md"
+[ -z "$wired" ] && ok "the play log is wired in: base, seed, example, the five rules, onboarding and the installer's lines" \
+  || bad "the play log isn't wired into:$wired"
+# The minimum Godot is 4.5 (the engine Logger) everywhere it's stated and checked.
+stale="$(cd "$src" && grep -nE '4\.3([^0-9]|$)|-lt [0-4] \]; \}|-ge [0-4] \]; \}' README.md ONBOARDING.md CLAUDE.md \
+  skills/godot-director/SKILL.md selftest.sh framework/tools/check.sh framework/tools/setup-clone.sh framework/tools/ui_capture.sh \
+  framework/.godot-director/procedures/ui-design.md examples/market-day/AGENTS.md)"
+if [ -z "$stale" ] && grep -q 'Godot 4\.5 or newer' "$src/README.md" && grep -q "compatibility: 'Godot 4\.5 or newer" "$installer" \
+    && grep -q 'Godot 4\.5+' "$src/ONBOARDING.md" && grep -q '"4\.5"' "$src/examples/market-day/project.godot" \
+    && grep -q '\[ "\$minor" -lt 5 \]' "$src/framework/tools/check.sh" && grep -q '\[ "\$minor" -lt 5 \]' "$src/framework/tools/ui_capture.sh" \
+    && grep -q '\[ "\$minor" -ge 5 \]' "$src/framework/tools/setup-clone.sh"; then
+  ok "the minimum Godot is 4.5 everywhere it's stated and checked"
+else
+  bad "the minimum Godot is 4.5 everywhere it's stated and checked" "$stale"
+fi
 # The old name (Claude4Godot, 2.x and earlier) is left only in history and in the 2.x migration.
 allowed=" CHANGELOG.md install.sh selftest.sh ONBOARDING.md framework/tools/check.gd framework/tools/check.sh framework/tools/setup-clone.sh "
 leftovers=""
@@ -316,6 +357,11 @@ if [ -x tools/ui_capture.sh ] && [ -f tools/ui_capture.gd ] && [ -f tools/ui_lin
   ok "installs /ui-design: procedure, skill, capture tools and the captures gitignore line, keeping the game's catalog"
 else
   bad "installs /ui-design: procedure, skill, capture tools and the captures gitignore line, keeping the game's catalog" "$out"
+fi
+if [ -f tools/play_log_base.gd ] && cut -f2 .godot-director/manifest | grep -q '^tools/play_log_base\.gd$' && grep -q 'RunState' tools/play_log.gd; then
+  ok "installs the play log base, keeping the game's own PlayLog"
+else
+  bad "installs the play log base, keeping the game's own PlayLog" "$out"
 fi
 grep -q "Market Day" AGENTS.md && ok "keeps the project's own files" || bad "keeps the project's own files"
 [ -z "$(git status --porcelain)" ] && ok "adds no duplicate .gitignore/.gitattributes lines" || bad "adds no duplicate lines" "$(git status --porcelain)"
@@ -460,6 +506,11 @@ if [ -f "$core_only/.godot-director/procedures/research.md" ] && [ -f "$core_onl
 else
   bad "a new game gets the research procedure and domain file, the note folder, the screen catalog and capture settings, and an R counter in TASKS.md" "$out"
 fi
+if [ -f "$core_only/tools/play_log_base.gd" ] && cmp -s "$core_only/tools/play_log.gd" "$src/project/tools/play_log.gd"; then
+  ok "a new game gets the play log base and the PlayLog seed, even with --tools none"
+else
+  bad "a new game gets the play log base and the PlayLog seed, even with --tools none" "$out"
+fi
 if [ -f "$core_only/design/director-gdd.md" ] && grep -q '^# Game Design Document (GDD): ' "$core_only/design/director-gdd.md"; then
   ok "a new game gets the human-written GDD template, even with --tools none"
 else
@@ -546,13 +597,20 @@ got=$?
 if [ "$got" -eq 2 ]; then ok "blocks a relative path against the current directory when CLAUDE_PROJECT_DIR is unset"; else bad "guard-protected without CLAUDE_PROJECT_DIR exit $got, expected 2" "$out"; fi
 
 if [ -z "$godot" ]; then
-  echo "check and hooks: skipped (pass the path to Godot 4.3+ to test them)"
+  echo "check and hooks: skipped (pass the path to Godot 4.5+ to test them)"
   finish
 fi
 
 # --- per-clone setup ----------------------------------------------------------------------------
 echo "setup-clone"
 out="$(GODOT_BIN=/nonexistent/godot bash tools/check.sh 2>&1)"; expect_status "the check exits 3 without Godot" 3 $? "$out"
+# A Godot older than the minimum, 4.5: a stand-in that only prints its version.
+printf '#!/usr/bin/env bash\necho 4.4.1.stable.official.49a5bc7b6\n' > "$work/godot-4.4" && chmod +x "$work/godot-4.4"
+out="$(GODOT_BIN="$work/godot-4.4" bash tools/check.sh 2>&1)"; expect_status "the check exits 3 with Godot 4.4" 3 $? "$out"
+expect_output "and says it needs Godot 4.5 or newer" "needs Godot 4\.5 or newer" "$out"
+out="$(GODOT_BIN="$work/godot-4.4" bash tools/ui_capture.sh --list 2>&1)"; expect_status "capture exits 3 with Godot 4.4" 3 $? "$out"
+out="$(bash tools/setup-clone.sh --skip-hook "$work/godot-4.4" 2>&1)"; expect_status "setup-clone refuses Godot 4.4" 3 $? "$out"
+expect_output "and says it needs 4.5 or newer" "need 4\.5 or newer" "$out"
 out="$(bash tools/setup-clone.sh "$godot" 2>&1)"; expect_status "setup-clone succeeds" 0 $? "$out"
 grep -qs "Godot Director" "$(git rev-parse --git-path hooks)/pre-commit" && ok "installs the pre-commit hook" || bad "installs the pre-commit hook" "$out"
 [ -z "$(git config --get core.hooksPath)" ] && ok "leaves core.hooksPath alone (Git LFS keeps working)" || bad "leaves core.hooksPath alone"
@@ -563,7 +621,7 @@ printf '\357\273\277%s  \r\n' "$godot" > tools/godot_bin.local
 echo "check"
 out="$(bash tools/check.sh 2>&1)"; status=$?
 expect_status "passes on a fresh clone of the example (Godot path with BOM and spaces)" 0 "$status" "$out"
-expect_output "runs the example's tests" "6 tests passed" "$out"
+expect_output "runs the example's tests" "10 tests passed" "$out"
 expect_output "scans the screen scripts" "1 screen script scanned" "$out"
 expect_no_output "reports no missing hook" "no Godot Director pre-commit hook" "$out"
 out="$(bash tools/check.sh --if-changed 2>&1)"; expect_output "--if-changed reuses the last pass" "nothing changed since the last passing run" "$out"
@@ -583,6 +641,13 @@ fault "a screen assigning to an autoload" scripts/ui/shop_screen.gd "$(printf '\
 fault "a failing test" tests/test_market.gd "$(printf '\nfunc test_selftest_failure() -> void:\n\texpect_eq(1, 2)')" 'expected 2, got 1'
 fault "an async test" tests/test_market.gd "$(printf '\nfunc test_selftest_async() -> void:\n\tawait Engine.get_main_loop().process_frame\n\texpect(true)')" 'must be synchronous'
 fault "a runtime error in a test" tests/test_market.gd "$(printf '\nfunc test_selftest_crash() -> void:\n\tvar node: Node = null\n\tnode.get_name()')" 'SCRIPT ERROR'
+# A view the game only loads when it opens (nothing references it) with a compile error: the check
+# loads every script and scene, so it fails anyway.
+printf 'extends Control\n\nfunc _on_open() -> void:\n\tvar count: int = "three"\n\tprint(count)\n' > scripts/ui/lazy_view.gd
+printf '[gd_scene load_steps=2 format=3]\n\n[ext_resource type="Script" path="res://scripts/ui/lazy_view.gd" id="1"]\n\n[node name="LazyView" type="Control"]\nscript = ExtResource("1")\n' > scenes/lazy_view.tscn
+out="$(bash tools/check.sh 2>&1)"; expect_status "fails on a compile error in a view that only loads when it opens" 1 $? "$out"
+expect_output "names the view's line" 'lazy_view\.gd:4' "$out"
+rm -f scripts/ui/lazy_view.gd scripts/ui/lazy_view.gd.uid scenes/lazy_view.tscn
 cp data/market_config.tres "$work/saved"
 sed 's|scripts/resources/market_config\.gd|scripts/resources/renamed.gd|' "$work/saved" > data/market_config.tres
 out="$(bash tools/check.sh 2>&1)"; expect_status "fails on a resource whose script was renamed" 1 $? "$out"
@@ -614,10 +679,42 @@ cp "$work/saved-state" scripts/autoload/run_state.gd; cp "$work/saved-screen" sc
 printf 'extends "res://tools/test_case.gd"\n\nfunc test_check_meta() -> void:\n\texpect(Engine.has_meta("godot_director_check"))\n\texpect(Engine.has_meta("claude4godot_check"))\n\nfunc test_ignore_markers() -> void:\n\tprint("GDIR-IGNORE:selftest expected error one")\n\tpush_error("selftest expected error one")\n\tprint("C4G-IGNORE:selftest expected error two")\n\tpush_error("selftest expected error two")\n' > tests/test_selftest_meta.gd
 out="$(bash tools/check.sh 2>&1)"; status=$?
 expect_status "accepts expected errors marked GDIR-IGNORE, or C4G-IGNORE as in 2.x" 0 "$status" "$out"
-expect_output "sets the check meta under the new and the deprecated 2.x name" "8 tests passed" "$out"
+expect_output "sets the check meta under the new and the deprecated 2.x name" "12 tests passed" "$out"
 rm -f tests/test_selftest_meta.gd tests/test_selftest_meta.gd.uid
 
 out="$(bash tools/check.sh 2>&1)"; expect_status "passes again after the faults are removed" 0 $? "$out"
+
+# --- play log -----------------------------------------------------------------------------------
+# The example's PlayLog runs under the check and writes nothing; tests/play-log/selftest_play_log.gd
+# runs the base outside the check, into a folder of its own, and checks the files it writes.
+echo "play log"
+# The example's real user:// folder.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) user_data="$(cygpath -u "$APPDATA")/Godot/app_userdata/Market Day" ;;
+  Darwin) user_data="$HOME/Library/Application Support/Godot/app_userdata/Market Day" ;;
+  *) user_data="${XDG_DATA_HOME:-$HOME/.local/share}/godot/app_userdata/Market Day" ;;
+esac
+mkdir -p "$user_data" && : > "$work/before-play-log" && sleep 1
+rm -f .godot/godot-director/last-pass
+out="$(bash tools/check.sh 2>&1)"; expect_status "the check passes with the example's PlayLog" 0 $? "$out"
+cp "$src/tests/play-log/selftest_play_log.gd" tools/selftest_play_log.gd
+play_dir="$work/play-log"; mkdir -p "$play_dir"
+command -v cygpath >/dev/null 2>&1 && play_dir="$(cygpath -m "$play_dir")"
+out="$("$godot" --headless --path . --script tools/selftest_play_log.gd -- "$play_dir" 2>&1 | tr -d '\r')"
+while IFS= read -r line; do
+  case "$line" in
+    "PASS "*) ok "${line#PASS }" ;;
+    "FAIL "*) bad "${line#FAIL }" ;;
+  esac
+done <<EOF
+$out
+EOF
+printf '%s\n' "$out" | grep -q '^DONE$' && ok "the play log's own test ran to the end" || bad "the play log's own test ran to the end" "$out"
+# Godot's own logs/godot*.log may appear there; a play log is run-*.log and run-*.jsonl.
+[ -z "$(/usr/bin/find "$user_data" -type f -name 'run-*' -newer "$work/before-play-log" 2>/dev/null)" ] \
+  && ok "neither the check nor a tool script writes a play log in the game's user://" \
+  || bad "neither the check nor a tool script writes a play log in the game's user://" "$(/usr/bin/find "$user_data" -type f -name 'run-*' -newer "$work/before-play-log")"
+rm -f tools/selftest_play_log.gd tools/selftest_play_log.gd.uid
 
 # --- Stop hook ----------------------------------------------------------------------------------
 echo "stop hook"
@@ -1275,11 +1372,6 @@ expect_output "the starter is valid Excalidraw, and saved unchanged it reads bac
 rm -rf drawing_fixtures
 
 # The example's screens with a display: every state and size, nothing in user://, repeatable.
-case "$(uname -s)" in
-  MINGW*|MSYS*|CYGWIN*) user_data="$(cygpath -u "$APPDATA")/Godot/app_userdata/Market Day" ;;
-  Darwin) user_data="$HOME/Library/Application Support/Godot/app_userdata/Market Day" ;;
-  *) user_data="${XDG_DATA_HOME:-$HOME/.local/share}/godot/app_userdata/Market Day" ;;
-esac
 mkdir -p "$user_data" && : > "$work/before-capture" && sleep 1
 out="$(bash tools/ui_capture.sh --all 2>&1)"; status=$?
 if [ "$status" -eq 3 ]; then

@@ -5,7 +5,7 @@
 #   bash tools/check.sh                 run the check
 #   bash tools/check.sh --if-changed    repeat the last result at once if these exact files were checked
 #   bash tools/check.sh --fingerprint   print the fingerprint of the current files (for hooks)
-# Exit codes: 0 = pass · 1 = fail · 3 = couldn't run (Godot missing or older than 4.3)
+# Exit codes: 0 = pass · 1 = fail · 3 = couldn't run (Godot missing or older than 4.5)
 #
 # Steps:
 #   1. an import pass (so a fresh clone gets its import cache and class list, and new assets and
@@ -79,8 +79,8 @@ if [ -z "$major" ] || [ -z "$minor" ]; then
   echo "check: couldn't read a version from '$godot' (on Windows, use the *_console.exe build)."
   exit 3
 fi
-if [ "$major" -lt 4 ] || { [ "$major" -eq 4 ] && [ "$minor" -lt 3 ]; }; then
-  echo "check: needs Godot 4.3 or newer; '$godot' is $version."
+if [ "$major" -lt 4 ] || { [ "$major" -eq 4 ] && [ "$minor" -lt 5 ]; }; then
+  echo "check: needs Godot 4.5 or newer; '$godot' is $version."
   exit 3
 fi
 if [ ! -f project.godot ]; then
