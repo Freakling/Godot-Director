@@ -6,6 +6,8 @@ extends "res://tools/autoplay_catalog.gd"
 ## scenario format and the thresholds (softlock_actions, step_seconds, orphan_turns...) are in
 ## tools/autoplay_catalog.gd; set a threshold in _init() to change it. Any item that touches the
 ## shell, a view, the turn loop or a save adds or updates a scenario step that walks the change.
+## A `weights` entry of 0 means never pick that action; when every candidate is at 0 the step picks
+## nothing (smoke then plays the progress action, a strategy ends).
 ##
 ## Examples:
 ##	{"id": "first_hire", "title": "Hire, then end five turns", "kind": "scripted", "actions": [

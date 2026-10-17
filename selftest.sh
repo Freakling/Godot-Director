@@ -1947,10 +1947,84 @@ cp "$work/saved-play-log" tools/play_log.gd
 # Planted bug 3: a view with no default focus.
 sed '/_buy.grab_focus()/d' "$work/saved-shop" > scripts/ui/shop_screen.gd
 out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "planted missing focus: the run fails" 1 $? "$out"
-expect_output "it's found when the view opens" "FAIL: smoke step 0: no-focus: the view shop has no focused control, so a keyboard or controller player can't act · element map .*/0000-no-focus\.elements\.json · repro " "$out"
+expect_output "it's found when the view opens" "FAIL: smoke step 0: no-focus: the view shop has no focused control under ShopScreen \(so a keyboard or controller player can't act\) · element map .*/0000-no-focus\.elements\.json · repro " "$out"
 run="$(latest_run smoke-1)"
 out="$(bash tools/autoplay.sh --replay "$run" --until 0 --no-images 2>&1)"; expect_output "--replay reproduces it at the same step" "FAIL: smoke step 0: no-focus: the view shop " "$out"
 cp "$work/saved-shop" scripts/ui/shop_screen.gd
+# Where a view keeps its focus: the adapter's focus_roots(). The shop has no default focus here, and
+# the planted adapter adds a HUD layer outside the view node whose stand-in button holds the window's
+# focus (and, for _make_page(), a SubViewport page under the view whose own button has the page's, the
+# only control in the view that takes focus).
+cat > "$work/focus-helpers.gd" <<'GDEOF'
+
+
+var _hud: CanvasLayer = null
+var _page: SubViewport = null
+
+
+func _make_hud() -> void:
+	_hud = CanvasLayer.new()
+	_hud.name = "HUD"
+	tree.root.add_child(_hud)
+	var stand_in: Button = Button.new()
+	stand_in.name = "StandIn"
+	_hud.add_child(stand_in)
+	stand_in.grab_focus()
+
+
+func _make_page() -> void:
+	_make_hud()
+	# The shop's own buttons take no focus (a click leaves the focus where it is), as on a sheet view.
+	for button: Node in tree.current_scene.find_children("*", "Button", true, false):
+		(button as Button).focus_mode = Control.FOCUS_NONE
+	_page = SubViewport.new()
+	_page.name = "Page"
+	tree.current_scene.add_child(_page)
+	var control: Button = Button.new()
+	control.name = "PageButton"
+	_page.add_child(control)
+	control.grab_focus()
+GDEOF
+focus_adapter() { # focus_adapter <lines run after start_run> [<body of focus_roots()>]
+  replace_line "$work/saved-adapter" '\tawait wait_frames(1)' "\tawait wait_frames(1)\n\t$1" > tools/autoplay_adapter.gd
+  cat "$work/focus-helpers.gd" >> tools/autoplay_adapter.gd
+  if [ -n "${2:-}" ]; then printf '\n\nfunc focus_roots() -> Array[Node]:\n\t%s\n' "$2" >> tools/autoplay_adapter.gd; fi
+}
+sed '/_buy.grab_focus()/d' "$work/saved-shop" > scripts/ui/shop_screen.gd
+focus_adapter '_make_hud()'
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "a focused control outside the view node, with the default hook, fails the run" 1 $? "$out"
+expect_output "the no-focus finding names the view and the root it looked under" "FAIL: smoke step 0: no-focus: the view shop has no focused control under ShopScreen \(so a keyboard or controller player can't act\) · " "$out"
+focus_adapter '_make_hud()' 'return [view_node() as Node, _hud]'
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "focus_roots() with the view and the HUD: the focus under the HUD counts" 0 $? "$out"
+expect_no_output "and there is no no-focus finding" "no-focus" "$out"
+focus_adapter '_make_hud()\n\ttree.root.gui_release_focus()' 'return [view_node() as Node, _hud]'
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"
+expect_output "the finding names every root when the focus is under none" "FAIL: smoke step 0: no-focus: the view shop has no focused control under ShopScreen, HUD \(so a keyboard or controller player can't act\)" "$out"
+focus_adapter '_make_page()'
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"
+expect_output "a SubViewport page and a stand-in outside the roots: the default hook finds no focus" "FAIL: smoke step 0: no-focus: the view shop has no focused control under ShopScreen " "$out"
+focus_adapter '_make_page()' 'return [_page, _hud]'
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "the page and the stand-in's HUD as roots: no finding" 0 $? "$out"
+expect_no_output "the window's focus on the stand-in satisfies the check" "no-focus" "$out"
+focus_adapter '_make_page()' 'return [_page]'
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "a SubViewport root alone: its own focus owner counts" 0 $? "$out"
+expect_no_output "so the page's focused control satisfies the check" "no-focus" "$out"
+replace_line "$work/saved-adapter" '\tawait wait_frames(1)' '\tawait wait_frames(1)' > tools/autoplay_adapter.gd
+printf '\n\nfunc focus_roots() -> Array[Node]:\n\treturn []\n' >> tools/autoplay_adapter.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "an empty focus_roots() skips the check, though the shop has no default focus" 0 $? "$out"
+expect_no_output "and says nothing about focus" "no-focus" "$out"
+cp "$work/saved-adapter" tools/autoplay_adapter.gd; cp "$work/saved-shop" scripts/ui/shop_screen.gd
+# Every candidate at weight 0: the step picks nothing and smoke plays its turns with the progress action.
+cp tools/autoplay_scenarios.gd "$work/saved-scenarios-w"
+sed 's/"kind": "smoke", "turns": 3}/"kind": "smoke", "turns": 3, "weights": {"buy": 0, "sell": 0}}/' "$work/saved-scenarios-w" > tools/autoplay_scenarios.gd
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "smoke with every candidate at weight 0 still plays its turns" 0 $? "$out"
+run="$(latest_run smoke-1)"
+if [ "$(grep -c '"text":"step [0-9]*: Next day' "$run"/run-*.jsonl)" -ge 3 ] && ! grep -q '"text":"step [0-9]*: \(Buy\|Sell\) grain' "$run"/run-*.jsonl; then
+  ok "the step picks nothing, and smoke carries on to the progress action"
+else
+  bad "weight 0 picks nothing" "$(grep -o '"text":"step [^"]*"' "$run"/run-*.jsonl | head -n 8)"
+fi
+cp "$work/saved-scenarios-w" tools/autoplay_scenarios.gd
 # The other invariants: a freed view the shell still holds, the game's own invariant, a warning (a
 # note, not a failure), orphan nodes growing every turn, and an empty action list.
 cp tools/autoplay_invariants.gd "$work/saved-invariants"

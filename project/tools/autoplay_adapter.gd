@@ -27,6 +27,17 @@ func load_save(_path: String) -> bool:
 	return false
 
 
+## The nodes under which the current view's focusable controls and its focus owner live, for the
+## no-focus check. The base returns the view node itself, which is right for a shell that keeps each
+## view's UI under the view node: nothing to fill in. A shell that keeps a view's flat UI elsewhere (a
+## HUD layer, a ui_root it hands each view) returns those nodes too, such as
+## `[view_node() as Node, hud_node]`; a view that draws its page in a SubViewport and keeps the
+## window's focus on a stand-in control adds the SubViewport and the stand-in's parent. An empty list
+## skips the check, for a screen that is mouse-only by design.
+func focus_roots() -> Array[Node]:
+	return super()
+
+
 ## PLACEHOLDER: write the current run to path through the game's save API, so a repro carries the
 ## state before the step that failed. Return false while the game has no saves.
 func save_run(_path: String) -> bool:

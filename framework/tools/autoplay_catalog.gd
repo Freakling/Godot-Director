@@ -27,7 +27,8 @@ extends RefCounted
 ##             action whenever it's offered and nothing blocks it, else a random one)
 ##   steps     int, default default_steps
 ##   weights   Dictionary of action id to weight, for random and end_turn (default: the action's
-##             own `weight`, else 1.0)
+##             own `weight`, else 1.0); 0 means never; when every candidate is at 0 the step
+##             picks nothing (smoke then plays the progress action, a strategy ends)
 ##   score     Callable(action: Dictionary, state: Dictionary) -> float, required for greedy; ties
 ##             go to the action listed first
 ## --steps N caps every scenario at N actions.

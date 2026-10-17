@@ -26,6 +26,11 @@ extends RefCounted
 ##   weight    float: how often the random strategy picks it (default 1.0; a scenario may override)
 ## A ui action may also carry the api fields; perform() is only called for kind "api".
 ##
+## Hooks beyond the actions: view_node() is the node the shell holds as the current view (the
+## freed-view check), and focus_roots() the nodes under which that view's focusable controls and its
+## focus owner live (the no-focus check): the view node by default, more for a shell that keeps a
+## view's flat UI elsewhere, none for a screen that is mouse-only by design.
+##
 ## Randomness: the game's run owns one seeded RandomNumberGenerator (rules.md › Seeded randomness).
 ## start_run(run_seed) passes the seed to it, so the same seed plays the same run.
 
@@ -99,6 +104,21 @@ func current_view() -> String:
 ## purpose: a typed return would stop on a freed node instead of reporting it.
 func view_node() -> Variant:
 	return tree.current_scene if tree != null else null
+
+
+## The nodes under which the current view's focusable controls and its focus owner live, for the
+## no-focus invariant: the view node itself by default. A shell that keeps a view's flat UI
+## elsewhere (a HUD layer, a ui_root it hands each view) returns those nodes too, and a view that
+## draws its page in a SubViewport and keeps the window's focus on a stand-in control returns the
+## SubViewport and the stand-in's parent as well (a SubViewport root counts its own focus owner).
+## An empty list means "no rule" for that step: the check is skipped, for a screen that is
+## mouse-only by design. Never used for the freed-view check: view_node() stays what the shell holds.
+func focus_roots() -> Array[Node]:
+	var held: Variant = view_node()
+	var roots: Array[Node] = []
+	if typeof(held) == TYPE_OBJECT and is_instance_valid(held):
+		roots.append(held as Node)
+	return roots
 
 
 # --- helpers ------------------------------------------------------------------------------------

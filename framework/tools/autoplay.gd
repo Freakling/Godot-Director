@@ -28,9 +28,10 @@ extends SceneTree
 ## The framework's invariants, checked after every step: no engine or script error (from the play
 ## log's Logger); progress isn't blocked across softlock_actions actions while nothing offered
 ## unblocks it (softlock); list_actions() isn't empty before the run is over (no-actions); the view
-## the shell holds isn't freed (freed-view); the current view has a focused control when it has any
-## focusable one (no-focus); the orphan-node count doesn't grow every turn for orphan_turns turns
-## (orphans, debug builds); no step takes longer than step_seconds (slow). Then each line
+## the shell holds isn't freed (freed-view); a control under the adapter's focus_roots() (the view
+## node by default) has the focus when any of them holds a focusable one (no-focus; no roots, no
+## check); the orphan-node count doesn't grow every turn for orphan_turns turns (orphans, debug
+## builds); no step takes longer than step_seconds (slow). Then each line
 ## tools/autoplay_invariants.gd's check(state, adapter) returns (invariant). Warnings are reported as
 ## notes and don't fail the run. Thresholds: tools/autoplay_catalog.gd.
 ##
@@ -576,17 +577,22 @@ func _play_smoke() -> void:
 	var weights: Dictionary = _entry.get("weights", {})
 	while played < turns and not _stopped() and not _run_over():
 		var before: int = _turns
+		var steps_before: int = _step
 		for _index: int in per_turn:
 			var others: Array[Dictionary] = _others()
 			if others.is_empty() or _stopped() or _run_over():
 				break
-			await _do(_pick(others, weights))
+			# Every weight 0 picks nothing: move on to the progress action.
+			var picked: Dictionary = _pick(others, weights)
+			if picked.is_empty():
+				break
+			await _do(picked)
 		if _stopped() or _run_over():
 			break
 		var progress: Dictionary = _progress_action()
 		if not progress.is_empty():
 			await _do(progress)
-		elif _others().is_empty():
+		elif _others().is_empty() or _step == steps_before:
 			break
 		if _turns > before:
 			played += 1
@@ -714,7 +720,7 @@ func _pick(candidates: Array[Dictionary], weights: Dictionary) -> Dictionary:
 		each.append(weight)
 		total += weight
 	if total <= 0.0:
-		return candidates[0]
+		return {}
 	var roll: float = _rng.randf() * total
 	for index: int in candidates.size():
 		roll -= each[index]
@@ -1030,14 +1036,33 @@ func _check_view() -> void:
 	if typeof(held) == TYPE_OBJECT and not is_instance_valid(held):
 		_finding("freed-view", "the view the shell holds as current (%s) was freed" % (_view if not _view.is_empty() else "?"))
 		return
-	var view: Node = held as Node
-	if view == null or not view.is_inside_tree():
+	# The no-focus check looks under the adapter's focus roots (the view node by default). A list
+	# with nothing usable in it, or empty, means no rule for this step.
+	var roots: Array[Node] = []
+	for root: Node in _adapter.focus_roots():
+		if root != null and is_instance_valid(root) and root.is_inside_tree():
+			roots.append(root)
+	if roots.is_empty():
 		return
-	var owner: Control = view.get_viewport().gui_get_focus_owner()
-	if owner != null and (owner == view or view.is_ancestor_of(owner) or owner.get_window() != view.get_window()):
-		return
-	if _has_focusable(view):
-		_finding("no-focus", "the view %s has no focused control, so a keyboard or controller player can't act" % (_view if not _view.is_empty() else str(view.name)))
+	# The focus owners to look at: the window's, and a SubViewport root's own (a page drawn on a sheet).
+	var owners: Array[Control] = []
+	for root: Node in roots:
+		for viewport: Viewport in [root.get_viewport(), root.get_window()]:
+			var focus: Control = viewport.gui_get_focus_owner() if viewport != null else null
+			if focus != null and not owners.has(focus):
+				owners.append(focus)
+	for focus: Control in owners:
+		for root: Node in roots:
+			if focus == root or root.is_ancestor_of(focus) or focus.get_window() != root.get_window():
+				return
+	for root: Node in roots:
+		if _has_focusable(root):
+			var names: PackedStringArray = PackedStringArray()
+			for named: Node in roots:
+				names.append(str(named.name))
+			var shown: String = _view if not _view.is_empty() else str(roots[0].name)
+			_finding("no-focus", "the view %s has no focused control under %s (so a keyboard or controller player can't act)" % [shown, ", ".join(names)])
+			return
 
 
 func _has_focusable(node: Node) -> bool:
