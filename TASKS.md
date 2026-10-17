@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T21 · B3 · R1
+**Next IDs:** T22 · B3 · R1
 
 ## Queue
+
+### T21 · An install from a non-release source marks itself unreleased · done · S · agent
+- Touches: install.sh, selftest.sh, CHANGELOG.md
+- Done when: the manifest records the source commit, and an install from a source whose CHANGELOG.md has entries under Unreleased records `<version> + unreleased (<commit>)` and says so in its closing lines (test) · an install from a release records the plain version (test) · an upgrade from an unreleased install reads the old version without the suffix (test) · `bash selftest.sh <Godot 4.5+>` passes (check) · following AGENTS.md › Project rules for framework work; VERSION untouched (check)
+- GDD: (none)
+- Source: Director-Driven-Development T136
 
 ### T20 · Autoplay's no-focus invariant looks under the adapter's focus roots · done · M · agent
 - Touches: framework/tools/autoplay_adapter_base.gd, framework/tools/autoplay.gd, framework/tools/autoplay_catalog.gd, project/tools/autoplay_adapter.gd, project/tools/autoplay_scenarios.gd, examples/market-day/tools/autoplay_adapter.gd, framework/.godot-director/procedures/autoplay.md, framework/.godot-director/rules.md, README.md, selftest.sh, CHANGELOG.md
