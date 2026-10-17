@@ -11,4 +11,6 @@
 /tools/autoplay.gd text eol=lf
 /tools/autoplay_adapter_base.gd text eol=lf
 /tools/autoplay_catalog.gd text eol=lf
+/tools/log_review.gd text eol=lf
 /playtesting/README.md text eol=lf
+/playtesting/signatures.tsv text eol=lf

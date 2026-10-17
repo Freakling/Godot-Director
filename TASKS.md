@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T17 · B3 · R1
+**Next IDs:** T18 · B3 · R1
 
 ## Queue
+
+### T17 · Log review with stable signatures · done · M · agent
+- Touches: framework/tools/log_review.sh (new), framework/tools/log_review.gd (new), project/playtesting/signatures.tsv (new), examples/market-day/playtesting/signatures.tsv (new), examples/market-day/.gitignore, examples/market-day/.gitattributes, tests/log-review/signature-cases.tsv (new), install.sh, selftest.sh, CHANGELOG.md
+- Done when: `bash tools/log_review.sh [<run>|--latest|--player]` writes review.md and findings.json with the timeline, the findings by signature (the normalisation from the spec, with a fixture carrying signatures.py's cases), coverage and the delta against the previous run, and `--check sig-xxxx` confirms a fix from signatures.tsv (check)
+- GDD: (none)
+- Source: Director-Driven-Development T129
 
 ### T16 · Autoplay drives the real game · done · L · agent
 - Touches: framework/tools/autoplay.sh (new), framework/tools/autoplay.gd (new), framework/tools/autoplay_adapter_base.gd (new), framework/tools/autoplay_catalog.gd (new), framework/tools/ui_lint.gd, framework/tools/ui_capture.gd, project/tools/autoplay_adapter.gd (new), project/tools/autoplay_scenarios.gd (new), project/tools/autoplay_invariants.gd (new), install.sh, examples/market-day/tools/autoplay_adapter.gd (new), examples/market-day/tools/autoplay_scenarios.gd (new), examples/market-day/tools/autoplay_invariants.gd (new), examples/market-day/.gitignore, examples/market-day/.gitattributes, selftest.sh, CHANGELOG.md

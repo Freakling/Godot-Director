@@ -283,7 +283,8 @@ ensure_lines "$dest/.gitignore" ".godot/" "/tools/godot_bin.local" "/.claude/set
 ensure_lines "$dest/.gitattributes" "*.sh text eol=lf" "/.githooks/** text eol=lf" "/.godot-director/** text eol=lf" \
   "/.claude/** text eol=lf" "/tools/check.gd text eol=lf" "/tools/test_case.gd text eol=lf" "/tools/ui_*.gd text eol=lf" \
   "/tools/play_log_base.gd text eol=lf" "/tools/autoplay.gd text eol=lf" "/tools/autoplay_adapter_base.gd text eol=lf" \
-  "/tools/autoplay_catalog.gd text eol=lf" "/playtesting/README.md text eol=lf"
+  "/tools/autoplay_catalog.gd text eol=lf" "/tools/log_review.gd text eol=lf" "/playtesting/README.md text eol=lf" \
+  "/playtesting/signatures.tsv text eol=lf"
 
 # --- report ---------------------------------------------------------------------------------------
 if [ -z "$old_version" ]; then action="installed $version"

@@ -1,0 +1,43 @@
+# Cases for the signature normalisation in tools/log_review.gd (the port of the old signatures.py).
+# group	kind	text as logged	expected normalised text	expected signature
+# Rows of one group hash to one signature; rows of two groups hash to two. selftest.sh runs this with
+# `godot --headless --path . --script tools/log_review.gd -- --cases <this file>`.
+#
+# An engine error at a location with changing numbers: the index, the size and the line change.
+index-error	error	Index 3 is out of bounds (size 3). (at res://scripts/roster.gd:88 in pick())	Index <n> is out of bounds (size <n>). (at res://scripts/roster.gd:<n> in pick())	sig-2f29a879
+index-error	error	Index 17 is out of bounds (size 17). (at res://scripts/roster.gd:91 in pick())	Index <n> is out of bounds (size <n>). (at res://scripts/roster.gd:<n> in pick())	sig-2f29a879
+# The repeat note the play log adds after max_engine_repeats is not part of the error.
+index-error	error	Index 4 is out of bounds (size 4). (at res://scripts/roster.gd:88 in pick()) (repeated 20 times; further repeats aren't logged)	Index <n> is out of bounds (size <n>). (at res://scripts/roster.gd:<n> in pick())	sig-2f29a879
+#
+# A warning, at two lines.
+sell-warning	warning	selling at a loss (at res://scripts/ui/shop_screen.gd:41 in _on_sell_pressed())	selling at a loss (at res://scripts/ui/shop_screen.gd:<n> in _on_sell_pressed())	sig-0dc8bfae
+sell-warning	warning	selling at a loss (at res://scripts/ui/shop_screen.gd:45 in _on_sell_pressed())	selling at a loss (at res://scripts/ui/shop_screen.gd:<n> in _on_sell_pressed())	sig-0dc8bfae
+#
+# A progress-blocked reason with a changing count.
+cart-blocked	blocked	the grain cart is late, grain 3	the grain cart is late, grain <n>	sig-d8ddb8e4
+cart-blocked	blocked	the grain cart is late, grain 12	the grain cart is late, grain <n>	sig-d8ddb8e4
+#
+# The same error with different object ids and hashes: one signature.
+null-free	error	Cannot call method 'queue_free' on a null value. (at res://scripts/ui/shop_screen.gd:35 in _on_buy_pressed()) <Node#-9223372036854775807> @Button@17 0x7ffd1a2b3c4d	Cannot call method 'queue_free' on a null value. (at res://scripts/ui/shop_screen.gd:<n> in _on_buy_pressed()) <Node#<n>> @Button@<n> <hash>	sig-1f398185
+null-free	error	Cannot call method 'queue_free' on a null value. (at res://scripts/ui/shop_screen.gd:36 in _on_buy_pressed()) <Node#4611686018427387904> @Button@2 0x55d0c3e9f010	Cannot call method 'queue_free' on a null value. (at res://scripts/ui/shop_screen.gd:<n> in _on_buy_pressed()) <Node#<n>> @Button@<n> <hash>	sig-1f398185
+#
+# Hashes and UUIDs in an imported resource's path and in a request id.
+import-hash	error	Failed loading resource: res://.godot/imported/coin.png-d41d8cd98f00b204e9800998ecf8427e.ctex request 123e4567-e89b-12d3-a456-426614174000	Failed loading resource: res://.godot/imported/coin.png-<hash>.ctex request <uuid>	sig-2c02bb00
+import-hash	error	Failed loading resource: res://.godot/imported/coin.png-0cc175b9c0f1b6a831c399e269772661.ctex request 9b2d5b46-0e1d-4c5e-8a47-5c1f0e1f2a3b	Failed loading resource: res://.godot/imported/coin.png-<hash>.ctex request <uuid>	sig-2c02bb00
+#
+# A different error: its own signature, not the null-free one.
+bad-call	error	Invalid call. Nonexistent function 'open' in base 'Nil'. (at res://scripts/ui/ledger_view.gd:12 in _ready())	Invalid call. Nonexistent function 'open' in base 'Nil'. (at res://scripts/ui/ledger_view.gd:<n> in _ready())	sig-43b40ae3
+#
+# The same text as another kind is another problem: a warning is not the error.
+sell-error	error	selling at a loss (at res://scripts/ui/shop_screen.gd:41 in _on_sell_pressed())	selling at a loss (at res://scripts/ui/shop_screen.gd:<n> in _on_sell_pressed())	sig-4fbd4595
+#
+# The other kinds: a softlock's reason with a countdown, an invariant, a hitch.
+softlock	softlock	progress blocked across 10 actions (the grain cart is late, grain 7), and nothing list_actions() offers unblocks it	progress blocked across <n> actions (the grain cart is late, grain <n>), and nothing list_actions() offers unblocks it	sig-75355b0f
+softlock	softlock	progress blocked across 10 actions (the grain cart is late, grain 9), and nothing list_actions() offers unblocks it	progress blocked across <n> actions (the grain cart is late, grain <n>), and nothing list_actions() offers unblocks it	sig-75355b0f
+low-gold	invariant	gold is below 1000	gold is below <n>	sig-f77e469b
+hitch	hitch	frame took 63 ms	frame took <n> ms	sig-40dd34bd
+hitch	hitch	frame took 140 ms	frame took <n> ms	sig-40dd34bd
+#
+# Numbers: negative, decimal, and digits that belong to a name stay as they are.
+numbers	error	Invalid value -1.5 for Vector2(3, -4) in level2.tscn at 0.25 s	Invalid value <n> for Vector2(<n>, <n>) in level2.tscn at <n> s	sig-828f0f7a
+numbers	error	Invalid value 7 for Vector2(10, 20) in level2.tscn at 12.5 s	Invalid value <n> for Vector2(<n>, <n>) in level2.tscn at <n> s	sig-828f0f7a
