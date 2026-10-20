@@ -66,7 +66,7 @@ Update the owning place in the same change that makes it untrue. Replace superse
 - **Where work comes from.** `TASKS.md`, or straight from the human. A direct request that won't be finished this session, or that turns up follow-up work, gets a TASKS.md item. Work you discover always becomes a new item; never do it silently as part of another.
 - **Read what the work needs:** the item's `Touches`, the Architecture rows, and the GDD sections it names. Read by heading or line range, not whole files. Quote only the relevant lines of logs; the full check logs are in `.godot/godot-director/`.
 - **Stay inside the item.** Prefer the smallest change, and delete dead code. Match existing patterns; a new pattern needs a reason in the commit message.
-- **Tests.** A rule that can be checked without a screen gets a test: `tests/**/test_*.gd`, `extends "res://tools/test_case.gd"`, synchronous methods `test_*()`. A fixed bug gets a regression test when it can have one; otherwise it goes into the next function check.
+- **Tests.** A rule that can be checked without a screen gets a test: `tests/**/test_*.gd`, `extends "res://tools/test_case.gd"`, synchronous methods `test_*()`. Each test sets up the autoload and `user://` state it reads: the check runs the test files in several processes at once, so a file can't rely on what another file left behind. The files run at the same time and share one `user://` and one `.godot/`, so two test files must not write the same `user://` file: use a unique name per test file. A fixed bug gets a regression test when it can have one; otherwise it goes into the next function check.
 - **Scenarios.** An item that touches the shell, a view, the turn loop or a save adds or updates a step in `tools/autoplay_scenarios.gd` that walks the change, and the builder plays the scenarios the item names, plus `smoke`, with `bash tools/autoplay.sh` before reporting (`procedures/autoplay.md`).
 - **Outcome tags.** Each outcome in `Done when` is tagged:
   - `(test)`: a test in `tests/` proves it;
@@ -74,7 +74,7 @@ Update the owning place in the same change that makes it untrue. Replace superse
   - `(autoplay)`: a scenario run by `bash tools/autoplay.sh` proves it, such as "the smoke scenario plays 10 turns with no new signature". The builder runs it and quotes the review's delta line; a function check marks it pre-verified.
   - `(play)`: a human verifies it in the next function check.
 - **Done** means every `(test)`, `(check)` and `(autoplay)` outcome holds, every `(play)` outcome is implemented, and `bash tools/check.sh` exits 0. Never report done otherwise, and show the output of a failing check. Exit 3 means the check couldn't run, so say the work is unverified.
-- **Running the check.** Run it in the foreground with a long timeout (10 minutes or more). Other runs and hooks wait for it.
+- **Running the check.** Run it in the foreground with a long timeout (10 minutes or more). Other runs and hooks wait for it. Exit 3 with "timed out" is not a test failure: the report names the file that was running; make it faster (the run ends with the slowest files) or raise `[tests] timeout` in `tools/check.cfg`.
 - **Two failed attempts.** After two failed attempts at the same problem, stop and report instead of guessing further.
 
 ## Git
@@ -84,7 +84,7 @@ Update the owning place in the same change that makes it untrue. Replace superse
 
 ## Sessions, clones and context
 - **New clone or machine.** Run `bash tools/setup-clone.sh`. It finds Godot, writes `tools/godot_bin.local` (machine-local, never committed) and installs the pre-commit hook.
-- **Two sessions at once** (say design and coding): give one its own worktree (`git worktree add ../game-design`) and run `bash tools/setup-clone.sh` there. A claim in TASKS.md protects only its own working tree. So only one session per project picks items; the others name the item they work on.
+- **Two sessions at once** (say design and coding, or two building sessions): give each its own worktree (`git worktree add ../game-design`) and run `bash tools/setup-clone.sh` there, so they don't share `.godot/`, the check's lock or each other's half-written files. A claim in TASKS.md protects only its own working tree. So only one session per project picks items; the others name the item they work on.
 - **The records are the hand-off.** TASKS.md (what's done and what's next), commit messages (why), AGENTS.md and the GDD carry everything between sessions. Once an item is committed, a fresh session, or `/clear` in Claude Code, loses nothing.
 
 ## Reviews and model size

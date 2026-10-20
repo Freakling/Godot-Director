@@ -10,6 +10,10 @@ extends SceneTree
 ## While it runs, Engine.has_meta("godot_director_check") is true, so autoloads (which run too)
 ## can skip reading and writing player data. The 2.x name, "claude4godot_check", is set too until
 ## 4.0, so games not yet migrated keep working; it is deprecated.
+##
+## tools/check.sh may split the work for a parallel run (`--jobs N`): `-- --no-tests` does everything
+## but the tests, and `-- --tests <k> <n>` runs only the k-th of n contiguous groups of the sorted
+## test files (k from 1). Each test file's time is printed as `GDIR-TIME: <ms> <path>`.
 
 const CONFIG_PATH: String = "res://tools/check.cfg"
 const TYPED_SETTING: String = "debug/gdscript/warnings/untyped_declaration"
@@ -22,6 +26,10 @@ var _tests_passed: int = 0
 var _screens_scanned: int = 0
 var _frame: int = 0
 var _reported: bool = false
+var _run_tests_on: bool = true
+var _run_rest_on: bool = true
+var _group: int = 1
+var _groups: int = 1
 
 var _skip: PackedStringArray = PackedStringArray(["addons", "script_templates"])
 var _screen_dirs: PackedStringArray = PackedStringArray()
@@ -61,14 +69,28 @@ func _on_frame() -> void:
 
 
 func _run() -> void:
+	_read_args()
 	_read_config()
 	var files: Array[String] = []
 	_collect("res://", files)
 	files.sort()
-	_load_all(files)
-	_check_screens(files)
-	_run_tests(files)
+	if _run_rest_on:
+		_load_all(files)
+		_check_screens(files)
+	if _run_tests_on:
+		_run_tests(files)
 	_report()
+
+
+func _read_args() -> void:
+	var args: PackedStringArray = OS.get_cmdline_user_args()
+	if args.has("--no-tests"):
+		_run_tests_on = false
+	var at: int = args.find("--tests")
+	if at >= 0 and at + 2 < args.size():
+		_run_rest_on = false
+		_group = maxi(1, int(args[at + 1]))
+		_groups = maxi(_group, int(args[at + 2]))
 
 
 # --- configuration ------------------------------------------------------------------------------
@@ -85,7 +107,9 @@ func _read_config() -> void:
 	_screen_forbidden.append_array(_strings(config.get_value("screens", "forbidden", [])))
 	_allow_writes_to = _strings(config.get_value("screens", "allow_writes_to", []))
 	_tests_dir = str(config.get_value("tests", "dir", _tests_dir)).trim_prefix("res://").trim_suffix("/")
-	# tools/check.sh reads these lines and ignores matching output.
+	# tools/check.sh reads these lines and ignores matching output (printed once, by the main run).
+	if not _run_rest_on:
+		return
 	for pattern: String in _strings(config.get_value("output", "ignore", [])):
 		print("GDIR-IGNORE:" + pattern)
 
@@ -236,24 +260,36 @@ func _code_only(line: String) -> String:
 
 func _run_tests(files: Array[String]) -> void:
 	var tests_root: String = "res://%s/" % _tests_dir
+	var test_files: Array[String] = []
 	for path: String in files:
-		var file_name: String = path.get_file()
-		if not path.begins_with(tests_root) or not file_name.begins_with("test_") or path.get_extension() != "gd":
-			continue
-		if _is_other_framework(path):
-			_notes.append("%s belongs to another test framework; run it from tools/check.local.sh" % path)
-			continue
-		var test_script: GDScript = ResourceLoader.load(path) as GDScript
-		if test_script == null or not test_script.can_instantiate():
-			_failures.append("%s: test script doesn't compile" % path)
-			continue
-		var names: PackedStringArray = PackedStringArray()
-		for method: Dictionary in test_script.get_script_method_list():
-			var method_name: String = str(method.get("name", ""))
-			if method_name.begins_with("test_") and not names.has(method_name):
-				names.append(method_name)
-		for method_name: String in names:
-			_run_test(test_script, path, method_name)
+		if path.begins_with(tests_root) and path.get_file().begins_with("test_") and path.get_extension() == "gd":
+			test_files.append(path)
+	# A parallel run's group: contiguous, in file order, the same split in every process.
+	var first: int = floori(test_files.size() * (_group - 1) / float(_groups))
+	var last: int = floori(test_files.size() * _group / float(_groups))
+	if last > first:
+		print("GDIR-GROUP: %s to %s (%d of %d test files)" % [test_files[first], test_files[last - 1], last - first, test_files.size()])
+	for index: int in range(first, last):
+		var started: int = Time.get_ticks_msec()
+		_run_test_file(test_files[index])
+		print("GDIR-TIME: %d %s" % [Time.get_ticks_msec() - started, test_files[index]])
+
+
+func _run_test_file(path: String) -> void:
+	if _is_other_framework(path):
+		_notes.append("%s belongs to another test framework; run it from tools/check.local.sh" % path)
+		return
+	var test_script: GDScript = ResourceLoader.load(path) as GDScript
+	if test_script == null or not test_script.can_instantiate():
+		_failures.append("%s: test script doesn't compile" % path)
+		return
+	var names: PackedStringArray = PackedStringArray()
+	for method: Dictionary in test_script.get_script_method_list():
+		var method_name: String = str(method.get("name", ""))
+		if method_name.begins_with("test_") and not names.has(method_name):
+			names.append(method_name)
+	for method_name: String in names:
+		_run_test(test_script, path, method_name)
 
 
 func _is_other_framework(path: String) -> bool:
@@ -287,15 +323,26 @@ func _run_test(test_script: GDScript, path: String, method_name: String) -> void
 # --- report -------------------------------------------------------------------------------------
 
 func _report() -> void:
+	if not _run_rest_on:
+		# One group of a parallel run: tools/check.sh adds its count to the main run's line.
+		for note: String in _notes:
+			print("GDIR-NOTE: " + note)
+		print("GDIR-TESTS: %d" % _tests_passed)
+		for failure: String in _failures:
+			printerr("GDIR-FAIL: " + failure)
+		_reported = true
+		quit(0 if _failures.is_empty() else 1)
+		return
 	if int(ProjectSettings.get_setting(TYPED_SETTING, 0)) != 2:
 		_notes.append("statically typed GDScript isn't enforced: set %s=2 in project.godot" % TYPED_SETTING)
 	for note: String in _notes:
 		print("GDIR-NOTE: " + note)
+	# The main run of a parallel run leaves @TESTS@ for tools/check.sh to fill in with the groups' count.
 	print("GDIR: loaded %s, %s, %s · %s passed · %s scanned" % [
 		_count(int(_counts.get("gd", 0)), "script"),
 		_count(int(_counts.get("tscn", 0)) + int(_counts.get("scn", 0)), "scene"),
 		_count(int(_counts.get("tres", 0)) + int(_counts.get("res", 0)), "resource"),
-		_count(_tests_passed, "test"),
+		_count(_tests_passed, "test") if _run_tests_on else "@TESTS@",
 		_count(_screens_scanned, "screen script"),
 	])
 	for failure: String in _failures:

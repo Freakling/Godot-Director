@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T23 · B3 · R1
+**Next IDs:** T24 · B3 · R1
 
 ## Queue
+
+### T23 · The check times every test file and runs the suite in parallel · done · L · agent
+- Touches: framework/tools/check.gd, framework/tools/check.sh, project/tools/check.cfg, README.md, framework/.godot-director/rules.md, selftest.sh, CHANGELOG.md
+- Done when: every run logs each test file's time and ends with a slowest-files summary; `--jobs N` (default from the CPU count, settable in check.cfg) splits the test files across N headless Godot processes, each in file order with its own log and its own timeout, and merges the results into one report with exit codes 0/1/3 unchanged; `--if-changed` and `--fingerprint` keep working; a run that hits the timeout says so and exits 3; new check.cfg keys have defaults and an upgrade keeps existing settings; the docs say tests must isolate their autoload and user:// state and recommend one git worktree per parallel building session; CHANGELOG carries the upgrade notes (check) · the selftest covers the times and summary, the split, the timeout path and the cfg defaults (test) · following AGENTS.md › Project rules for framework work; VERSION untouched (check)
+- GDD: (none)
+- Source: Director-Driven-Development T157
 
 ### T22 · The README starts with writing your own game design document · done · S · agent
 - Touches: README.md, project/design/director-gdd.md, examples/market-day/design/director-gdd.md, selftest.sh, CHANGELOG.md
