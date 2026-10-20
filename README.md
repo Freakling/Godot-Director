@@ -212,7 +212,11 @@ The game plays itself, so an assistant can playtest a change before you do, and 
 4. plays the smoke scenario headless, when `tools/check.cfg` › `[autoplay]` turns it on;
 5. runs `tools/check.local.sh`, if the game has one.
 
-It exits 0 on pass, 1 on fail, and 3 when it can't run. It remembers the last passing state, so hooks don't run it again when nothing has changed. Game-specific settings go in `tools/check.cfg`, and extra steps (for example an existing GUT suite) go in `tools/check.local.sh`.
+It exits 0 on pass, 1 on fail, and 3 when it can't run, including when a Godot run hits its timeout (`tools/check.cfg` › `[tests] timeout`, 600 seconds by default): the report then names the test file it was in, so a slow suite never reads as a failing one. It remembers the last passing state, so hooks don't run it again when nothing has changed. Game-specific settings go in `tools/check.cfg`, and extra steps (for example an existing GUT suite) go in `tools/check.local.sh`.
+
+- **Parallel tests.** The tests run in several headless Godot processes at once, one per CPU core by default (`[tests] jobs`, or `--jobs N` for one run; `--jobs 1` runs them in one process). Each process takes a contiguous group of the sorted test files, in file order, with its own log in `.godot/godot-director/`, and the check merges them into one report. So a test must not depend on autoload or `user://` state that another test file left behind: it sets up what it reads. Test files also run at the same time and share one `user://` and one `.godot/`, so two test files must not write the same `user://` file: use a unique name per test file.
+- **Slowest files.** Each test file's time is in the logs, and every run ends with the ten slowest files and their share of the test time, so you know which tests to make faster.
+- **Parallel sessions.** Give each building session its own git worktree (`git worktree add ../game-b`, then `bash tools/setup-clone.sh` there), so sessions don't share `.godot/`, the check's lock or each other's half-written files.
 
 ### This repository
 | Path | |

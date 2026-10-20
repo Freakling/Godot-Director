@@ -965,6 +965,68 @@ rm -f tests/test_selftest_meta.gd tests/test_selftest_meta.gd.uid
 
 out="$(bash tools/check.sh 2>&1)"; expect_status "passes again after the faults are removed" 0 $? "$out"
 
+# --- parallel tests, per-file times, timeout ----------------------------------------------------
+echo "parallel tests"
+logs=".godot/godot-director"
+test_order() { for f in "$@"; do tr -d '\r' < "$f"; done | sed -n 's/^GDIR-TEST: \(.*\)::.*$/\1/p' | uniq; }
+out="$(bash tools/check.sh --jobs 1 2>&1)"; expect_status "--jobs 1 runs the tests in one process" 0 $? "$out"
+expect_output "and runs all of the example's tests" "12 tests passed" "$out"
+expect_no_output "with no group processes" "running the tests in" "$out"
+expect_output "every run ends with the slowest test files" "slowest test files \(of 3, " "$out"
+expect_output "each with its time and share" "[0-9]+\.[0-9] s +[0-9]+%  res://tests/test_market\.gd" "$out"
+[ "$(tr -d '\r' < "$logs/check.log" | grep -cE '^GDIR-TIME: [0-9]+ res://tests/test_')" -eq 3 ] \
+  && ok "the log lists each test file's time" || bad "the log lists each test file's time" "$(cat "$logs/check.log")"
+serial_order="$(test_order "$logs/check.log")"
+out="$(bash tools/check.sh --jobs 2 2>&1)"; expect_status "--jobs 2 passes on the example" 0 $? "$out"
+expect_output "runs the tests in 2 processes" "running the tests in 2 processes" "$out"
+expect_output "and merges the counts into the serial run's line" "12 tests passed · 1 screen script scanned" "$out"
+expect_output "and the slowest files of both groups" "slowest test files \(of 3, " "$out"
+[ -f "$logs/tests-1.log" ] && [ -f "$logs/tests-2.log" ] && [ -n "$(test_order "$logs/tests-2.log")" ] \
+  && ok "each group has its own log" || bad "each group has its own log" "$(ls "$logs")"
+[ -n "$serial_order" ] && [ "$(test_order "$logs/tests-1.log" "$logs/tests-2.log")" = "$serial_order" ] \
+  && ok "the groups are contiguous, each in file order" || bad "the groups are contiguous, each in file order" "$(test_order "$logs/tests-1.log" "$logs/tests-2.log")"
+out="$(bash tools/check.sh --if-changed --jobs 2 2>&1)"; expect_output "--if-changed works beside --jobs" "nothing changed since the last passing run" "$out"
+out="$(bash tools/check.sh --jobs many 2>&1)"; expect_status "--jobs takes a number or auto" 3 $? "$out"
+# A failing test in one group fails the merged report.
+cp tests/test_market.gd "$work/saved"
+printf '\nfunc test_selftest_failure() -> void:\n\texpect_eq(1, 2)\n' >> tests/test_market.gd
+out="$(bash tools/check.sh --jobs 3 2>&1)"; expect_status "a failing test in one group fails the parallel run" 1 $? "$out"
+expect_output "and names it" "test_market\.gd::test_selftest_failure: expected 2, got 1" "$out"
+cp "$work/saved" tests/test_market.gd
+# The cfg keys: the seed has them with their defaults, the example has none (the defaults apply).
+grep -q '^jobs="auto"$' "$src/project/tools/check.cfg" && grep -q '^timeout=600$' "$src/project/tools/check.cfg" \
+  && grep -q 'case "$limit" in .*limit=600' tools/check.sh && ok "the seed's [tests] jobs and timeout have their defaults" \
+  || bad "the seed's [tests] jobs and timeout have their defaults"
+cp tools/check.cfg "$work/saved-cfg"
+printf '\n[tests]\njobs=1\n' >> tools/check.cfg
+out="$(bash tools/check.sh 2>&1)"; expect_status "[tests] jobs=1 in check.cfg runs one process" 0 $? "$out"
+expect_no_output "with no group processes" "running the tests in" "$out"
+cp "$work/saved-cfg" tools/check.cfg; printf '\n[tests]\njobs="2"\n' >> tools/check.cfg
+out="$(bash tools/check.sh 2>&1)"; expect_output "[tests] jobs=\"2\" in check.cfg runs two" "running the tests in 2 processes" "$out"
+# A run that hits its timeout exits 3 and names the file it was in.
+if timeout --version 2>/dev/null | grep -qi coreutils || gtimeout --version 2>/dev/null | grep -qi coreutils; then
+  printf 'extends "res://tools/test_case.gd"\n\nfunc test_hang() -> void:\n\tOS.delay_msec(120000)\n\texpect(true)\n' > tests/test_zz_hang.gd
+  cp "$work/saved-cfg" tools/check.cfg; printf '\n[tests]\ntimeout=30\n' >> tools/check.cfg
+  out="$(bash tools/check.sh --jobs 1 2>&1)"; expect_status "a serial run that hits [tests] timeout exits 3, not 1" 3 $? "$out"
+  expect_output "and says so, naming the file it was running" "timed out after 30 s .*while running res://tests/test_zz_hang\.gd" "$out"
+  cp "$work/saved-cfg" tools/check.cfg; printf '\n[tests]\ntimeout=9999\n' >> tools/check.cfg
+  out="$(CHECK_TIMEOUT=30 bash tools/check.sh --jobs 2 2>&1)"; expect_status "a parallel group that hits CHECK_TIMEOUT exits 3" 3 $? "$out"
+  expect_output "and names its group and file" "test group 2 of 2 timed out after 30 s in res://tests/[^ ]+ to res://tests/test_zz_hang\.gd .*while running res://tests/test_zz_hang\.gd" "$out"
+  # A failing group beside a timed-out group: the failure wins (exit 1), and both are named.
+  printf '
+func test_selftest_failure() -> void:
+	expect_eq(1, 2)
+' >> tests/test_market.gd
+  out="$(CHECK_TIMEOUT=30 bash tools/check.sh --jobs 2 2>&1)"; expect_status "a failing group plus a timed-out group exits 1" 1 $? "$out"
+  expect_output "and names the failure" "test_market\.gd::test_selftest_failure: expected 2, got 1" "$out"
+  expect_output "and the timeout" "test group 2 of 2 timed out after 30 s" "$out"
+  cp "$work/saved" tests/test_market.gd
+  rm -f tests/test_zz_hang.gd tests/test_zz_hang.gd.uid
+else
+  echo "  (no GNU timeout: the timeout cases are skipped)"
+fi
+cp "$work/saved-cfg" tools/check.cfg
+
 # --- play log -----------------------------------------------------------------------------------
 # The example's PlayLog runs under the check and writes nothing; tests/play-log/selftest_play_log.gd
 # runs the base outside the check, into a folder of its own, and checks the files it writes.
