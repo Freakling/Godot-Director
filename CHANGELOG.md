@@ -2,6 +2,11 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## Unreleased
+
+- **The README starts with writing your design document.** A new "Start here" step opens the install section: write your game design document in your own words first, with a link to the template at the latest release tag, fill in what you know and leave the rest blank, then install. The template's header comment carries the same link, so a copied file explains itself. The selftest checks both links against `VERSION`.
+  - **Upgrade steps:** none. A game's `design/director-gdd.md` is its own file and isn't rewritten.
+
 ## 4.1.1 (2026-10-17)
 
 - **An install from a development snapshot says so.** An install from a source whose `CHANGELOG.md` has entries under `## Unreleased` records `# godot-director <version> + unreleased (<commit>)` as the manifest's first line, and its closing lines say it is a development snapshot, not a release, with where the latest release is listed. `VERSION` stays at the last release until a release is cut, so the manifest tells the truth. The commit comes from the source's git checkout (a release zip has none) and goes on a `# source <commit>` line, which release installs get too. An install from a release records the plain version. Upgrades read the old version without the suffix, so an upgrade from a snapshot works.

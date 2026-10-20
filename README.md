@@ -29,6 +29,10 @@ AI writes game code fast. Without structure, that speed goes wrong in familiar w
 >
 > <a href='https://ko-fi.com/Q6J027VJG1' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi5.png?v=6' border='0' alt='Support me on Ko-fi' /></a> <a href='https://github.com/sponsors/Freakling' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://img.shields.io/badge/Sponsor-on%20GitHub-EA4AAA?logo=githubsponsors&logoColor=white&style=for-the-badge' border='0' alt='Sponsor me on GitHub' /></a>
 
+### Start here: write your design document
+
+Before you install, write your game design document in your own words. The [template](https://raw.githubusercontent.com/Freakling/Godot-Director/v4.1.1/project/design/director-gdd.md) shows what to cover; fill in what you know and leave the rest blank. Then install Godot Director below: onboarding reads your document and asks only about what you left open.
+
 ### Install
 
 Your game needs git (`git init` if it has none) and no uncommitted changes. You also need Godot 4.5 or newer, and bash (on Windows it comes with Git for Windows).
