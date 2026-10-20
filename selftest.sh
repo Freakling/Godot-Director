@@ -131,6 +131,33 @@ grep -q '^\*\*Next IDs:\*\* T[0-9]* · B[0-9]* · R[0-9]*$' "$src/project/TASKS.
 grep -q '^\*\*Next IDs:\*\* T[0-9]* · B[0-9]* · R[0-9]*$' "$src/examples/market-day/TASKS.md" || wired="$wired market-day/TASKS.md(Next IDs)"
 [ -z "$wired" ] && ok "the research assistant is wired into the procedures, the item format, the seeds and the docs" \
   || bad "the research assistant isn't wired into:$wired"
+# Every subagent launch sets its model explicitly from the mapping, so none inherits the session's model:
+# next-task.md says so for the builder, the reviewer, the researcher and an escalated retry, and
+# rules.md states the rule the launches apply.
+launch=""
+nt="$proc/procedures/next-task.md"
+grep -qF 'Every subagent launch sets its model explicitly' "$nt" || launch="$launch launch-rule"
+grep -qF "A launch never lets a subagent inherit the session's model" "$nt" || launch="$launch no-inherit"
+grep -qF 'Where the mapping has no entry for the size, or model sizing is off, the launch passes the session model explicitly' "$nt" \
+  || launch="$launch session-fallback"
+grep -qF 'the builder, the reviewer (step 6), the researcher (Research items) and an escalated retry' "$nt" || launch="$launch launches"
+grep -qF 'Pass that model as `model: <id>`' "$nt" || launch="$launch builder-model"
+grep -qF 'or in a subagent if your tool has them, with its model set as section 3 says' "$nt" || launch="$launch builder-other-tools"
+grep -qF 'subagent, with its model set as section 3 says for the item' "$nt" || launch="$launch reviewer"
+grep -qF 'in the foreground (`run_in_background: false`), with its model set as section 3 says' "$nt" || launch="$launch researcher"
+grep -qF 'follow `research.md` in a fresh context, or a subagent if your tool has them, with its model set as section 3 says' "$nt" \
+  || launch="$launch research-other-tools"
+grep -qF 'on the next-size model, set on the launch as section 3 says' "$nt" || launch="$launch escalation"
+grep -qF "rerun it once on the next size's model, set on the launch as section 3 says" "$nt" || launch="$launch research-escalation"
+grep -qF 'Otherwise use the session model' "$nt" && launch="$launch old-fallback"
+grep -qF 'turn on model sizing' "$nt" && launch="$launch old-conditional"
+grep -qF "for the item's size, as for a build" "$nt" && launch="$launch old-research"
+grep -qF 'Every subagent launch sets its model explicitly' "$proc/rules.md" \
+  && grep -qF 'A size without an entry, or model sizing off, passes the session model, also explicitly' "$proc/rules.md" \
+  || launch="$launch rules.md"
+grep -qF 'A size without an entry uses the session model.' "$proc/rules.md" && launch="$launch rules-old"
+[ -z "$launch" ] && ok "every subagent launch sets its model explicitly, and next-task.md and rules.md say so" \
+  || bad "the subagent model wording is missing or has drifted:$launch"
 # The human-written GDD: the template ships as a seed (and in the example), is the director's own
 # structure, and onboarding and the README present it.
 wired=""

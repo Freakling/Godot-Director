@@ -2,6 +2,11 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## Unreleased
+
+- **Every subagent launch passes its model explicitly.** The builder, the reviewer, the researcher and an escalated retry each get the model for the item's size from the mapping in Project rules, set in the launch. Where the mapping has no entry for the size, or model sizing is off, the session model is passed the same way. No launch leaves a subagent to inherit the session's model, so the model a build runs on is always the one its launch names. `rules.md` states the rule, `next-task.md` applies it at each launch, and the selftest checks the wording.
+  - **Upgrade steps:** none. The procedures and rules are framework-owned and arrive on upgrade.
+
 ## 4.2.0 (2026-10-21)
 
 - **The check runs the tests in parallel and times every test file.** A large suite no longer outlasts the check's timeout and reads as a failure.

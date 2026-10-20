@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T24 · B3 · R1
+**Next IDs:** T25 · B3 · R1
 
 ## Queue
+
+### T24 · Every subagent launch passes its model explicitly · done · S · agent
+- Touches: framework/.godot-director/procedures/next-task.md, framework/.godot-director/rules.md, selftest.sh, CHANGELOG.md
+- Done when: next-task.md sets the model explicitly on every subagent launch (the builder, the reviewer, the researcher and an escalated retry), from the sizing mapping for the item's size, and passes the session model where the mapping has no entry or model sizing is off, so no launch inherits the session's model; rules.md states the rule (test) · the selftest checks that wording (test) · following AGENTS.md › Project rules for framework work; VERSION untouched (check)
+- GDD: (none)
+- Source: Director-Driven-Development T150
 
 ### T23 · The check times every test file and runs the suite in parallel · done · L · agent
 - Touches: framework/tools/check.gd, framework/tools/check.sh, project/tools/check.cfg, README.md, framework/.godot-director/rules.md, selftest.sh, CHANGELOG.md
