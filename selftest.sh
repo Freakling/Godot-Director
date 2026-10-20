@@ -145,6 +145,17 @@ grep -q 'design/director-gdd\.md' "$src/ONBOARDING.md" && grep -q '(from your do
 grep -q 'design/director-gdd\.md' "$src/README.md" || wired="$wired README.md"
 [ -z "$wired" ] && ok "the human-written GDD template ships as a seed and in the example, and onboarding and the README present it" \
   || bad "the human-written GDD isn't wired into:$wired"
+# The README's Start here step comes before Install and links the template at the release tag, and
+# the template's header carries the same link: both follow VERSION, like the skill's clone line.
+gdd_link="https://raw.githubusercontent.com/Freakling/Godot-Director/v$version/project/design/director-gdd.md"
+start_line="$(grep -n '^### Start here' "$src/README.md" | head -n 1 | cut -d: -f1)"
+install_line="$(grep -n '^### Install' "$src/README.md" | head -n 1 | cut -d: -f1)"
+if grep -qF "($gdd_link)" "$src/README.md" && grep -qF "$gdd_link" "$src/project/design/director-gdd.md" \
+  && [ -n "$start_line" ] && [ -n "$install_line" ] && [ "$start_line" -lt "$install_line" ]; then
+  ok "the README's Start here step precedes Install and links the template at v<VERSION>, and the template's header carries that link"
+else
+  bad "the README's Start here step (before Install, linking $gdd_link) and the template header's link"
+fi
 # Export: the procedure and skill exist and are wired in, the skipped-step path writes a question
 # and a gated setup item, and nothing here needs export templates or a Godot run.
 missing=""

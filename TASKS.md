@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T22 · B3 · R1
+**Next IDs:** T23 · B3 · R1
 
 ## Queue
+
+### T22 · The README starts with writing your own game design document · done · S · agent
+- Touches: README.md, project/design/director-gdd.md, examples/market-day/design/director-gdd.md, selftest.sh, CHANGELOG.md
+- Done when: the README's how-to-use section opens with a Start here step before Install, linking the template at the raw `v<version>` URL (check) · the template's header carries the same link (check) · the selftest checks both links against VERSION (test) · following AGENTS.md › Project rules for framework work; VERSION untouched (check)
+- GDD: (none)
+- Source: Director-Driven-Development T154
 
 ### T21 · An install from a non-release source marks itself unreleased · done · S · agent
 - Touches: install.sh, selftest.sh, CHANGELOG.md
