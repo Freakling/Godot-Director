@@ -2,7 +2,7 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
-## Unreleased
+## 4.2.0 (2026-10-21)
 
 - **The check runs the tests in parallel and times every test file.** A large suite no longer outlasts the check's timeout and reads as a failure.
   - **Parallel tests.** `bash tools/check.sh` runs the tests in several headless Godot processes at once, one per CPU core by default (`tools/check.cfg` › `[tests] jobs`, `"auto"` or a number; `--jobs N` for one run; `--jobs 1` is the single process it was). Each process runs a contiguous group of the sorted test files, in file order, with its own log (`.godot/godot-director/tests-<k>.log`) and its own timeout; the import pass, the loading of every script and scene, and the screen rules run once, beside them. The report is merged into the usual lines, and the exit codes stay 0, 1 and 3. `--if-changed` and `--fingerprint` work as before.
