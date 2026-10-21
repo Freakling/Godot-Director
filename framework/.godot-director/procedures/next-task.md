@@ -29,17 +29,19 @@ Set the item to `in-progress YYYY-MM-DD` (today).
 ## 3. Build
 A research item goes to Research items instead, and skips steps 4 and 6.
 
+Every subagent launch sets its model explicitly, from the mapping in AGENTS.md › Project rules (lines `- XS: …` through `- XL: …`) for the item's size: the builder, the reviewer (step 6), the researcher (Research items) and an escalated retry. A launch never lets a subagent inherit the session's model. Where the mapping has no entry for the size, or model sizing is off, the launch passes the session model explicitly.
+
 - **In Claude Code,** give the `builder` subagent the item's ID and full text. Tell it to skip the final `bash tools/check.sh` call: step 4 runs the check from this session, and the pre-commit hook is the safety net. Run it in the foreground (`run_in_background: false`), and never run two builders at once: they would edit, and check, each other's files.
   1. Before starting it, create the file `.godot/godot-director/building`. Delete it when the report arrives; while it exists, the Stop hook leaves the half-built files alone.
-  2. If AGENTS.md › Project rules turn on model sizing, read the per-size model from the mapping there (lines `- XS: …` through `- XL: …`) and pass `model: <id>` for this item's size. Otherwise use the session model.
-- **Other tools:** follow `build.md` yourself, or in a subagent if your tool has them.
+  2. Pass that model as `model: <id>`.
+- **Other tools:** follow `build.md` yourself, or in a subagent if your tool has them, with its model set as section 3 says.
 - **Autoplay.** The builder plays the scenarios the item names, such as the one behind an `(autoplay)` outcome, plus `smoke`, before it reports (`build.md` step 6), and the report's `Autoplay:` line carries the review's delta line.
 - **A rebuild** (after a failure, a blocked report or review findings) gets the previous report, anything the human said about the item, and word that the earlier attempt's edits are still in the tree to continue from.
 - **Report `blocked`:** the report brings the question with options and a recommendation. Put it to the human.
   - If the answer is a design decision, record it following `design.md` › Record each decision before rebuilding. It's committed with the item.
   - Then rebuild, including the answer.
 - **Report `failed`:**
-  - An item built on a smaller-tier model gets one rebuild on the next-size model, and its size is annotated `S (escalated from XS)` or similar. An `XL` failure (already on the largest model) stops: give the human the check output without retrying.
+  - An item built on a smaller-tier model gets one rebuild on the next-size model, set on the launch as section 3 says, and its size is annotated `S (escalated from XS)` or similar. An `XL` failure (already on the largest model) stops: give the human the check output without retrying.
   - Otherwise, add a `Note:` to the item and give the human the check output.
 - **Report `failed: pre-existing`:** the failure was there before the build. Tell the human (see step 1).
 
@@ -58,7 +60,7 @@ From the report:
 ## 6. Review
 Only when `rules.md` › Reviews and model size calls for one, judged from the item's size and the report's `API/saves:` line.
 1. Make new files show up in the diff with `git add -N <new files>`, then write it: `git diff HEAD > .godot/godot-director/review.diff`.
-2. Ask for a review following `review.md`; in Claude Code, that's the `reviewer` subagent. Give it the item ID, the builder's report and the check result.
+2. Ask for a review following `review.md`; in Claude Code, that's the `reviewer` subagent, with its model set as section 3 says for the item's size. Give it the item ID, the builder's report and the check result.
 3. Code findings that are in scope: rebuild with the findings. Record findings: fix them yourself. Everything else becomes new items.
 4. Review again only if the fixes were substantial.
 
@@ -71,13 +73,13 @@ Only when `rules.md` › Reviews and model size calls for one, judged from the i
 A research item (format in `.godot-director/tasks.md`) is a candidate like any other, in file order. It changes no code, so there's no check to run (Pick step 3, Verify), no review, and no `building` marker: the researcher writes nothing.
 1. **Claim** it as in step 2.
 2. **Run it** in a fresh context.
-   - In Claude Code, give the `researcher` subagent the item's ID and full text, in the foreground (`run_in_background: false`). If AGENTS.md › Project rules turn on model sizing, pass the model for the item's size, as for a build; otherwise use the session model.
-   - Other tools: follow `research.md` in a fresh context, or a subagent if your tool has them.
+   - In Claude Code, give the `researcher` subagent the item's ID and full text, in the foreground (`run_in_background: false`), with its model set as section 3 says for the item's size.
+   - Other tools: follow `research.md` in a fresh context, or a subagent if your tool has them, with its model set as section 3 says.
    - The researcher never asks the human. It states assumptions in the note and carries on.
 3. **Write the note.** The report is the note. Write it to `design/research/YYYY-MM-DD-<slug>.md`, with today's date and a short kebab-case slug of the topic, creating the folder if needed. The researcher never writes the file.
 4. **Update the records.** Set the item to `done` and delete its `Note:`. Follow-ups the note names become new items (IDs from `Next IDs`, then bump it). The note doesn't change the GDD, `design/decisions.md` or Open Questions.
 5. **Informs.** When the item has `Informs: Q<n>`, say that Q<n> is ready for a design call, and offer a design session with the note as input. The question stays in Open Questions until the human decides, and tasks that need the decision stay gated by it.
-6. **Escalate** a note that says the question needs more than its size allows: rerun it once on the next size's model and label the item `M (escalated from S)`. An `XL` note that says so comes to the human.
+6. **Escalate** a note that says the question needs more than its size allows: rerun it once on the next size's model, set on the launch as section 3 says, and label the item `M (escalated from S)`. An `XL` note that says so comes to the human.
 7. **Commit** the note and the records as step 7 describes.
 
 ## Several items
