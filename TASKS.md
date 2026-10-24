@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T25 · B3 · R1
+**Next IDs:** T26 · B3 · R1
 
 ## Queue
+
+### T25 · The screen-design README is organised by feature · done · M · agent
+- Touches: project/design/ui/README.md, examples/market-day/design/ui/README.md, CHANGELOG.md
+- Done when: `design/ui/README.md` has one section per feature (workflow, what a capture gives you, boxes, colours, containment arrows and notes, patch or replace, re-arranging, other states and sizes, processing and verifying, Excalidraw, files), says only what the tools do, and the example's copy is identical (check)
+- GDD: (none)
+- Source: Director-Driven-Development T177
 
 ### T24 · Every subagent launch passes its model explicitly · done · S · agent
 - Touches: framework/.godot-director/procedures/next-task.md, framework/.godot-director/rules.md, selftest.sh, CHANGELOG.md
