@@ -442,8 +442,9 @@ grep -q '^8\. \*\*The workflow\.\*\*' "$src/CHANGELOG.md" && grep -q '^- \*\*New
 grep -q 'autoplay_adapter\.gd' "$src/ONBOARDING.md" && grep -q '^8\. \*\*Autoplay\.\*\*' "$src/ONBOARDING.md" || wired="$wired ONBOARDING.md(autoplay)"
 [ -z "$wired" ] && ok "/autoplay is wired in: procedure and skill, the request list, the (autoplay) tag, the workflow procedures, the settings, the check's [autoplay] section and the docs" \
   || bad "/autoplay isn't wired into:$wired"
-# The minimum Godot is 4.5 (the engine Logger) everywhere it's stated and checked.
-stale="$(cd "$src" && grep -nE '4\.3([^0-9]|$)|-lt [0-4] \]; \}|-ge [0-4] \]; \}' README.md ONBOARDING.md CLAUDE.md \
+# The minimum Godot is 4.5 (the engine Logger) everywhere it's stated and checked. A Godot Director
+# version such as v4.3.0 (a tag or a `version:` line) isn't a Godot version.
+stale="$(cd "$src" && grep -nE '4\.3([^0-9.]|$)|-lt [0-4] \]; \}|-ge [0-4] \]; \}' README.md ONBOARDING.md CLAUDE.md \
   skills/godot-director/SKILL.md selftest.sh framework/tools/check.sh framework/tools/setup-clone.sh framework/tools/ui_capture.sh framework/tools/autoplay.sh \
   framework/tools/log_review.sh framework/.godot-director/procedures/ui-design.md examples/market-day/AGENTS.md)"
 if [ -z "$stale" ] && grep -q 'Godot 4\.5 or newer' "$src/README.md" && grep -q "compatibility: 'Godot 4\.5 or newer" "$installer" \
