@@ -12,7 +12,8 @@ extends SceneTree
 ## The starter drawing is what the human draws over. tools/ui_capture.gd calls starter_text() for the
 ## default state at the default size; this writes the same from a capture's files:
 ##   godot --headless --path . --script tools/ui_drawing.gd -- starter design/ui/captures/<id>@<W>x<H> <out>.excalidraw
-## Everything in the starter that isn't the human's carries customData.ddd, and the reader skips it.
+## Everything in the starter that isn't the human's carries customData.ddd, and the reader skips it,
+## except a grey `existing` box the human moved or resized (see Reading a drawing in ui-design.md).
 ##
 ## Exit codes: 0 done · 1 the file couldn't be read or written, or holds no frame.
 
@@ -24,6 +25,9 @@ const COMMENT_DISTANCE: float = 1.5
 const OVERLAP_MIN: float = 0.2
 ## An arrow's end is on a note or a box when it is within this many pixels of it.
 const ARROW_REACH: float = 10.0
+## A grey `existing` box counts as moved or resized when its position or size differs from the
+## element map's by more than this many capture pixels.
+const MOVE_TOLERANCE: float = 2.0
 ## Keys a box may use; anything else in its text stays in `text`.
 const KEYS: PackedStringArray = ["shows", "does", "click", "key", "size", "stick", "scroll", "empty", "hidden when"]
 ## Excalidraw's stroke colours (and the shades of the same families) by what they say.
@@ -41,6 +45,7 @@ const LEGEND: PackedStringArray = [
 	"Details the agent understands: shows: does: click: key: size: stick: scroll: empty: hidden when:",
 	"Colour says what changes: green new, blue keep but move or resize,",
 	"red remove (or a red X), orange not sure, black as it should be.",
+	"Drag or resize a grey box to move that element.",
 	"A box inside a box means it contains it.",
 	"An arrow from a note to a box is a comment; from a box to a box, a flow.",
 	"Text outside the frame is notes for the whole screen (mode: replace keeps only what you drew).",
@@ -153,7 +158,12 @@ static func read_drawing(text: String, source: String, sha1: String, screen: Str
 	var outside: Array = []
 	for element: Dictionary in elements:
 		var kind: String = _text(element, "type")
-		if kind == "frame" or _is_ours(element) or _frame_of(element, all_frames, by_id, 0) >= 0:
+		if kind == "frame" or _frame_of(element, all_frames, by_id, 0) >= 0:
+			continue
+		if _ours(element) == "existing" and kind == "rectangle" and not bool(element.get("locked", false)) and not _hidden(element) and (element.get("customData") as Dictionary).get("rect") is Array:
+			outside.append([int(element["_order"]), "grey box %d moved outside the frame" % int((element["customData"] as Dictionary).get("n", 0))])
+			continue
+		if _is_ours(element):
 			continue
 		if kind == "text" and _text(element, "containerId").is_empty():
 			var note: String = _note_text(element)
@@ -209,13 +219,25 @@ static func _read_frame(frame: Dictionary, members: Array[Dictionary], by_id: Di
 	var box_of: Dictionary = {}          # element id -> box
 	var texts: Array[Dictionary] = []
 	var linears: Array[Dictionary] = []
+	var warned_no_map: bool = false
 	for element: Dictionary in members:
-		if _is_ours(element):
+		var moved: Dictionary = {}
+		if _ours(element) == "existing" and _text(element, "type") == "rectangle":
+			if _grey_moved(element, _to_pixels(_bounds(element), origin, size)):
+				var grey_n: int = int((element["customData"] as Dictionary).get("n", 0))
+				moved = _entry_of(mapped, grey_n)
+				if mapped.is_empty():
+					if not warned_no_map:
+						warned_no_map = true
+						warnings.append("%s: no element map %s, so the moved grey boxes are ignored" % [screen, map_name])
+				elif moved.is_empty():
+					warnings.append("%s: grey box %d isn't in the element map" % [screen, grey_n])
+		if _is_ours(element) and moved.is_empty():
 			continue
 		var kind: String = _text(element, "type")
 		match kind:
 			"rectangle":
-				var box: Dictionary = {"el": element, "rect": _bounds(element), "id": "b%d" % (boxes.size() + 1), "comments": [], "flows_to": [], "label_el": {}}
+				var box: Dictionary = {"el": element, "rect": _bounds(element), "id": "b%d" % (boxes.size() + 1), "comments": [], "flows_to": [], "label_el": {}, "moved": moved}
 				boxes.append(box)
 				box_of[_text(element, "id")] = box
 			"text":
@@ -251,6 +273,9 @@ static func _read_frame(frame: Dictionary, members: Array[Dictionary], by_id: Di
 		box["text"] = full
 		box["keys"] = keys
 		box["intent"] = _intent(_text(element, "strokeColor"))
+		if not (box["moved"] as Dictionary).is_empty():
+			box["label"] = str((box["moved"] as Dictionary).get("id", ""))
+			box["intent"] = "keep"
 		var parent: Dictionary = {}
 		for other: Dictionary in boxes:
 			var outer: Rect2 = other["rect"]
@@ -294,6 +319,31 @@ static func _read_frame(frame: Dictionary, members: Array[Dictionary], by_id: Di
 				if not removed.has(entry_removed):
 					removed.append(entry_removed)
 	removed.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a["n"]) < int(b["n"]))
+	# One element claimed twice: a moved grey box, a blue box named after it, a red X.
+	var claims: Dictionary = {}          # n -> [name, ways]
+	for box: Dictionary in boxes:
+		var by_map: Dictionary = box["moved"]
+		var way: String = "a moved grey box"
+		if by_map.is_empty() and str(box["intent"]) == "keep":
+			way = "a blue box named after it"
+			for entry: Dictionary in mapped:
+				if str(entry.get("id", "")) == str(box["label"]):
+					by_map = entry
+					break
+		if not by_map.is_empty():
+			var claim: Array = claims.get(int(by_map.get("n", 0)), [str(by_map.get("id", "")), []])
+			(claim[1] as Array).append(way)
+			claims[int(by_map.get("n", 0))] = claim
+	for entry: Dictionary in removed:
+		var claim: Array = claims.get(int(entry["n"]), [str(entry["name"]), []])
+		(claim[1] as Array).append("a red X")
+		claims[int(entry["n"])] = claim
+	var claimed: Array = claims.keys()
+	claimed.sort()
+	for n: int in claimed:
+		var ways: Array = (claims[n] as Array)[1]
+		if ways.size() > 1:
+			warnings.append("%s: element %d (%s) is claimed by %s" % [screen, n, str((claims[n] as Array)[0]), " and ".join(ways)])
 
 	# Other strokes: an arrow joining a note and a box is a comment, one joining two boxes is a flow.
 	var consumed: Dictionary = {}        # text element id -> true
@@ -360,13 +410,17 @@ static func _read_frame(frame: Dictionary, members: Array[Dictionary], by_id: Di
 	var box_rows: Array = []
 	for box: Dictionary in boxes:
 		var unit: Rect2 = _to_unit(box["rect"], origin)
-		box_rows.append({
+		var row: Dictionary = {
 			"id": box["id"], "label": box["label"], "text": box["text"], "keys": box["keys"],
 			"intent": box["intent"],
 			"rect_pct": [_pct(unit.position.x), _pct(unit.position.y), _pct(unit.size.x), _pct(unit.size.y)],
 			"parent": box["parent"], "comments": box["comments"], "flows_to": box["flows_to"],
 			"overlaps": box["overlaps"],
-		})
+		}
+		if not (box["moved"] as Dictionary).is_empty():
+			row["from"] = "existing"
+			row["n"] = int((box["moved"] as Dictionary).get("n", 0))
+		box_rows.append(row)
 	return {
 		"name": screen, "state": state, "size": [natural.x, natural.y], "mode": mode,
 		"notes": notes, "boxes": box_rows, "removed": removed, "unparsed": unparsed_texts,
@@ -411,6 +465,33 @@ static func _read_map(path: String) -> Array[Dictionary]:
 			if item is Dictionary and bool((item as Dictionary).get("visible", true)):
 				result.append(item)
 	return result
+
+
+## Whether a grey `existing` box was dragged or resized: it is unlocked, visible, carries the
+## rectangle it was drawn at (`customData.rect`, capture pixels; an older starter has none), and now
+## differs from it by more than MOVE_TOLERANCE. It is compared with that rectangle, never with the
+## current element map, so a screen recaptured since doesn't turn untouched boxes into moves.
+static func _grey_moved(element: Dictionary, pixels: Rect2) -> bool:
+	var data: Dictionary = element["customData"] as Dictionary
+	if bool(element.get("locked", false)) or _hidden(element) or not (data.get("rect") is Array) or (data["rect"] as Array).size() < 4:
+		return false
+	var values: Array = data["rect"]
+	var drawn: Rect2 = Rect2(float(values[0]), float(values[1]), float(values[2]), float(values[3]))
+	var delta: float = maxf(maxf(absf(pixels.position.x - drawn.position.x), absf(pixels.position.y - drawn.position.y)), maxf(absf(pixels.size.x - drawn.size.x), absf(pixels.size.y - drawn.size.y)))
+	return delta > MOVE_TOLERANCE
+
+
+## The map entry numbered n, or {}.
+static func _entry_of(mapped: Array[Dictionary], n: int) -> Dictionary:
+	for entry: Dictionary in mapped:
+		if int(entry.get("n", -1)) == n:
+			return entry
+	return {}
+
+
+## A box the human hid: fully transparent.
+static func _hidden(element: Dictionary) -> bool:
+	return element.has("opacity") and _number(element, "opacity") <= 0.0
 
 
 static func _map_rect(entry: Dictionary) -> Rect2:
@@ -592,8 +673,8 @@ static func _be32(bytes: PackedByteArray, at: int) -> int:
 # --- the starter drawing ------------------------------------------------------------------------
 
 ## The starter drawing for a screen's default state: a frame named after the screen, exactly the size
-## of the capture, with the capture locked inside as the background; a faint, locked group of the
-## mapped elements (`existing`, numbered as in the map image) that can be hidden or deleted; and a
+## of the capture, with the capture locked inside as the background; a faint group of the
+## mapped elements (`existing`, numbered as in the map image) that can be dragged, resized, hidden or deleted; and a
 ## legend outside the frame. Valid current-format Excalidraw JSON, deterministic for the same input.
 static func starter_text(screen: String, size: Vector2i, png: PackedByteArray, mapped: Array) -> String:
 	var hashing: HashingContext = HashingContext.new()
@@ -619,14 +700,12 @@ static func starter_text(screen: String, size: Vector2i, png: PackedByteArray, m
 		outline["strokeColor"] = "#868e96"
 		outline["strokeWidth"] = 1
 		outline["opacity"] = 25
-		outline["locked"] = true
 		outline["groupIds"] = ["ddd-existing"]
-		outline["customData"] = {"ddd": "existing", "n": number}
+		outline["customData"] = {"ddd": "existing", "n": number, "rect": [rect.position.x, rect.position.y, maxi(rect.size.x, 1), maxi(rect.size.y, 1)]}
 		items.append(outline)
 		var label: Dictionary = _text_element("ddd-existing-label-%d" % number, items.size(), rect.position.x + 2, rect.position.y + 1, str(number), 14, frame_id)
 		label["strokeColor"] = "#868e96"
 		label["opacity"] = 25
-		label["locked"] = true
 		label["groupIds"] = ["ddd-existing"]
 		label["customData"] = {"ddd": "existing", "n": number}
 		items.append(label)

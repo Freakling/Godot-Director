@@ -1721,8 +1721,8 @@ func _validate(path: String, screen: String, size: Vector2) -> int:
 			var e: Dictionary = ids[id]
 			if e.get("type") != "frame" and e.get("frameId") != frames[0] and id != "ddd-legend":
 				problems.append(id + ": frameId")
-			if str(e.get("id")).begins_with("ddd-existing") and (e.get("locked") != true or float(e["opacity"]) != 25.0 or e.get("groupIds") != ["ddd-existing"]):
-				problems.append(id + ": the existing group is locked, at 25% opacity")
+			if str(e.get("id")).begins_with("ddd-existing") and (e.get("locked") != false or float(e["opacity"]) != 25.0 or e.get("groupIds") != ["ddd-existing"]):
+				problems.append(id + ": the existing group is unlocked (it can be dragged), at 25% opacity")
 		if ids.has("ddd-legend") and (ids["ddd-legend"] as Dictionary).get("frameId") != null:
 			problems.append("the legend is outside the frame")
 	var read: Dictionary = UiDrawing.read_drawing(FileAccess.get_file_as_string(path), path, "", screen, path.get_base_dir().path_join("captures"))
@@ -1750,6 +1750,12 @@ for variant in fixture:read fixture-scaled:moved; do
     *) expect_output "the same drawing with the background image moved and scaled 50% gives the same percentages" "^SAME" "$out" ;;
   esac
 done
+out="$(reader fixture.excalidraw read)"; expect_output "a moved grey box that nothing else claims prints no conflict note" "^GDIR-UI: read" "$out"
+case "$out" in *claimed*) bad "the fixture has no claimed element" "$out" ;; *) ok "the fixture has no claimed element" ;; esac
+out="$(reader fixture-conflict.excalidraw read)"; expect_output "an element claimed by a moved grey box and a blue box is named in one note" "GDIR-UI-NOTE: hero_room: element 4 \(GearList\) is claimed by a moved grey box and a blue box named after it" "$out"
+mkdir -p drawing_fixtures/nomap; out="$(reader fixture.excalidraw nomap)"; expect_output "with no element map the moved grey boxes are skipped with one note per frame" "GDIR-UI-NOTE: hero_room: no element map hero_room@1000x500.elements.json, so the moved grey boxes are ignored" "$out"
+[ "$(printf '%s
+' "$out" | grep -c 'no element map')" = "1" ] && ok "and it is one note" || bad "and it is one note" "$out"
 out="$(reader nowhere.excalidraw read)"; expect_status "the reader refuses a missing drawing" 1 $? "$out"
 printf '{ not json' > drawing_fixtures/broken.excalidraw
 out="$(reader broken.excalidraw read)"; expect_status "the reader refuses invalid JSON" 1 $? "$out"; expect_output "and says so" "isn't valid JSON" "$out"
