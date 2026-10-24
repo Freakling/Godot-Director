@@ -10,7 +10,7 @@ This folder holds your drawings of the screens and the agent's records of them. 
 
 ## What a capture gives you
 For each screen the capture writes `design/ui/captures/<screen>.starter.excalidraw`: the screenshot, locked inside a frame named after the screen. Beside it is the `.map.png`. In the starter you also get:
-- **Faint grey numbered boxes.** These are the elements the screen has now, numbered as in the `.map.png`. They are locked and a reference only: the agent does not read them. Hide or delete them whenever you like.
+- **Faint grey numbered boxes.** These are the elements the screen has now, numbered as in the `.map.png`. You can drag or resize them (see "Re-arranging a screen"), and hide or delete them whenever you like.
 - **Legend text** beside the frame. Delete it once you know it.
 
 ## Boxes
@@ -40,7 +40,7 @@ The stroke colour, from Excalidraw's default palette, says what changes:
 Anything you didn't touch stays (`mode: patch`). Write `mode: replace` outside the frame if the screen should hold only what you drew.
 
 ## Re-arranging a screen
-Draw a blue box where the element should now sit, and name it after the element (the name from the map). Add `size:` or `stick:` if they change. The grey box stays where it was: it is a reference and is not read.
+Drag the grey box to where the element should sit, or resize it. Type keys into it (`size:`, `stick:` ...) if they change. A grey box you don't touch is ignored. A new blue box named after the element (the name from the map) works too.
 
 ## Other states and sizes
 Add another frame in the same file, named `<screen>.<state>` or `<screen>@2560x1080`.

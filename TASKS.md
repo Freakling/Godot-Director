@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T26 Â· B3 Â· R1
+**Next IDs:** T27 Â· B3 Â· R1
 
 ## Queue
+
+### T26 · A grey box can be dragged to re-arrange a screen · done · M · agent
+- Touches: framework/tools/ui_drawing.gd, framework/.godot-director/procedures/ui-design.md, project/design/ui/README.md, examples/market-day/design/ui/README.md, tests/ui-drawing, selftest.sh, CHANGELOG.md
+- Done when: the starter's grey boxes are unlocked; the reader reads one moved or resized by more than 2 px as a `keep` box named after its element, with `from` and `n`, and skips untouched, hidden and deleted ones (test) · the README says to drag the grey box (check)
+- GDD: (none)
+- Source: Director-Driven-Development T180
 
 ### T25 Â· The screen-design README is organised by feature Â· done Â· M Â· agent
 - Touches: project/design/ui/README.md, examples/market-day/design/ui/README.md, CHANGELOG.md
