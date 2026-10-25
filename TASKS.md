@@ -4,9 +4,16 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T29 · B3 · R1
+**Next IDs:** T30 · B3 · R1
 
 ## Queue
+
+### T29 · The check can balance its jobs by last run's timings and split a slow test file by test method, opt-in · done · L · agent
+- Touches: framework/tools/check.sh, framework/tools/check.gd, project/tools/check.cfg, framework/.godot-director/rules.md, README.md, selftest.sh, CHANGELOG.md
+- Done when: the parallel run deals test files longest first by each file's time from the last run (kept in .godot/godot-director/test-times.tsv, unknown files first), sized from its whole-run time so the split count stays stable, opt-in by `[tests] balance` (file order stays the default), each to the job with the least total; a file whose last time is over `[tests] split_over` seconds (default 0, off) runs as shards of its test methods across the jobs, each shard in its own process, its results merged as one; a file with `# gdir: no-split` in its first ten lines runs whole, and `split_over = 0` turns splitting off (test) · on The Guildkeeper's scratch copy the full run's wall time and its slowest job are recorded before and after (check)
+- GDD: (none)
+- Source: Director-Driven-Development T189
+- Measured on The Guildkeeper (254 test files, 12 jobs): 376 s with file order; 411 s and 284 s with balanced dealing and splitting, before the opt-in decision. The second balanced run also failed on engine errors from tests that depend on run order, and with the heavy files started together each ran slower. So file order stays the default and balancing is opt-in, to be measured per machine.
 
 ### T28 · The check skips the import pass when no imported file changed · done · S · agent
 - Touches: framework/tools/check.sh, framework/tools/autoplay.sh, framework/tools/ui_capture.sh, selftest.sh, CHANGELOG.md

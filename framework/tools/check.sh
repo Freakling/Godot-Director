@@ -16,9 +16,21 @@
 #      class_name, extends or @icon line, and no scene or shader path has changed since the last pass
 #      that exited 0; --import runs it anyway.
 #   2. tools/check.gd: load every script, scene and resource; check the screen rules; run tests.
-#      With more than one job, the tests run beside it in N processes, each on a contiguous group of
-#      the sorted test files with its own log (.godot/godot-director/tests-<k>.log), merged into one
-#      report. Every run lists each test file's time in the logs and ends with the slowest files.
+#      With more than one job, the tests run beside it in N processes, each with its own log
+#      (.godot/godot-director/tests-<k>.log), merged into one report. By default each process takes a
+#      contiguous group of the sorted test files, in file order. Opt-in: [tests] balance=true deals
+#      them longest first by the last run's times instead, files with no time first, each to the job
+#      with the least time so far; with it, a file whose time when it last ran whole is over
+#      [tests] split_over seconds (default 0, off) runs as up to N shards of its test methods, each in
+#      its own job, its tests counted once; a line `# gdir: no-split` among its first ten lines keeps
+#      it whole (for tests that share state across methods). GDIR_CHECK_DEAL=1 prints the deal. Every
+#      run lists each test file's time in the logs and ends with the slowest files (a split file's
+#      shards added up). Every run also keeps the times, so balance works at once when turned on, in
+#      .godot/godot-director/test-times.tsv, one tab-separated line per file: path, its whole time
+#      in seconds (the split is sized from this; a split run whose shards all finished lowers it to
+#      their sum, never raises it), the shard count of its last run, and that run's longest shard in seconds (a shard
+#      is weighed by it while the count stays the same). A line of only a path and seconds still
+#      reads. `bash tools/check.sh --jobs 1` re-measures every file whole.
 #   3. scan Godot's output for errors (a parse error is printed, not returned)
 #   3b. the layout lint of the screens and 3c. the autoplay smoke scenario, when tools/ui_capture.cfg and
 #      tools/check.cfg switch them on
@@ -275,7 +287,41 @@ else
     k=$((k + 1))
   done
   test_logs="$state_dir/check.log$test_logs"
+  if [ "${GDIR_CHECK_DEAL:-}" = "1" ]; then clean "$state_dir/tests-1.log" | sed -n 's/^GDIR-DEAL: /check: deal: job /p'; fi
 fi
+
+# Each test file's times for the next run's deal (path, whole seconds, shards, longest shard seconds).
+# A whole run sets all three. A split run whose shards all reported sets the shard count and the
+# longest shard, and the whole time to their sum only when that is lower (so a split never grows from
+# its own overhead; `--jobs 1` re-measures a file whole); one with a shard missing (timed out or
+# crashed) keeps the file's stored line. A file that didn't run keeps its line while it exists; nothing is written when
+# no test reported a time. The file is replaced in one move, so a stopped run never leaves half of it.
+times_file="$state_dir/test-times.tsv"
+for log in $test_logs; do [ -f "$log" ] && clean "$log"; done | sed -n -e 's/^GDIR-TIME: /T /p' -e 's/^GDIR-SHARDS: /S /p' \
+  | awk -v old="$times_file" '
+    { kind = $1; n = $2; path = $0; sub(/^[TS] [0-9]+ /, "", path)
+      if (kind == "S") { shards[path] = n; done[path]++; next }
+      seen = 1; total[path] += n; if (n > longest[path]) longest[path] = n }
+    END {
+      if (!seen) exit 1
+      while ((getline line < old) > 0) {
+        count = split(line, field, "\t"); path = field[1]
+        if (path == "" || count < 2) continue
+        if (path in total) { stored[path] = line; stored_whole[path] = field[2]; continue }
+        file = path; sub(/^res:\/\//, "", file)
+        if ((getline dummy < file) >= 0) { close(file); print line }
+      }
+      for (path in total) {
+        if (!(path in shards)) printf "%s\t%.3f\t1\t%.3f\n", path, total[path] / 1000, total[path] / 1000
+        else if (done[path] >= shards[path]) {
+          w = sprintf("%.3f", total[path] / 1000)
+          if ((path in stored_whole) && stored_whole[path] + 0 < w + 0) w = stored_whole[path]
+          printf "%s\t%s\t%d\t%.3f\n", path, w, shards[path], longest[path] / 1000
+        }
+        else if (path in stored) print stored[path]
+      }
+    }' > "$times_file.new" && /usr/bin/sort "$times_file.new" > "$times_file.tmp" && mv -f "$times_file.tmp" "$times_file"
+rm -f "$times_file.new" "$times_file.tmp"
 
 # --- 3. scan the output -------------------------------------------------------------------------
 
@@ -443,9 +489,11 @@ if [ -f tools/check.local.sh ]; then
   fi
 fi
 
-# Every run ends with the slowest test files (each file's time is in the logs, as GDIR-TIME: <ms> <file>).
+# Every run ends with the slowest test files (each file's or shard's time is in the logs, as
+# GDIR-TIME: <ms> <file>; a file's shards add up).
 slowest() {
-  for log in $test_logs; do [ -f "$log" ] && clean "$log"; done | sed -n 's/^GDIR-TIME: //p' | /usr/bin/sort -rn \
+  for log in $test_logs; do [ -f "$log" ] && clean "$log"; done | sed -n 's/^GDIR-TIME: //p' \
+    | awk '{ ms = $1; sub(/^[0-9]+ /, ""); sum[$0] += ms } END { for (f in sum) print sum[f] " " f }' | /usr/bin/sort -rn \
     | awk '{ ms[NR] = $1; sub(/^[0-9]+ /, ""); file[NR] = $0; total += ms[NR] }
       END {
         if (NR == 0) exit

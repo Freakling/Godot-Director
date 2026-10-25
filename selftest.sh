@@ -1090,10 +1090,92 @@ printf '\nfunc test_selftest_failure() -> void:\n\texpect_eq(1, 2)\n' >> tests/t
 out="$(bash tools/check.sh --jobs 3 2>&1)"; expect_status "a failing test in one group fails the parallel run" 1 $? "$out"
 expect_output "and names it" "test_market\.gd::test_selftest_failure: expected 2, got 1" "$out"
 cp "$work/saved" tests/test_market.gd
+# Every run records the times. Without [tests] balance the deal is file order and nothing splits.
+times="$logs/test-times.tsv"
+[ -f "$times" ] && grep -qE '^res://tests/test_market\.gd	([0-9]+\.[0-9]{3})	1	[0-9]+\.[0-9]{3}$' "$times" \
+  && ok "a whole run stores each test file's time, one shard and its time as the longest" || bad "a whole run stores each test file's time, one shard and its time as the longest" "$(cat "$times" 2>/dev/null)"
+deal_of() { printf '%s\n' "$1" | sed -n 's/^check: deal: job \([0-9]*\) [0-9.?]* /\1 /p' | tr '\n' ';'; }
+printf 'res://tests/test_dev_menu.gd\t5\nres://tests/test_market.gd\t200\nres://tests/test_play_log.gd\t30\n' > "$times"
+out="$(GDIR_CHECK_DEAL=1 bash tools/check.sh --jobs 3 2>&1)"; expect_status "with no balance setting, --jobs 3 passes" 0 $? "$out"
+[ "$(deal_of "$out")" = "1 res://tests/test_dev_menu.gd;2 res://tests/test_market.gd;3 res://tests/test_play_log.gd;" ] \
+  && ok "with no balance setting the deal is file order and nothing splits" || bad "with no balance setting the deal is file order and nothing splits" "$out"
+# Opt-in, [tests] balance=true: longest first by the last run's times (files with no time first), and
+# a file whose whole time is over [tests] split_over seconds runs as shards of its test methods, its
+# tests counted once.
+cp tools/check.cfg "$work/saved-cfg"; printf '\n[tests]\nbalance=true\nsplit_over=60\n' >> tools/check.cfg
+printf 'res://tests/test_dev_menu.gd\t5\nres://tests/test_market.gd\t200\nres://tests/test_play_log.gd\t30\nres://tests/test_gone.gd\t9\n' > "$times"
+# The seed is the older two-column form (path, seconds): it reads as each file's whole time.
+out="$(GDIR_CHECK_DEAL=1 bash tools/check.sh --jobs 3 2>&1)"; expect_status "an old two-column timings file: --jobs 3 passes" 0 $? "$out"
+expect_output "and runs every test once" "12 tests passed" "$out"
+deal="$(deal_of "$out")"
+[ "$deal" = "1 res://tests/test_market.gd shard 1/3;2 res://tests/test_market.gd shard 2/3;3 res://tests/test_market.gd shard 3/3;1 res://tests/test_play_log.gd;2 res://tests/test_dev_menu.gd;" ] \
+  && ok "the deal is longest first, and a file over split_over is three shards" || bad "the deal is longest first, and a file over split_over is three shards" "$out"
+market_runs="$(for f in "$logs"/tests-*.log; do tr -d '\r' < "$f"; done | grep '^GDIR-TEST: res://tests/test_market\.gd::')"
+[ "$(printf '%s\n' "$market_runs" | wc -l | tr -d ' ')" -eq 6 ] && [ "$(printf '%s\n' "$market_runs" | /usr/bin/sort -u | wc -l | tr -d ' ')" -eq 6 ] \
+  && [ "$(grep -l '^GDIR-TEST: res://tests/test_market\.gd::' "$logs"/tests-*.log | wc -l | tr -d ' ')" -eq 3 ] \
+  && ok "the shards run in three processes, each of the file's tests once" || bad "the shards run in three processes, each of the file's tests once" "$market_runs"
+# shard_times: the market file's shard times from the last run, as "<sum> <longest>" in seconds.
+shard_times() { for f in "$logs"/tests-*.log; do tr -d '\r' < "$f"; done | awk '$1 == "GDIR-TIME:" && $3 == "res://tests/test_market.gd" { n += $2; if ($2 > m) m = $2 } END { printf "%.3f %.3f", n / 1000, m / 1000 }'; }
+read -r m_sum m_longest <<EOF
+$(shard_times)
+EOF
+grep -q "^res://tests/test_market\.gd	$m_sum	3	$m_longest\$" "$times" && ! grep -q 'test_gone' "$times" \
+  && ok "a split run whose shards all finished stores their sum as the whole time, 3 shards and the longest; a deleted file's line is dropped" \
+  || bad "a split run whose shards all finished stores their sum as the whole time, 3 shards and the longest; a deleted file's line is dropped" "$m_sum $m_longest$nl$(cat "$times")"
+expect_output "the slowest files count a sharded file once" "slowest test files \(of 3, " "$out"
+# A stored split of the same count: each shard is weighed by the stored longest shard.
+printf 'res://tests/test_dev_menu.gd\t5\t1\t5\nres://tests/test_market.gd\t200\t3\t0.5\nres://tests/test_play_log.gd\t30\t1\t30\n' > "$times"
+out="$(GDIR_CHECK_DEAL=1 bash tools/check.sh --jobs 3 2>&1)"; expect_status "a stored three-shard split passes" 0 $? "$out"
+read -r m_sum m_longest <<EOF
+$(shard_times)
+EOF
+[ "$(printf '%s\n' "$out" | grep -cE "^check: deal: job [0-9]+ 0\.500 res://tests/test_market\.gd shard [1-3]/3\$")" -eq 3 ] \
+  && grep -q "^res://tests/test_market\.gd	$m_sum	3	$m_longest\$" "$times" \
+  && ok "the split stays 3 shards, each weighed by the stored longest shard, and a lower sum replaces the whole time" \
+  || bad "the split stays 3 shards, each weighed by the stored longest shard, and a lower sum replaces the whole time" "$out$nl$(cat "$times")"
+# A higher sum doesn't: a slowed test makes the shards add up to more than the stored 0.010 s.
+cp tests/test_market.gd "$work/saved"
+printf '\nfunc test_selftest_slow() -> void:\n\tOS.delay_msec(50)\n\texpect(true)\n' >> tests/test_market.gd
+cp "$work/saved-cfg" tools/check.cfg; printf '\n[tests]\nbalance=true\nsplit_over=0.005\n' >> tools/check.cfg
+printf 'res://tests/test_dev_menu.gd\t0.001\t1\t0.001\nres://tests/test_market.gd\t0.010\t1\t0.010\nres://tests/test_play_log.gd\t0.001\t1\t0.001\n' > "$times"
+out="$(GDIR_CHECK_DEAL=1 bash tools/check.sh --jobs 3 2>&1)"; expect_status "a split whose shards add up to more passes" 0 $? "$out"
+grep -qE "^res://tests/test_market\.gd	0\.010	2	0\.[0-9]{3}\$" "$times" && expect_output "and splits in two" "deal: job [0-9]+ [0-9.]+ res://tests/test_market\.gd shard 2/2" "$out" \
+  && ok "a higher sum leaves the stored whole time alone" || bad "a higher sum leaves the stored whole time alone" "$out$nl$(cat "$times")"
+cp "$work/saved" tests/test_market.gd
+cp "$work/saved-cfg" tools/check.cfg; printf '\n[tests]\nbalance=true\nsplit_over=60\n' >> tools/check.cfg
+# A file marked no-split runs whole.
+cp tests/test_market.gd "$work/saved"
+{ head -n 1 "$work/saved"; echo "# gdir: no-split"; tail -n +2 "$work/saved"; } > tests/test_market.gd
+printf 'res://tests/test_dev_menu.gd\t5\nres://tests/test_market.gd\t200\nres://tests/test_play_log.gd\t30\n' > "$times"
+out="$(GDIR_CHECK_DEAL=1 bash tools/check.sh --jobs 3 2>&1)"; expect_status "a no-split file passes" 0 $? "$out"
+[ "$(deal_of "$out")" = "1 res://tests/test_market.gd;2 res://tests/test_play_log.gd;3 res://tests/test_dev_menu.gd;" ] \
+  && ok "a file with # gdir: no-split runs whole" || bad "a file with # gdir: no-split runs whole" "$out"
+cp "$work/saved" tests/test_market.gd
+# split_over = 0 never splits; a file with no time goes first.
+cp "$work/saved-cfg" tools/check.cfg; printf '\n[tests]\nbalance=true\nsplit_over=0\n' >> tools/check.cfg
+printf 'res://tests/test_market.gd\t200\nres://tests/test_play_log.gd\t30\n' > "$times"
+out="$(GDIR_CHECK_DEAL=1 bash tools/check.sh --jobs 3 2>&1)"; expect_status "[tests] split_over=0 passes" 0 $? "$out"
+[ "$(deal_of "$out")" = "1 res://tests/test_dev_menu.gd;2 res://tests/test_market.gd;3 res://tests/test_play_log.gd;" ] \
+  && ok "split_over=0 runs the slow file whole, after the file with no time" || bad "split_over=0 runs the slow file whole, after the file with no time" "$out"
+cp "$work/saved-cfg" tools/check.cfg; printf '\n[tests]\nbalance=true\nsplit_over=60\n' >> tools/check.cfg
+# No timings file (or a stale one) with balance on: everything still runs, in file order.
+rm -f "$times"
+out="$(GDIR_CHECK_DEAL=1 bash tools/check.sh --jobs 2 2>&1)"; expect_status "no timings file: --jobs 2 passes" 0 $? "$out"
+expect_output "and runs every test" "12 tests passed" "$out"
+[ "$(deal_of "$out")" = "1 res://tests/test_dev_menu.gd;2 res://tests/test_market.gd;1 res://tests/test_play_log.gd;" ] \
+  && ok "with no times the files are dealt in file order" || bad "with no times the files are dealt in file order" "$out"
+[ "$(wc -l < "$times" | tr -d ' ')" -eq 3 ] && ok "and the run writes the timings file again" || bad "and the run writes the timings file again" "$(cat "$times" 2>/dev/null)"
+printf 'res://tests/test_old.gd\t500\nnot a line\n' > "$times"
+out="$(bash tools/check.sh --jobs 2 2>&1)"; expect_status "a stale timings file still runs everything" 0 $? "$out"
+expect_output "every test of it" "12 tests passed" "$out"
+expect_no_output "and the deal stays quiet without GDIR_CHECK_DEAL" "check: deal:" "$out"
+cp "$work/saved-cfg" tools/check.cfg
 # The cfg keys: the seed has them with their defaults, the example has none (the defaults apply).
 grep -q '^jobs="auto"$' "$src/project/tools/check.cfg" && grep -q '^timeout=600$' "$src/project/tools/check.cfg" \
-  && grep -q 'case "$limit" in .*limit=600' tools/check.sh && ok "the seed's [tests] jobs and timeout have their defaults" \
-  || bad "the seed's [tests] jobs and timeout have their defaults"
+  && grep -q '^balance=false$' "$src/project/tools/check.cfg" && grep -q '^var _balance: bool = false$' tools/check.gd \
+  && grep -q '^split_over=0$' "$src/project/tools/check.cfg" && grep -q '^var _split_over: float = 0\.0$' tools/check.gd \
+  && grep -q 'case "$limit" in .*limit=600' tools/check.sh && ok "the seed's [tests] jobs, timeout, balance and split_over have their defaults" \
+  || bad "the seed's [tests] jobs, timeout, balance and split_over have their defaults"
 cp tools/check.cfg "$work/saved-cfg"
 printf '\n[tests]\njobs=1\n' >> tools/check.cfg
 out="$(bash tools/check.sh 2>&1)"; expect_status "[tests] jobs=1 in check.cfg runs one process" 0 $? "$out"
