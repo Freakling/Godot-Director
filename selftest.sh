@@ -2034,6 +2034,32 @@ grep -q '"event":"autoplay.step".*"action":"next_day_fast","kind":"api"' "$(late
   && ok "the scripted scenario mixes ui actions and an api action, and its expects hold" || bad "the scripted scenario performs its api action"
 [ -z "$(/usr/bin/find "$user_data" -type f -newer "$work/before-autoplay" 2>/dev/null)" ] && ok "autoplay writes nothing in the game's user://" \
   || bad "autoplay writes nothing in the game's user://" "$(/usr/bin/find "$user_data" -type f -newer "$work/before-autoplay")"
+# Several scenarios in one call play side by side: each has its own run folder and log, the results
+# come out in the order given, and the exit code is the worst.
+before_multi="$(ls "$runs")"
+out="$(bash tools/autoplay.sh trade_week smoke --no-images 2>&1)"; expect_status "two scenarios in one call both run, with nothing found" 0 $? "$out"
+[ "$(printf '%s\n' "$out" | grep -c ' · 0 findings · ')" = "2" ] && ok "a result line for each of the two scenarios" || bad "a result line for each of the two scenarios" "$out"
+[ "$(printf '%s\n' "$out" | grep -E '^autoplay: (trade_week|smoke) · ' | cut -d ' ' -f 2 | uniq | tr '\n' ' ')" = "trade_week smoke " ] \
+  && ok "the results are in the order given" || bad "the results are in the order given" "$out"
+new_runs="$(ls "$runs" | grep -v -x -F "$before_multi")"
+[ "$(printf '%s\n' "$new_runs" | grep -c -E '^(trade_week|smoke)-1-')" = "2" ] \
+  && ok "each scenario has its own run folder" || bad "each scenario has its own run folder" "$new_runs"
+mrun_a="$(printf '%s\n' "$new_runs" | grep '^trade_week-1-' | head -n 1)"; mrun_b="$(printf '%s\n' "$new_runs" | grep '^smoke-1-' | head -n 1)"
+if [ -n "$mrun_a" ] && [ -n "$mrun_b" ] && [ -f "$(ls "$runs/$mrun_a"/run-*.log 2>/dev/null | head -n 1)" ] && [ -f "$(ls "$runs/$mrun_b"/run-*.log 2>/dev/null | head -n 1)" ] \
+    && [ -f .godot/godot-director/autoplay-0.log ] && [ -f .godot/godot-director/autoplay-1.log ] \
+    && grep -q '"scenario":"trade_week"\|trade_week' "$runs/$mrun_a"/run-*.jsonl && ! grep -q 'trade_week' "$runs/$mrun_b"/run-*.jsonl; then
+  ok "each run has its own play log, and Godot's output goes to its own log"
+else
+  bad "each run has its own play log, and Godot's output goes to its own log" "$mrun_a $mrun_b"
+fi
+out="$(bash tools/autoplay.sh smoke nosuch_scenario --no-images 2>&1)"; expect_status "a failing scenario beside a passing one exits 1" 1 $? "$out"
+expect_output "the passing one is reported" "^autoplay: smoke · .* · 0 findings · " "$out"
+expect_output "the failing one is reported" "FAIL: .*no scenario 'nosuch_scenario'" "$out"
+out="$(bash tools/autoplay.sh nosuch_scenario smoke --no-images --steps 2 2>&1)"; expect_status "the order given doesn't change the exit code" 1 $? "$out"
+expect_output "the options reach every scenario" " · 2 steps · " "$out"
+out="$(AUTOPLAY_JOBS=1 bash tools/autoplay.sh smoke trade_week --no-images 2>&1)"; expect_status "capped at one process: the scenarios still all run" 0 $? "$out"
+[ "$(printf '%s\n' "$out" | grep -c ' · 0 findings · ')" = "2" ] && ok "and report both" || bad "and report both" "$out"
+out="$(bash tools/autoplay.sh smoke trade_week --replay x --no-images 2>&1)"; expect_status "--replay with several scenarios is refused" 1 $? "$out"
 # Determinism: the same seed twice gives the same JSONL, apart from time stamps and run ids, and the
 # same element maps, with a Tween that widens the shop's Buy button after every change (autoplay
 # runs at a fixed 60 frames a second, and each step settles until the tween has ended).

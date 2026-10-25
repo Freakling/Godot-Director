@@ -4,7 +4,7 @@
 The game plays itself, and you read what happened (`/autoplay` in Claude Code). `bash tools/autoplay.sh` launches the real game through its main scene and plays a scenario through the game's adapter; `bash tools/log_review.sh` turns the play log into a review you can read without opening the game. Use it to playtest a change before the human does, to check what a person's session did ("I just played, check the logs"), and to replay a failure.
 
 Requests (the words `run`, `all`, `review`, `player` and `replay` mean the same as their flags):
-- `<scenario>` or `--all`: play it, review the run, report. No argument plays `smoke`.
+- `<scenario>...` or `--all`: play it, review the run, report. No argument plays `smoke`.
 - `--replay <run folder> [--until <step>]`: play a failed run again from its recording, review the replay, report whether it fails at the same step.
 - `--player`: review the newest log a person played, with no run of yours. This is what "check the logs" means.
 - `--latest` or a run folder: review a run that already exists.
@@ -15,7 +15,7 @@ Requests (the words `run`, `all`, `review`, `player` and `replay` mean the same 
 - **Written by a run** into `playtesting/autoplay/<scenario>-<seed>-<datetime>/` (gitignored): the play log's `.log` and `.jsonl`, `<step>-<reason>.png`, `.elements.json` and `.map.png` at the start, at every view change, snapshot, error, warning, invariant failure and progress block, and at the end, `repro.json` when something was found, and `review.md` and `findings.json` after the review.
 
 ## Run
-1. Run `bash tools/autoplay.sh <scenario>` (or `--all`; `--list` names the scenarios). `--seed N` picks the run's seed: the same seed and scenario play the same run. It needs a display for screenshots and opens a small window; Godot is found as the check finds it.
+1. Run `bash tools/autoplay.sh <scenario>` (or `--all`; `--list` names the scenarios). Name several scenarios in one call (`bash tools/autoplay.sh <a> <b> ...`) instead of one call each: they play at the same time, up to the CPU count, each with its own run folder and log, and the lines come out in the order given; the exit code is the worst of them. `--seed N` picks the run's seed: the same seed and scenario play the same run. It needs a display for screenshots and opens a small window; Godot is found as the check finds it.
 2. Read the exit code:
    - `0` and a line ending `skipped:` means the game can't be played yet (no PlayLog autoload on the base, no main scene, or the adapter's `start_run()` is still the seed's). Say what the line says to wire, and stop; the check skips the same way and passes. A game whose item adds the first playable scene fills the adapter in that item.
    - `0` otherwise: a clean run. Still review it, for the delta and the coverage.
