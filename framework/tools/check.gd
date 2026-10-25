@@ -12,13 +12,28 @@ extends SceneTree
 ## 4.0, so games not yet migrated keep working; it is deprecated.
 ##
 ## tools/check.sh may split the work for a parallel run (`--jobs N`): `-- --no-tests` does everything
-## but the tests, and `-- --tests <k> <n>` runs only the k-th of n contiguous groups of the sorted
-## test files (k from 1). Each test file's time is printed as `GDIR-TIME: <ms> <path>`.
+## but the tests, and `-- --tests <k> <n>` runs only the k-th of n jobs (k from 1). By default each
+## job takes a contiguous group of the sorted test files, in file order. With [tests] balance=true
+## (opt-in) every job works out the same deal from .godot/godot-director/test-times.tsv (written by
+## tools/check.sh on every run; per line a path, its whole time in seconds (lowered to the sum of
+## its shards when a split run finished them all, never raised by one), the shard count of its last run and that run's longest
+## shard in seconds; an older line of path and seconds reads as a whole time): units go out heaviest first, files with no time first of all, each to the
+## job with the least time so far. Then a file whose whole time is over [tests] split_over seconds
+## (default 0, off) becomes K shards, K = min(n, ceil(whole / split_over), its test count), its
+## test_* methods dealt round-robin in the order listed here, unless a line `# gdir: no-split` is
+## among its first ten lines; a shard weighs the stored longest shard when the stored count is K,
+## else whole / K. A shard creates a fresh instance and calls before_each for each test, as a whole
+## file does. Each file's or shard's time is printed as `GDIR-TIME: <ms> <path>`, a shard's also as
+## `GDIR-SHARDS: <K> <path>`, and job 1 prints the deal as
+## `GDIR-DEAL: <job> <seconds or ?> <path>[ shard <i>/<K>]`.
 
 const CONFIG_PATH: String = "res://tools/check.cfg"
 const TYPED_SETTING: String = "debug/gdscript/warnings/untyped_declaration"
 const CHECK_META: StringName = &"godot_director_check"
 const OLD_CHECK_META: StringName = &"claude4godot_check"   # deprecated: remove in 4.0
+const TIMES_PATH: String = "res://.godot/godot-director/test-times.tsv"
+const NO_SPLIT_MARKER: String = "# gdir: no-split"
+const NO_SPLIT_LINES: int = 10
 var _failures: PackedStringArray = PackedStringArray()
 var _notes: PackedStringArray = PackedStringArray()
 var _counts: Dictionary = {}
@@ -40,6 +55,8 @@ var _screen_forbidden: PackedStringArray = PackedStringArray([
 ])
 var _allow_writes_to: PackedStringArray = PackedStringArray()
 var _tests_dir: String = "tests"
+var _balance: bool = false
+var _split_over: float = 0.0
 ## Test suites for other frameworks are left to tools/check.local.sh.
 var _other_test_bases: PackedStringArray = PackedStringArray([
 	"extends GutTest", "extends \"res://addons/gut/test.gd\"", "extends GdUnitTestSuite",
@@ -107,6 +124,8 @@ func _read_config() -> void:
 	_screen_forbidden.append_array(_strings(config.get_value("screens", "forbidden", [])))
 	_allow_writes_to = _strings(config.get_value("screens", "allow_writes_to", []))
 	_tests_dir = str(config.get_value("tests", "dir", _tests_dir)).trim_prefix("res://").trim_suffix("/")
+	_balance = str(config.get_value("tests", "balance", _balance)).to_lower() == "true"
+	_split_over = maxf(0.0, str(config.get_value("tests", "split_over", _split_over)).to_float())
 	# tools/check.sh reads these lines and ignores matching output (printed once, by the main run).
 	if not _run_rest_on:
 		return
@@ -264,18 +283,160 @@ func _run_tests(files: Array[String]) -> void:
 	for path: String in files:
 		if path.begins_with(tests_root) and path.get_file().begins_with("test_") and path.get_extension() == "gd":
 			test_files.append(path)
-	# A parallel run's group: contiguous, in file order, the same split in every process.
-	var first: int = floori(test_files.size() * (_group - 1) / float(_groups))
-	var last: int = floori(test_files.size() * _group / float(_groups))
-	if last > first:
-		print("GDIR-GROUP: %s to %s (%d of %d test files)" % [test_files[first], test_files[last - 1], last - first, test_files.size()])
-	for index: int in range(first, last):
+	if _groups <= 1:
+		for path: String in test_files:
+			var started: int = Time.get_ticks_msec()
+			_run_test_file(path)
+			print("GDIR-TIME: %d %s" % [Time.get_ticks_msec() - started, path])
+		return
+	var units: Array[Dictionary] = _deal(test_files) if _balance else _file_order(test_files)
+	var mine: Array[Dictionary] = []
+	var expected_ms: float = 0.0
+	for unit: Dictionary in units:
+		if _group == 1:
+			var known: bool = float(unit["ms"]) >= 0.0
+			print("GDIR-DEAL: %d %s %s" % [int(unit["job"]), ("%.3f" % (float(unit["ms"]) / 1000.0)) if known else "?", _unit_name(unit)])
+		if int(unit["job"]) == _group:
+			mine.append(unit)
+			expected_ms += float(unit["weight"])
+	if not _balance:
+		if not mine.is_empty():
+			print("GDIR-GROUP: %s to %s (%d of %d test files)" % [mine[0]["path"], mine[-1]["path"], mine.size(), units.size()])
+	else:
+		print("GDIR-GROUP: %d of %d test units (about %.0f s by the last run)" % [mine.size(), units.size(), expected_ms / 1000.0])
+	for unit: Dictionary in mine:
 		var started: int = Time.get_ticks_msec()
-		_run_test_file(test_files[index])
-		print("GDIR-TIME: %d %s" % [Time.get_ticks_msec() - started, test_files[index]])
+		_run_test_file(str(unit["path"]), int(unit["shard"]), int(unit["shards"]))
+		print("GDIR-TIME: %d %s" % [Time.get_ticks_msec() - started, unit["path"]])
+		if int(unit["shards"]) > 1:
+			print("GDIR-SHARDS: %d %s" % [int(unit["shards"]), unit["path"]])
 
 
-func _run_test_file(path: String) -> void:
+## The default parallel split: contiguous groups of the test files in file order, whole files only.
+func _file_order(test_files: Array[String]) -> Array[Dictionary]:
+	var times: Dictionary = _read_times({})
+	var units: Array[Dictionary] = []
+	for job: int in range(1, _groups + 1):
+		var first: int = floori(test_files.size() * (job - 1) / float(_groups))
+		var last: int = floori(test_files.size() * job / float(_groups))
+		for order: int in range(first, last):
+			var ms: float = float(times.get(test_files[order], -1.0))
+			units.append({
+				"path": test_files[order], "order": order, "shard": 0, "shards": 1, "ms": ms,
+				"weight": maxf(0.0, ms), "job": job,
+			})
+	return units
+
+
+## The balanced run's work units in deal order, each with the job it goes to (from 1). The same
+## inputs give the same deal in every process.
+func _deal(test_files: Array[String]) -> Array[Dictionary]:
+	var split_runs: Dictionary = {}
+	var times: Dictionary = _read_times(split_runs)
+	var known_total: float = 0.0
+	var known_count: int = 0
+	for path: String in test_files:
+		if times.has(path):
+			known_total += float(times[path])
+			known_count += 1
+	# A file with no time yet weighs the average of the others (1 s when none has one).
+	var unknown_weight: float = known_total / known_count if known_count > 0 else 1000.0
+	var units: Array[Dictionary] = []
+	for order: int in test_files.size():
+		var path: String = test_files[order]
+		var ms: float = float(times.get(path, -1.0))
+		var shards: int = 1
+		if ms >= 0.0 and _split_over > 0.0 and ms > _split_over * 1000.0 and not _no_split(path):
+			shards = mini(_groups, ceili(ms / (_split_over * 1000.0)))
+			if shards > 1:
+				var test_script: GDScript = ResourceLoader.load(path) as GDScript
+				if test_script != null and test_script.can_instantiate():
+					shards = mini(shards, _test_names(test_script).size())
+				else:
+					shards = 1
+			shards = maxi(1, shards)
+		var unit_ms: float = ms / shards if ms >= 0.0 else -1.0
+		# A split run measured each shard of this count: its longest shard is the better guess.
+		var last_split: Array = split_runs.get(path, [1, 0.0])
+		if shards > 1 and int(last_split[0]) == shards:
+			unit_ms = float(last_split[1])
+		for shard: int in shards:
+			units.append({
+				"path": path, "order": order, "shard": shard, "shards": shards, "ms": unit_ms,
+				"weight": maxf(1.0, unit_ms if ms >= 0.0 else unknown_weight),
+			})
+	units.sort_custom(_unit_before)
+	var loads: Array[float] = []
+	for job: int in _groups:
+		loads.append(0.0)
+	for unit: Dictionary in units:
+		var least: int = 0
+		for job: int in range(1, _groups):
+			if loads[job] < loads[least]:
+				least = job
+		unit["job"] = least + 1
+		loads[least] += float(unit["weight"])
+	return units
+
+
+## Files with no time first (in file order), then the longest first.
+func _unit_before(a: Dictionary, b: Dictionary) -> bool:
+	var a_known: bool = float(a["ms"]) >= 0.0
+	var b_known: bool = float(b["ms"]) >= 0.0
+	if a_known != b_known:
+		return not a_known
+	if a_known and float(a["ms"]) != float(b["ms"]):
+		return float(a["ms"]) > float(b["ms"])
+	if int(a["order"]) != int(b["order"]):
+		return int(a["order"]) < int(b["order"])
+	return int(a["shard"]) < int(b["shard"])
+
+
+func _unit_name(unit: Dictionary) -> String:
+	var shards: int = int(unit["shards"])
+	return str(unit["path"]) + ("" if shards <= 1 else " shard %d/%d" % [int(unit["shard"]) + 1, shards])
+
+
+## Each test file's whole time in milliseconds. split_runs gets [shards, longest shard ms] for a file
+## whose last run was split. Lines are tab-separated: path, whole seconds, shards, longest shard
+## seconds; an older line of only a path and seconds is a whole time.
+func _read_times(split_runs: Dictionary) -> Dictionary:
+	var times: Dictionary = {}
+	if not FileAccess.file_exists(TIMES_PATH):
+		return times
+	for line: String in FileAccess.get_file_as_string(TIMES_PATH).split("\n"):
+		var fields: PackedStringArray = line.strip_edges().split("\t")
+		if fields.size() < 2 or not fields[1].is_valid_float():
+			continue
+		times[fields[0]] = maxf(0.0, fields[1].to_float() * 1000.0)
+		if fields.size() >= 4 and fields[2].is_valid_int() and int(fields[2]) > 1 and fields[3].is_valid_float():
+			split_runs[fields[0]] = [int(fields[2]), maxf(0.0, fields[3].to_float() * 1000.0)]
+	return times
+
+
+func _no_split(path: String) -> bool:
+	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return false
+	for index: int in NO_SPLIT_LINES:
+		if file.eof_reached():
+			break
+		if file.get_line().strip_edges() == NO_SPLIT_MARKER:
+			return true
+	return false
+
+
+func _test_names(test_script: GDScript) -> PackedStringArray:
+	var names: PackedStringArray = PackedStringArray()
+	for method: Dictionary in test_script.get_script_method_list():
+		var method_name: String = str(method.get("name", ""))
+		if method_name.begins_with("test_") and not names.has(method_name):
+			names.append(method_name)
+	return names
+
+
+## Runs the file's test_* methods; with shards > 1, only every shards-th one from shard (from 0).
+func _run_test_file(path: String, shard: int = 0, shards: int = 1) -> void:
 	if _is_other_framework(path):
 		_notes.append("%s belongs to another test framework; run it from tools/check.local.sh" % path)
 		return
@@ -283,13 +444,10 @@ func _run_test_file(path: String) -> void:
 	if test_script == null or not test_script.can_instantiate():
 		_failures.append("%s: test script doesn't compile" % path)
 		return
-	var names: PackedStringArray = PackedStringArray()
-	for method: Dictionary in test_script.get_script_method_list():
-		var method_name: String = str(method.get("name", ""))
-		if method_name.begins_with("test_") and not names.has(method_name):
-			names.append(method_name)
-	for method_name: String in names:
-		_run_test(test_script, path, method_name)
+	var names: PackedStringArray = _test_names(test_script)
+	for index: int in names.size():
+		if index % shards == shard:
+			_run_test(test_script, path, names[index])
 
 
 func _is_other_framework(path: String) -> bool:
