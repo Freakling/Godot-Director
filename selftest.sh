@@ -853,6 +853,7 @@ echo "git guard"
 guard() { # guard <expected exit> <command>
   local escaped="${2//\\/\\\\}"
   escaped="${escaped//\"/\\\"}"
+  escaped="${escaped//$'\n'/\\n}"
   printf '{"session_id":"s","tool_name":"Bash","tool_input":{"command":"%s","description":"run"}}' "$escaped" \
     | bash .claude/hooks/guard-git.sh >/dev/null 2>&1
   local got=$?
@@ -870,6 +871,35 @@ for cmd in 'git status --short' 'git commit -m "feat: x (T12)" -- a.gd' 'git com
     'git push origin feature-flag' 'git restore --staged a.gd' 'git checkout -b topic' 'bash tools/check.sh' \
     'git commit -m "docs: grep -n usage" -- a.md' "git commit -m 'fix: handle -f flag' -- a.gd" \
     'git reset --soft HEAD~1' 'git switch main'; do
+  guard 0 "$cmd"
+done
+
+# Hangs: an empty Python heredoc, unbounded waits, a Godot run without a time limit, a long sleep.
+for cmd in $'python3 - <<\'EOF\' 2>/dev/null || echo "no python"\nEOF' $'python - <<EOF\nEOF' \
+    $'py.exe - <<-"EOF"\n  EOF  ' $'python3 - <<\'EOF\' 2>/dev/null || python - <<\'EOF2\'\nEOF\nprint(1)\nEOF2' \
+    $'cd x && python3 - <<EOF\nEOF\necho done' \
+    'until grep -q "^exit" /tmp/t/tasks/b1.output; do sleep 5; done' 'until [ -f done ]; do sleep 5; done' \
+    'while true; do sleep 10; done' 'timeout 600 bash -c "until [ -f x ]; do sleep 5; done"' \
+    'timeout 5m bash -c "until [ -f x ]; do sleep 5; done"' \
+    '"$GODOT_BIN" --headless --path . --script run_tests.gd' \
+    'G=$(cat tools/godot_bin.local); "$G" --headless --path . --script run_tests.gd' \
+    '/c/tools/Godot_v4.7.2-stable_win64_console.exe --headless --import' 'godot --headless --script x.gd' \
+    'timeout 300 "$GODOT_BIN" --headless --script x.gd' 'sleep 300' 'sleep 6m' 'echo wait && sleep 1h'; do
+  guard 2 "$cmd"
+done
+for cmd in $'python3 - <<\'EOF\'\nprint("hi")\nEOF' 'python3 --version 2>/dev/null || echo "no python"' \
+    $'python3 - <<EOF\nimport sys\nEOF' \
+    'timeout 240 bash -c "until [ -f x ]; do sleep 5; done"' '(timeout 4m bash -c "while [ ! -f x ]; do sleep 2; done")' \
+    'cd x && timeout 280s bash -c "until [ -f x ]; do sleep 5; done"' \
+    'until grep -q "exited with code" /tmp/t/tasks/b1.output; do sleep 5; done' \
+    'until grep -qE "exited with code|\[killed\]" /tmp/t/tasks/b1.output; do sleep 5; done' \
+    'sleep 5' 'sleep 280' 'sleep 4m' \
+    'timeout 120 "$GODOT_BIN" --headless --path . --script run_tests.gd' \
+    'G=$(cat tools/godot_bin.local); timeout 120 "$G" --headless --path . --script run_tests.gd' \
+    'G=$(cat tools/godot_bin.local) && (timeout 2m "$G" --headless --import)' \
+    'timeout 60 /c/tools/Godot_v4.7.2-stable_win64_console.exe --headless --import' \
+    'bash tools/check.sh' 'bash tools/autoplay.sh smoke' 'bash tools/ui_capture.sh --list' \
+    'git commit -m "docs: until loops with sleep 600 need a timeout; godot --headless too" -- a.md'; do
   guard 0 "$cmd"
 done
 
