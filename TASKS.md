@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T28 · B3 · R1
+**Next IDs:** T29 · B3 · R1
 
 ## Queue
+
+### T28 · The check skips the import pass when no imported file changed · done · S · agent
+- Touches: framework/tools/check.sh, framework/tools/autoplay.sh, framework/tools/ui_capture.sh, selftest.sh, CHANGELOG.md
+- Done when: the check, autoplay and capture skip the import pass, saying so in one line, when the fingerprint matches the one stored after the last pass that exited 0 and .godot/imported exists; the fingerprint covers the files Godot imports (everything but scripts, scenes, resources read directly, .cfg, .md, .uid and .godot/, plus project.godot), the path and class_name, extends and @icon lines of every script (so a body-only edit skips), and the scene and shader paths; a changed or new asset, a new or changed class declaration, a fresh clone or `check.sh --import` runs it; the shared lines agree across the three scripts, and the selftest covers the skip, the forced pass and a new asset (test) · CHANGELOG carries the entry (check)
+- GDD: (none)
+- Source: Director-Driven-Development T191
 
 ### T27 · The Bash guard blocks hangs: empty Python heredocs, unbounded waits and Godot runs without a time limit · done · M · agent
 - Touches: framework/.claude/hooks/guard-git.sh, framework/.claude/settings.json, framework/.godot-director/rules.md, selftest.sh, CHANGELOG.md

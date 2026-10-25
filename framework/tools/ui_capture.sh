@@ -128,8 +128,53 @@ run_godot() { # run_godot <log file> <wrapper or ""> <godot arguments...>
   fi
 }
 
-# An import pass first, as the check does, so a fresh clone has its import cache and class list.
-run_godot "$state_dir/ui_import.log" "" --headless --path . --import
+# An import pass first, as the check does, so a fresh clone has its import cache and class list. It
+# is skipped when nothing Godot imports has changed since the last pass that exited 0.
+# >>> import skip (shared: check.sh, autoplay.sh and ui_capture.sh carry these lines; selftest.sh compares them)
+# import_fingerprint: a hash of what the import pass and Godot's global class cache depend on, over the
+# files tracked or untracked-not-ignored: the files Godot imports (all but scripts, scenes, resources
+# read directly, .cfg and .md files, .uid files and .godot/, plus project.godot, which holds the import
+# settings); the path of every script with its class_name, extends and @icon lines (what the class
+# cache records, so a body-only edit doesn't count); and the paths of scenes and shaders. Empty outside
+# a git repository.
+import_fingerprint() {
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  local all imported gd decl scenes
+  all="$(git -c core.quotePath=false ls-files -z -c -o --exclude-standard 2>/dev/null | tr '\0' '\n' \
+    | while IFS= read -r path; do [ -f "$path" ] && printf '%s\n' "$path"; done)"
+  imported="$( { printf '%s\n' "$all" | grep -v -E '^$|^\.godot/|\.(gd|tscn|scn|tres|res|gdshader|gdshaderinc|godot|cfg|md|uid)$'; \
+    [ -f project.godot ] && echo project.godot; } )"
+  [ -n "$imported" ] || return 0
+  gd="$(printf '%s\n' "$all" | grep -E '\.gd$')"
+  decl="$(git -c core.quotePath=false grep --untracked -E '^(class_name|extends|@icon)' -- '*.gd' 2>/dev/null)"
+  scenes="$(printf '%s\n' "$all" | grep -E '\.(gdshader|gdshaderinc|tscn|scn)$')"
+  { printf '%s\n' "$imported"; printf '%s\n' "$imported" | git hash-object --no-filters --stdin-paths; \
+    printf '%s\n' "$gd" "$decl" "$scenes"; } | git hash-object --stdin
+}
+# import_skip: 0 when the import pass can be skipped: .godot/imported exists, and the fingerprint is
+# the one stored after the last import pass that exited 0 (so a fresh clone never skips).
+import_skip() {
+  local now
+  [ -e .godot/imported ] || return 1
+  now="$(import_fingerprint)"
+  [ -n "$now" ] && [ "$now" = "$(cat "$state_dir/import-fingerprint" 2>/dev/null)" ]
+}
+# import_record <exit status of the import pass>: store the fingerprint after a pass that exited 0,
+# and forget the stored one after any other.
+import_record() {
+  local now
+  if [ "$1" -ne 0 ]; then rm -f "$state_dir/import-fingerprint"; return 0; fi
+  now="$(import_fingerprint)"
+  [ -n "$now" ] && printf '%s' "$now" > "$state_dir/import-fingerprint"
+  return 0
+}
+# <<< import skip
+if import_skip; then
+  echo "ui_capture: import pass skipped (no imported file changed)"
+else
+  run_godot "$state_dir/ui_import.log" "" --headless --path . --import
+  import_record "$?"
+fi
 # Only the capture run gets a temporary user:// folder, deleted afterwards: nothing it runs reads
 # or writes the player's data.
 user_dir="$(mktemp -d)"
@@ -210,4 +255,6 @@ if [ "$verify" -eq 1 ] && [ "$failed" -eq 0 ]; then
   if [ "$status" -eq 3 ]; then exit 3; fi
   if [ "$status" -ne 0 ]; then failed=1; fi
 fi
+# A failing run may leave Godot's class cache stale (scripts aren't in the import fingerprint).
+[ "$failed" -eq 0 ] || rm -f "$state_dir/import-fingerprint"
 exit "$failed"
