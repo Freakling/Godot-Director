@@ -4,13 +4,19 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T27 · B3 · R1
+**Next IDs:** T28 · B3 · R1
 
 ## Queue
 
-### T26 � A grey box can be dragged to re-arrange a screen � done � M � agent
+### T27 · The Bash guard blocks hangs: empty Python heredocs, unbounded waits and Godot runs without a time limit · done · M · agent
+- Touches: framework/.claude/hooks/guard-git.sh, framework/.claude/settings.json, framework/.godot-director/rules.md, selftest.sh, CHANGELOG.md
+- Done when: the guard, also run for Monitor, blocks an empty Python heredoc, an until or while loop with sleep without `timeout` of 280 seconds or less, a loop reading a background command's output without its end marker, a direct Godot run without such a `timeout`, and a sleep over 280 seconds, and passes the forms that work (check) · `rules.md` says to give long commands a time limit, run long checks in the background and never probe with an empty heredoc (check) · a CHANGELOG entry under Unreleased (check)
+- GDD: (none)
+- Source: Director-Driven-Development T163
+
+### T26 · A grey box can be dragged to re-arrange a screen · done · M · agent
 - Touches: framework/tools/ui_drawing.gd, framework/.godot-director/procedures/ui-design.md, project/design/ui/README.md, examples/market-day/design/ui/README.md, tests/ui-drawing, selftest.sh, CHANGELOG.md
-- Done when: the starter's grey boxes are unlocked; the reader reads one moved or resized by more than 2 px as a `keep` box named after its element, with `from` and `n`, and skips untouched, hidden and deleted ones (test) � the README says to drag the grey box (check)
+- Done when: the starter's grey boxes are unlocked; the reader reads one moved or resized by more than 2 px as a `keep` box named after its element, with `from` and `n`, and skips untouched, hidden and deleted ones (test) · the README says to drag the grey box (check)
 - GDD: (none)
 - Source: Director-Driven-Development T180
 
