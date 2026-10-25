@@ -4,9 +4,16 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T30 · B3 · R1
+**Next IDs:** T31 · B3 · R1
 
 ## Queue
+
+### T30 · A sweep of autoplay scenarios plays side by side, and the builder doesn't play smoke twice · done · M · agent
+- Touches: framework/tools/autoplay.sh, framework/.godot-director/procedures/build.md, framework/.godot-director/procedures/autoplay.md, selftest.sh, CHANGELOG.md
+- Done when: `bash tools/autoplay.sh <scenario> <scenario> ...` (and `--all`) runs the scenarios in separate Godot processes at the same time under the one lock and one import check, each with its own user dir, log and run folder, capped at the CPU count, and reports each scenario's result with exit codes unchanged; one scenario behaves as today (test) · `build.md` has the builder play the scenarios the item names once, after the tests pass, in one call, and leave out `smoke` when `tools/check.cfg` › `[autoplay]` has the check play it (check) · measured on The Guildkeeper's scratch copy: a sweep of quest_job, quest_hold, quest_controls and smoke (check)
+- GDD: (none)
+- Source: Director-Driven-Development T197
+- Measured on The Guildkeeper (12 CPUs, windowed runs): the sweep of quest_job, quest_hold, quest_controls and smoke took 462 s as four calls and 124 s as one call.
 
 ### T29 · The check can balance its jobs by last run's timings and split a slow test file by test method, opt-in · done · L · agent
 - Touches: framework/tools/check.sh, framework/tools/check.gd, project/tools/check.cfg, framework/.godot-director/rules.md, README.md, selftest.sh, CHANGELOG.md

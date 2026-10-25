@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Godot Director autoplay · framework-owned: replaced on upgrade.
 #
-#   bash tools/autoplay.sh <scenario>|--all [--seed N] [--steps N] [--no-images] [--size WxH]
+#   bash tools/autoplay.sh <scenario>...|--all [--seed N] [--steps N] [--no-images] [--size WxH]
 #   bash tools/autoplay.sh --replay <run folder> [--until <step>] [--from-save] [--no-images]
 #   bash tools/autoplay.sh --list               the scenarios in tools/autoplay_scenarios.gd
 # Exit codes: 0 = clean · 1 = findings or failures · 3 = couldn't run (no Godot, Godot older than
@@ -11,7 +11,11 @@
 # (tools/autoplay_adapter.gd): ui actions by real input, api actions through the game's systems
 # (tools/autoplay.gd says how). Each run writes the play log, screenshots with their element maps,
 # and repro.json on any finding to playtesting/autoplay/<scenario>-<seed>-<datetime>/ (gitignored).
-# --all runs every scenario, one Godot run each. While the game's adapter still has the seed's
+# --all runs every scenario, one Godot run each. Several scenarios (or --all) play side by side: one
+# lock and one import check, then one Godot process per scenario at the same time, each with its own
+# user:// folder, log and run folder, at most as many as the CPU count (AUTOPLAY_JOBS sets another
+# number). Each scenario's lines are printed in the order given; the exit code is the worst (3, then
+# 1, then 0). One scenario plays as it always did. While the game's adapter still has the seed's
 # start_run(), there is no run to play: it says what to wire, writes nothing and exits 0. A replay plays the scenario again with the run's
 # seeds and its recorded actions, so expects and smoke's checks are made again; --from-save starts
 # from the save written before the first finding that has one (through the adapter's load_save())
@@ -27,7 +31,7 @@ cd "$(dirname "$0")/.." || exit 3
 state_dir=".godot/godot-director"
 limit="${AUTOPLAY_TIMEOUT:-600}"
 
-images=1; list=0; all=0; scenario=""; replay=""
+images=1; list=0; all=0; scenario=""; replay=""; scenarios=""; nscen=0
 count=$#
 while [ "$count" -gt 0 ]; do   # --all is ours; everything else goes to tools/autoplay.gd
   arg="$1"; shift; count=$((count - 1))
@@ -47,10 +51,14 @@ while [ "$count" -gt 0 ]; do   # --all is ours; everything else goes to tools/au
       if [ "$count" -gt 0 ]; then set -- "$@" "$arg" "$1"; shift; count=$((count - 1)); continue; fi ;;
     -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
     -*) ;;
-    *) scenario="$arg" ;;
+    *) scenario="$arg"; scenarios="$scenarios $arg"; nscen=$((nscen + 1)) ;;
   esac
   set -- "$@" "$arg"
 done
+if [ "$nscen" -gt 1 ] && [ -n "$replay" ]; then
+  echo "autoplay: --replay plays one run; leave out the scenarios" >&2
+  exit 1
+fi
 if [ "$all" -eq 1 ] && { [ -n "$scenario" ] || [ -n "$replay" ]; }; then
   echo "autoplay: --all runs every scenario; leave out the scenario and --replay" >&2
   exit 1
@@ -202,15 +210,16 @@ printf '%s\n' "ObjectDB instances leaked at exit" "resources still in use at exi
   > "$state_dir/autoplay_allow.txt"
 [ -f tools/check.ignore ] && grep -v '^[[:space:]]*#' tools/check.ignore | grep -v '^[[:space:]]*$' >> "$state_dir/autoplay_allow.txt"
 
+play_log="$state_dir/autoplay.log"
 # play <args...>: one Godot run of tools/autoplay.gd; prints its lines and returns 0, 1 or 3.
 play() {
   local status log errors
   # A relative script path on purpose: Git Bash would rewrite some res:// forms.
   # --fixed-fps: every frame advances the game by 1/60 s, so Tweens, Timers and physics move the
   # same on every run, headless or not, however fast the machine is.
-  run_godot "$state_dir/autoplay.log" "$wrapper" $display_args --fixed-fps 60 --path . --script tools/autoplay.gd -- "$@"
+  run_godot "$play_log" "$wrapper" $display_args --fixed-fps 60 --path . --script tools/autoplay.gd -- "$@"
   status=$?
-  log="$(tr -d '\r' < "$state_dir/autoplay.log" | sed "s/${esc}\[[0-9;]*m//g")"
+  log="$(tr -d '\r' < "$play_log" | sed "s/${esc}\[[0-9;]*m//g")"
   if [ "$status" -eq 3 ]; then
     printf '%s\n' "$log" | sed -n 's/^GDIR-AUTOPLAY-SKIP: /autoplay: /p' >&2
     return 3
@@ -218,7 +227,7 @@ play() {
   # Godot that couldn't open a window or start its renderer never reaches the script.
   if [ "$status" -ne 0 ] && ! printf '%s\n' "$log" | grep -q '^GDIR-AUTOPLAY' \
       && printf '%s\n' "$log" | grep -qiE "(create|open|initiali[sz]e).*(window|display|context|rendering|renderer|opengl|vulkan|d3d12|metal)|video card driver"; then
-    echo "autoplay: Godot couldn't open a window or start its renderer here (see $state_dir/autoplay.log);" >&2
+    echo "autoplay: Godot couldn't open a window or start its renderer here (see $play_log);" >&2
     echo "          --no-images plays headless." >&2
     return 3
   fi
@@ -229,7 +238,7 @@ play() {
   printf '%s\n' "$log" | sed -n -e 's/^GDIR-AUTOPLAY: /autoplay: /p' -e 's/^GDIR-AUTOPLAY-FAIL: /autoplay: FAIL: /p'
   [ "$status" -eq 124 ] && echo "autoplay: FAIL: Godot timed out after ${limit}s (AUTOPLAY_TIMEOUT)" && return 1
   if [ "$status" -eq 0 ] && ! printf '%s\n' "$log" | grep -qE '^GDIR-AUTOPLAY: .* (finding|skipped)'; then
-    echo "autoplay: FAIL: tools/autoplay.gd didn't finish (see $state_dir/autoplay.log)"
+    echo "autoplay: FAIL: tools/autoplay.gd didn't finish (see $play_log)"
     return 1
   fi
   # Errors the game's play log didn't catch (before it started, or at exit) still fail a clean run.
@@ -238,31 +247,87 @@ play() {
     function allowed(text,   i) { for (i = 0; i < count; i++) if (index(text, allowed_text[i]) > 0) return 1; return 0 }
     /^[ \t]*(ERROR|SCRIPT ERROR|USER ERROR|USER SCRIPT ERROR):|Parse Error/ && !allowed($0) { print "  " $0 }' | head -n 10)"
   if [ "$status" -eq 0 ] && [ -n "$errors" ]; then
-    echo "autoplay: FAIL: Godot printed errors the run didn't report (see $state_dir/autoplay.log):"
+    echo "autoplay: FAIL: Godot printed errors the run didn't report (see $play_log):"
     printf '%s\n' "$errors"
     return 1
   fi
   [ "$status" -eq 0 ] && return 0 || return 1
 }
 
-if [ "$all" -eq 0 ]; then
+if [ "$all" -eq 0 ] && [ "$nscen" -le 1 ]; then
   play "$@"
   status=$?
   [ "$status" -eq 0 ] || rm -f "$state_dir/import-fingerprint"   # a failing run may leave the class cache stale
   exit "$status"
 fi
-# --all: list the scenarios (headless), then one run each.
-shown="$display_args"; shown_wrapper="$wrapper"
-display_args="--headless"; wrapper=""; list=1
-play --list > "$state_dir/autoplay_list.txt"
-status=$?
-display_args="$shown"; wrapper="$shown_wrapper"; list=0
-if [ "$status" -ne 0 ]; then cat "$state_dir/autoplay_list.txt"; exit "$status"; fi
-failed=0
-for id in $(sed -n 's/^\([a-z0-9_]*\) · .*/\1/p' "$state_dir/autoplay_list.txt"); do
-  play "$id" "$@"
+# --all or several scenarios: the ids to play, in the order given (a repeated name plays once).
+ids=""
+if [ "$all" -eq 1 ]; then
+  # List the scenarios (headless) first.
+  shown="$display_args"; shown_wrapper="$wrapper"
+  display_args="--headless"; wrapper=""; list=1
+  play --list > "$state_dir/autoplay_list.txt"
   status=$?
-  if [ "$status" -eq 3 ]; then exit 3; fi
-  [ "$status" -eq 0 ] || { failed=1; rm -f "$state_dir/import-fingerprint"; }
+  display_args="$shown"; wrapper="$shown_wrapper"; list=0
+  if [ "$status" -ne 0 ]; then cat "$state_dir/autoplay_list.txt"; exit "$status"; fi
+  ids="$(sed -n 's/^\([a-z0-9_]*\) · .*/\1/p' "$state_dir/autoplay_list.txt")"
+else
+  for id in $scenarios; do
+    case " $(echo $ids) " in *" $id "*) ;; *) ids="$ids $id" ;; esac
+  done
+  # The options without the scenario names (the values of --seed, --steps, --size and --until stay).
+  count=$#
+  while [ "$count" -gt 0 ]; do
+    arg="$1"; shift; count=$((count - 1))
+    case "$arg" in
+      --seed|--steps|--size|--until)
+        if [ "$count" -gt 0 ]; then set -- "$@" "$arg" "$1"; shift; count=$((count - 1)); continue; fi ;;
+      -*) ;;
+      *) continue ;;
+    esac
+    set -- "$@" "$arg"
+  done
+fi
+# One Godot process per scenario at the same time, at most as many as the CPU count: each has its
+# own user:// folder, play log (autoplay-<n>.log) and, from tools/autoplay.gd, run folder, and writes
+# its lines to its own files, printed in order once all have finished.
+cap="${AUTOPLAY_JOBS:-}"
+[ -n "$cap" ] || cap="$(nproc 2>/dev/null)"
+[ -n "$cap" ] || cap="${NUMBER_OF_PROCESSORS:-}"
+[ -n "$cap" ] || cap="$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null)"
+case "$cap" in ''|*[!0-9]*) cap=1 ;; esac
+[ "$cap" -ge 1 ] || cap=1
+results="$(mktemp -d)"
+if [ "$held" -eq 1 ]; then trap 'rm -rf "$user_dir" "$results"' EXIT; else trap 'rm -rf "$lock" "$user_dir" "$results"' EXIT; fi
+run_one() { # run_one <n> <scenario> <options...>: one scenario in a subshell with its own user:// folder
+  local n="$1" id="$2"; shift 2
+  (
+    one_dir="$(mktemp -d)"
+    trap 'rm -rf "$one_dir"' EXIT
+    if command -v cygpath >/dev/null 2>&1; then APPDATA="$(cygpath -w "$one_dir")"; else APPDATA="$one_dir"; fi
+    XDG_DATA_HOME="$one_dir"
+    export APPDATA XDG_DATA_HOME
+    play_log="$state_dir/autoplay-$n.log"
+    play "$id" "$@" > "$results/$n.out" 2> "$results/$n.err"
+    echo $? > "$results/$n.status"
+  )
+}
+total=0; pids=""
+for id in $ids; do
+  if [ "$total" -ge "$cap" ]; then   # a free slot: wait for the run that started $cap places earlier
+    wait $(echo $pids | cut -d ' ' -f $((total - cap + 1)))
+  fi
+  run_one "$total" "$id" "$@" &
+  pids="$pids $!"; total=$((total + 1))
 done
+wait
+failed=0; n=0
+while [ "$n" -lt "$total" ]; do
+  cat "$results/$n.out"; cat "$results/$n.err" >&2
+  status="$(cat "$results/$n.status" 2>/dev/null)"; [ -n "$status" ] || status=1
+  if [ "$status" -eq 3 ]; then failed=3
+  elif [ "$status" -ne 0 ] && [ "$failed" -eq 0 ]; then failed=1; fi
+  n=$((n + 1))
+done
+[ "$failed" -eq 0 ] || rm -f "$state_dir/import-fingerprint"
 exit "$failed"
