@@ -2,7 +2,7 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
-## Unreleased
+## 4.3.0 (2026-10-25)
 
 - **A grey box can be dragged to re-arrange a screen.** The starter drawing's grey numbered boxes are no longer locked. Drag or resize one and the reader takes it as a blue `keep` box for that element: named after the element, at its new place, with any keys typed into it, and marked `"from": "existing"` with the element's number `n` in `drawing.json`, so `process` can say "you moved 4 (Gear list)". Each grey box records the rectangle it was drawn at, and is compared with that (within 2 pixels), so a recapture since doesn't turn untouched boxes into moves; a box that is untouched, deleted, hidden or locked, or from an older starter, is ignored, and so are the number labels. Without the element map, or when it no longer has the element, a moved grey box is skipped with a note; one dragged outside the frame is reported as unparsed; an element claimed twice (moved grey box, blue box, red X) gets a note. A new blue box named after the element still works. The legend and `design/ui/README.md` say so, and the fixtures cover a moved, a resized and an untouched grey box.
   - **Upgrade steps:** `design/ui/README.md` is a game-owned seed the installer leaves alone; replace it with the source's `project/design/ui/README.md`, carrying over any notes. Recapture the screens so the starters are regenerated unlocked.
