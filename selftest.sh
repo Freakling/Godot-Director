@@ -67,6 +67,15 @@ pinned_ref="$(sed -n 's/.*"ref"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$sr
   || bad "the marketplace pins the plugin to '$pinned_ref', VERSION is $version"
 cmp -s "$src/LICENSE" "$src/framework/.godot-director/LICENSE" && ok "the installed LICENSE copy matches LICENSE" \
   || bad "framework/.godot-director/LICENSE differs from LICENSE"
+# The import skip is one block copied into check.sh, autoplay.sh and ui_capture.sh: the copies must agree.
+import_block() { sed -n '/^# >>> import skip/,/^# <<< import skip/p' "$1"; }
+block="$(import_block "$src/framework/tools/check.sh")"
+if [ -n "$block" ] && [ "$block" = "$(import_block "$src/framework/tools/autoplay.sh")" ] \
+    && [ "$block" = "$(import_block "$src/framework/tools/ui_capture.sh")" ]; then
+  ok "the import skip is the same block in check.sh, autoplay.sh and ui_capture.sh"
+else
+  bad "the import skip block differs between check.sh, autoplay.sh and ui_capture.sh"
+fi
 missing=""
 for skill in "$src"/framework/.claude/skills/*/SKILL.md; do
   name="$(basename "$(dirname "$skill")")"
@@ -964,6 +973,36 @@ expect_output "runs the example's tests" "12 tests passed" "$out"
 expect_output "scans the screen scripts" "1 screen script scanned" "$out"
 expect_no_output "reports no missing hook" "no Godot Director pre-commit hook" "$out"
 out="$(bash tools/check.sh --if-changed 2>&1)"; expect_output "--if-changed reuses the last pass" "nothing changed since the last passing run" "$out"
+# The import pass: a second run skips it, --import forces it, a fresh import cache runs it, and a new
+# asset runs it again (then the next run skips it once more).
+out="$(bash tools/check.sh 2>&1)"; status=$?
+expect_status "a second check passes" 0 "$status" "$out"
+expect_output "and skips the import pass when no imported file changed" "check: import pass skipped \(no imported file changed\)" "$out"
+out="$(bash tools/check.sh --import 2>&1)"; status=$?
+expect_status "--import runs the import pass and passes" 0 "$status" "$out"
+expect_no_output "and doesn't skip it" "import pass skipped" "$out"
+rm -rf .godot/imported
+out="$(bash tools/check.sh 2>&1)"; status=$?
+expect_status "a check without an import cache passes" 0 "$status" "$out"
+expect_no_output "and doesn't skip the import pass" "import pass skipped" "$out"
+mkdir -p assets && printf '%s\n' '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#c33"/></svg>' > assets/selftest_marker.svg
+out="$(bash tools/check.sh 2>&1)"; status=$?
+expect_status "a new asset passes the check" 0 "$status" "$out"
+expect_no_output "a new asset makes the check run the import pass" "import pass skipped" "$out"
+out="$(bash tools/check.sh 2>&1)"; expect_output "and the check after that skips it again" "import pass skipped" "$out"
+rm -rf assets
+# A new script with a class_name that another script uses runs the import pass (the class cache must
+# learn it, or the user's script fails with "Identifier not found"); a body-only edit still skips.
+printf 'class_name SelftestHelper\nextends RefCounted\n\nstatic func answer() -> int:\n\treturn 42\n' > scripts/selftest_helper.gd
+printf 'extends RefCounted\n\nfunc value() -> int:\n\treturn SelftestHelper.answer()\n' > scripts/selftest_user.gd
+out="$(bash tools/check.sh 2>&1)"; status=$?
+expect_status "a new class_name used by another script passes the check" 0 "$status" "$out"
+expect_no_output "and the check runs the import pass for it" "import pass skipped" "$out"
+printf '\n# a body-only edit\n' >> scripts/selftest_helper.gd
+out="$(bash tools/check.sh 2>&1)"; status=$?
+expect_status "a body-only edit passes the check" 0 "$status" "$out"
+expect_output "and the check skips the import pass for it" "import pass skipped" "$out"
+rm -f scripts/selftest_helper.gd scripts/selftest_helper.gd.uid scripts/selftest_user.gd scripts/selftest_user.gd.uid
 
 fault() { # fault <what> <file> <text to append> <regex the output must contain>
   cp "$2" "$work/saved"
