@@ -4,9 +4,16 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T31 · B3 · R1
+**Next IDs:** T32 · B3 · R1
 
 ## Queue
+
+### T31 · The check plays its autoplay scenarios beside the tests · done · M · agent
+- Touches: framework/tools/check.sh, framework/tools/autoplay.sh, project/tools/check.cfg, selftest.sh, CHANGELOG.md
+- Done when: with `[autoplay] check_in_check` on, a parallel run starts the autoplay scenarios (smoke and those `enforce` names) as soon as the import and load pass are clean, in their own process beside the test jobs (one fewer test job, so the CPU count isn't exceeded), and their result joins the report with exit codes unchanged; a serial run plays them after the tests as before (test) · measured on The Guildkeeper's scratch copy before and after (check)
+- GDD: (none)
+- Source: Director-Driven-Development T190
+- Measured on The Guildkeeper (12 CPUs, 394 test files, smoke enforced, alternating runs): 161, 166 and 170 s with the scenarios after the tests (12 test processes plus the load pass, then autoplay alone for about 22 s); 141 and 142 s beside them (11 test processes plus the load pass, autoplay from about 112 s to 134 s). A third run beside them ended FAIL at 142 s when the load pass's Godot process crashed (a segmentation fault) after its report, so autoplay was not played.
 
 ### T30 · A sweep of autoplay scenarios plays side by side, and the builder doesn't play smoke twice · done · M · agent
 - Touches: framework/tools/autoplay.sh, framework/.godot-director/procedures/build.md, framework/.godot-director/procedures/autoplay.md, selftest.sh, CHANGELOG.md

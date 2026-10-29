@@ -23,7 +23,8 @@
 # folder that is deleted afterwards, so autoplay reads and writes no player data. AUTOPLAY_TIMEOUT
 # (seconds, default 600) limits each Godot run when GNU timeout is available. Godot is found as
 # tools/check.sh finds it: $GODOT_BIN, else the first line of tools/godot_bin.local, else `godot`
-# on PATH.
+# on PATH. tools/check.sh plays its scenarios with AUTOPLAY_JOBS=1, one at a time, in one background
+# process beside its test jobs, under the lock it holds (GDIR_LOCK_HELD=1).
 
 set -u
 caller_dir="$(pwd)"
