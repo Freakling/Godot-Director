@@ -2,7 +2,7 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
-## Unreleased
+## 4.6.0 (2026-10-29)
 
 - **The check names a Godot process that exits without an error line.** When the import pass, the load pass (`tools/check.gd --no-tests`), a test group or the layout lint exits non-zero (a crash such as a segmentation fault included) and its log has no error line the check reports, the check prints one line before the FAIL, for example `check: the load pass (tools/check.gd --no-tests) exited with 139 (segmentation fault) and printed no error; see .godot/godot-director/check.log`. It names the process, its exit status (134, 136, 137 and 139 also name their signal) and its log. For a test group that exits non-zero before its report, the line takes the place of `didn't finish`; for the layout lint, it takes the place of `stopped early` when the log has no error line. A normal failure (a test that fails, a parse error) reports as before, and so do a timeout and every exit code. The selftest covers each process with a stand-in Godot that runs the real one and then exits 139, and an ordinary failing test, which gets no such line.
   - **Upgrade steps:** none. `tools/check.sh` is framework-owned and arrives on upgrade.

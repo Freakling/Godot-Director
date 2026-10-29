@@ -10,7 +10,7 @@ whenever you like, for a new game or one that's already underway.
   chat interview can't carry as well, and it sets the stage for every later design session and build.
 - If you update it later, tell the agent ("my design document changed") and it brings the GDD in
   line, again showing what it inferred.
-- The latest version of this template: https://raw.githubusercontent.com/Freakling/Godot-Director/v4.5.0/project/design/director-gdd.md
+- The latest version of this template: https://raw.githubusercontent.com/Freakling/Godot-Director/v4.6.0/project/design/director-gdd.md
 -->
 
 # Game Design Document (GDD): \[Game Title\]
