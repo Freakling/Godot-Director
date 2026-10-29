@@ -1065,6 +1065,10 @@ out="$(bash tools/check.sh 2>&1)"; expect_status "passes again after the faults 
 # --- parallel tests, per-file times, timeout ----------------------------------------------------
 echo "parallel tests"
 logs=".godot/godot-director"
+# These cases count the processes that run the tests, and autoplay in the check takes one of them, so
+# the example's [autoplay] is left out here ("autoplay beside the tests" covers it).
+cp tools/check.cfg "$work/saved-check-cfg-ap"
+awk '/^\[autoplay\]$/ { skip = 1; next } /^\[/ { skip = 0 } !skip' "$work/saved-check-cfg-ap" > tools/check.cfg
 test_order() { for f in "$@"; do tr -d '\r' < "$f"; done | sed -n 's/^GDIR-TEST: \(.*\)::.*$/\1/p' | uniq; }
 out="$(bash tools/check.sh --jobs 1 2>&1)"; expect_status "--jobs 1 runs the tests in one process" 0 $? "$out"
 expect_output "and runs all of the example's tests" "12 tests passed" "$out"
@@ -1089,11 +1093,63 @@ cp tests/test_market.gd "$work/saved"
 printf '\nfunc test_selftest_failure() -> void:\n\texpect_eq(1, 2)\n' >> tests/test_market.gd
 out="$(bash tools/check.sh --jobs 3 2>&1)"; expect_status "a failing test in one group fails the parallel run" 1 $? "$out"
 expect_output "and names it" "test_market\.gd::test_selftest_failure: expected 2, got 1" "$out"
+expect_no_output "and names no process that exited without an error line" "exited with" "$out"
 cp "$work/saved" tests/test_market.gd
 # Every run records the times. Without [tests] balance the deal is file order and nothing splits.
 times="$logs/test-times.tsv"
 [ -f "$times" ] && grep -qE '^res://tests/test_market\.gd	([0-9]+\.[0-9]{3})	1	[0-9]+\.[0-9]{3}$' "$times" \
   && ok "a whole run stores each test file's time, one shard and its time as the longest" || bad "a whole run stores each test file's time, one shard and its time as the longest" "$(cat "$times" 2>/dev/null)"
+# A Godot process that exits 139 (a segmentation fault) with a clean log: the check names the process, its
+# status and its log in one line before the FAIL, and the exit code stays 1. crashy <pattern> [silent]: a
+# stand-in for Godot that runs the real one, then exits 139 for a call whose arguments contain the pattern;
+# with "silent" it exits 139 before running anything, so the log stays empty.
+crashy() {
+  if [ "${2:-}" = "silent" ]; then
+    cat > "$work/godot-crash" <<CRASH
+#!/usr/bin/env bash
+case "\$*" in *"$1"*) exit 139 ;; esac
+"$godot" "\$@"
+CRASH
+  else
+    cat > "$work/godot-crash" <<CRASH
+#!/usr/bin/env bash
+"$godot" "\$@"
+status=\$?
+case "\$*" in *"$1"*) exit 139 ;; esac
+exit \$status
+CRASH
+  fi
+  chmod +x "$work/godot-crash"
+}
+line_of() { printf '%s\n' "$1" | grep -n -E -- "$2" | head -n 1 | cut -d: -f1; }
+before() { # before <output> <regex> <regex>: the first line matching the first regex comes before the second's
+  local a b
+  a="$(line_of "$1" "$2")"; b="$(line_of "$1" "$3")"
+  [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]
+}
+crashy "--import"
+out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --import --jobs 2 2>&1)"; expect_status "an import pass that crashes with a clean log fails the check" 1 $? "$out"
+expect_output "names the import pass, its status and its log" "check: the import pass exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/import\.log" "$out"
+before "$out" "printed no error" "^check: FAIL" && ok "and the FAIL follows it" || bad "and the FAIL follows it" "$out"
+crashy "--no-tests"
+out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --jobs 2 2>&1)"; expect_status "a load pass that crashes with a clean log fails the check" 1 $? "$out"
+expect_output "names the load pass, its status and its log" "check: the load pass \(tools/check\.gd --no-tests\) exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/check\.log" "$out"
+before "$out" "printed no error" "^check: FAIL" && ok "and the FAIL follows it" || bad "and the FAIL follows it" "$out"
+crashy "--tests 2 2"
+out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --jobs 2 2>&1)"; expect_status "a test group that crashes after its report fails the check" 1 $? "$out"
+expect_output "names the group, its status and its log" "check: test group 2 of 2 exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/tests-2\.log" "$out"
+before "$out" "printed no error" "^check: FAIL" && ok "and the FAIL follows it" || bad "and the FAIL follows it" "$out"
+crashy "--tests 2 2" silent
+out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --jobs 2 2>&1)"; expect_status "a test group that crashes before its report fails the check" 1 $? "$out"
+expect_output "names the group, its status and its log" "check: test group 2 of 2 exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/tests-2\.log" "$out"
+expect_no_output "and doesn't also say it didn't finish" "didn't finish" "$out"
+crashy "ui_capture.gd"
+out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --jobs 2 2>&1)"; expect_status "a layout lint that crashes with a clean log fails the check" 1 $? "$out"
+expect_output "names the lint, its status and its log" "check: the layout lint \(tools/ui_capture\.gd --check\) exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/ui_lint\.log" "$out"
+before "$out" "printed no error" "^check: FAIL" && ok "and the FAIL follows it" || bad "and the FAIL follows it" "$out"
+crashy "tools/check.gd"
+out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --jobs 1 2>&1)"; expect_status "a serial run whose check crashes with a clean log fails the check" 1 $? "$out"
+expect_output "names the check, its status and its log" "check: tools/check\.gd exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/check\.log" "$out"
 deal_of() { printf '%s\n' "$1" | sed -n 's/^check: deal: job \([0-9]*\) [0-9.?]* /\1 /p' | tr '\n' ';'; }
 printf 'res://tests/test_dev_menu.gd\t5\nres://tests/test_market.gd\t200\nres://tests/test_play_log.gd\t30\n' > "$times"
 out="$(GDIR_CHECK_DEAL=1 bash tools/check.sh --jobs 3 2>&1)"; expect_status "with no balance setting, --jobs 3 passes" 0 $? "$out"
@@ -1204,7 +1260,7 @@ func test_selftest_failure() -> void:
 else
   echo "  (no GNU timeout: the timeout cases are skipped)"
 fi
-cp "$work/saved-cfg" tools/check.cfg
+cp "$work/saved-check-cfg-ap" tools/check.cfg
 
 # --- play log -----------------------------------------------------------------------------------
 # The example's PlayLog runs under the check and writes nothing; tests/play-log/selftest_play_log.gd
@@ -2535,9 +2591,9 @@ out="$(bash tools/check.sh 2>&1)"; expect_status "enforce [\"*\"] plays every sc
 [ "$(printf '%s\n' "$out" | grep -c '^check: note: autoplay: .* · 0 findings$')" = "3" ] && ok "one note per scenario" || bad "one note per scenario" "$out"
 after_line "$work/saved-shop" 'func _on_buy_pressed() -> void:' '\tvar receipt: Node = null\n\treceipt.queue_free()' > scripts/ui/shop_screen.gd
 set_autoplay false '["smoke"]'
-rm -f .godot/godot-director/autoplay_check.log; rm -rf "$runs"
+rm -f .godot/godot-director/autoplay_check-*; rm -rf "$runs"
 out="$(bash tools/check.sh 2>&1)"; expect_status "with check_in_check=false the same finding doesn't fail the check" 0 $? "$out"
-if ! printf '%s' "$out" | grep -qi 'autoplay' && [ ! -e .godot/godot-director/autoplay_check.log ] && [ ! -e "$runs" ]; then
+if ! printf '%s' "$out" | grep -qi 'autoplay' && [ -z "$(ls .godot/godot-director/autoplay_check-* 2>/dev/null)" ] && [ ! -e "$runs" ]; then
   ok "and the check plays nothing: no mention, no autoplay log, no run folder"
 else
   bad "and the check plays nothing: no mention, no autoplay log, no run folder" "$out"
@@ -2552,6 +2608,60 @@ fp_before="$(bash tools/check.sh --fingerprint)"
 set_autoplay false '[]'
 [ "$fp_before" != "$(bash tools/check.sh --fingerprint)" ] && ok "the check's fingerprint covers tools/check.cfg" || bad "the check's fingerprint covers tools/check.cfg"
 cp "$work/saved-check-cfg" tools/check.cfg; cp "$work/saved-shop" scripts/ui/shop_screen.gd
+rm -rf "$runs"
+
+# In a parallel run autoplay starts as soon as the import and the load pass are clean, in its own process
+# beside the test jobs (one fewer, so the CPU count holds); its result joins the report, with the exit
+# codes as they were. A serial run (--jobs 1) plays it after the tests.
+echo "autoplay beside the tests"
+logs=".godot/godot-director"
+out="$(bash tools/check.sh --jobs 3 2>&1)"; expect_status "--jobs 3 with smoke in the check passes" 0 $? "$out"
+expect_output "and runs the tests in 2 processes: autoplay has the third" "running the tests in 2 processes" "$out"
+expect_output "and says autoplay plays beside them" "check: playing the autoplay scenarios beside the tests" "$out"
+expect_output "and the tests all ran" "12 tests passed" "$out"
+expect_output "and smoke's note joins the report" "check: note: autoplay: smoke · seed 1 · [0-9]+ steps · [0-9]+ turns · 0 findings$" "$out"
+[ -f "$logs/tests-2.log" ] && [ ! -e "$logs/tests-3.log" ] && [ -f "$logs/autoplay_check-smoke.log" ] \
+  && ok "two test logs and autoplay's own" || bad "two test logs and autoplay's own" "$(ls "$logs")"
+[ -z "$(ls "$runs" 2>/dev/null)" ] && ok "and a clean run keeps no run folder" || bad "and a clean run keeps no run folder" "$(ls "$runs")"
+out="$(bash tools/check.sh --jobs 2 2>&1)"; expect_status "--jobs 2 gives the tests one process and autoplay one" 0 $? "$out"
+expect_output "which is said in the singular" "running the tests in 1 process$" "$out"
+expect_output "and runs all the tests" "12 tests passed" "$out"
+expect_output "and plays smoke" "check: note: autoplay: smoke · seed 1 · " "$out"
+out="$(bash tools/check.sh --jobs 1 2>&1)"; expect_status "--jobs 1 plays smoke after the tests" 0 $? "$out"
+expect_no_output "with no processes beside each other" "beside the tests|running the tests in" "$out"
+expect_output "and smoke's note in the report" "check: note: autoplay: smoke · seed 1 · " "$out"
+# The proof that it plays beside the tests: a test that waits for autoplay's log, which exists only once
+# autoplay has started, and passes only if that happens while the tests are running.
+printf 'extends "res://tools/test_case.gd"\n\nfunc test_autoplay_plays_beside_the_tests() -> void:\n\tvar path: String = ProjectSettings.globalize_path("res://.godot/godot-director/autoplay_check-smoke.log")\n\tvar deadline: int = Time.get_ticks_msec() + 90000\n\twhile not FileAccess.file_exists(path) and Time.get_ticks_msec() < deadline:\n\t\tOS.delay_msec(100)\n\texpect(FileAccess.file_exists(path))\n' > tests/test_zz_beside.gd
+out="$(bash tools/check.sh --jobs 3 2>&1)"; expect_status "a test that waits for autoplay's log passes: autoplay started while the tests ran" 0 $? "$out"
+expect_output "and counts as one more test" "13 tests passed" "$out"
+rm -f tests/test_zz_beside.gd tests/test_zz_beside.gd.uid
+# A finding beside the tests fails the check as it does after them.
+after_line "$work/saved-shop" 'func _on_buy_pressed() -> void:' '\tvar receipt: Node = null\n\treceipt.queue_free()' > scripts/ui/shop_screen.gd
+out="$(bash tools/check.sh --jobs 3 2>&1)"; expect_status "a finding in smoke beside the tests fails the check" 1 $? "$out"
+expect_output "as GDIR-FAIL: autoplay, with the scenario, step, kind and summary" "GDIR-FAIL: autoplay: smoke step 1: error: Cannot call method 'queue_free' on a null value\." "$out"
+expect_output "and says how to read and replay it" "log_review\.sh --latest.*autoplay\.sh --replay" "$out"
+expect_output "with the tests' own result beside it" "12 tests passed" "$out"
+[ -f "$(latest_run smoke-1)/repro.json" ] && ok "the run with the finding keeps its folder, with the repro" || bad "the run with the finding keeps its folder" "$(ls "$runs" 2>&1)"
+rm -rf "$runs"
+out="$(bash tools/check.sh --jobs 1 2>&1)"; expect_status "the same finding after the tests in a serial run fails it too" 1 $? "$out"
+expect_output "with the same line" "GDIR-FAIL: autoplay: smoke step 1: error: Cannot call method 'queue_free' on a null value\." "$out"
+rm -rf "$runs"
+if timeout --version 2>/dev/null | grep -qi coreutils || gtimeout --version 2>/dev/null | grep -qi coreutils; then
+  printf 'extends "res://tools/test_case.gd"\n\nfunc test_hang() -> void:\n\tOS.delay_msec(120000)\n\texpect(true)\n' > tests/test_zz_hang.gd
+  out="$(CHECK_TIMEOUT=40 bash tools/check.sh --jobs 3 2>&1)"; expect_status "a finding beside a timed-out test group exits 1, not 3" 1 $? "$out"
+  expect_output "and names the finding" "GDIR-FAIL: autoplay: smoke step 1: error: Cannot call method 'queue_free' on a null value\." "$out"
+  expect_output "and the timeout" "test group 2 of 2 timed out after 40 s" "$out"
+  rm -f tests/test_zz_hang.gd tests/test_zz_hang.gd.uid; rm -rf "$runs"
+fi
+cp "$work/saved-shop" scripts/ui/shop_screen.gd
+# Nothing starts while the game doesn't load: a script that doesn't parse stops autoplay from starting.
+cp scripts/systems/market.gd "$work/saved"; printf 'func broken( -> void:\n' >> scripts/systems/market.gd
+out="$(bash tools/check.sh --jobs 3 2>&1)"; expect_status "a script that doesn't parse fails the parallel check" 1 $? "$out"
+expect_no_output "and autoplay is not started" "beside the tests" "$out"
+[ -z "$(ls "$logs"/autoplay_check-* 2>/dev/null)" ] && [ ! -e "$runs" ] && ok "and plays nothing: no autoplay log, no run folder" || bad "and plays nothing: no autoplay log, no run folder" "$(ls "$logs" "$runs" 2>&1)"
+cp "$work/saved" scripts/systems/market.gd
+out="$(bash tools/check.sh 2>&1)"; expect_status "the check passes again after the beside-the-tests cases" 0 $? "$out"
 rm -rf "$runs"
 
 # A game made from the seeds, with nothing wired yet: the new project's seed has autoplay in the check

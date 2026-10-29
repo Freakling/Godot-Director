@@ -5,7 +5,7 @@
 #   bash tools/check.sh                 run the check
 #   bash tools/check.sh --if-changed    repeat the last result at once if these exact files were checked
 #   bash tools/check.sh --fingerprint   print the fingerprint of the current files (for hooks)
-#   bash tools/check.sh --jobs N        run the tests in N Godot processes at once (N or auto; 1 is serial)
+#   bash tools/check.sh --jobs N        run in N Godot processes at once (N or auto; 1 is serial); autoplay in the check takes one of them
 #   bash tools/check.sh --import        run the import pass even when no imported file changed
 # Exit codes: 0 = pass · 1 = fail · 3 = couldn't run (Godot missing or older than 4.5, or a Godot
 # run timed out: the report names the test file it was in)
@@ -32,8 +32,11 @@
 #      is weighed by it while the count stays the same). A line of only a path and seconds still
 #      reads. `bash tools/check.sh --jobs 1` re-measures every file whole.
 #   3. scan Godot's output for errors (a parse error is printed, not returned)
-#   3b. the layout lint of the screens and 3c. the autoplay smoke scenario, when tools/ui_capture.cfg and
-#      tools/check.cfg switch them on
+#   3b. the layout lint of the screens and 3c. the autoplay scenarios, when tools/ui_capture.cfg and
+#      tools/check.cfg switch them on. In a parallel run the scenarios start as soon as the import and the
+#      load pass came back clean, in one more process beside the test jobs (which are then one fewer, so
+#      the CPU count holds), one scenario at a time; their result joins the report with the rest. A
+#      serial run (--jobs 1) plays them after the tests, once everything above was clean.
 #   4. run tools/check.local.sh, if the project has one (extra project-specific steps)
 #
 # Godot is found through $GODOT_BIN, else the first line of tools/godot_bin.local (per machine,
@@ -218,12 +221,44 @@ fi
 case "$jobs" in
   ''|*[!0-9]*|0) echo "check: --jobs (or [tests] jobs in tools/check.cfg) takes a number or auto, not '$jobs'"; exit 3 ;;
 esac
+
+# --- autoplay in the check (opt in): read now, since it takes one of the processes --------------
+# tools/check.cfg > [autoplay] check_in_check = true plays the smoke scenario headless (--no-images),
+# and any other scenario `enforce` names ("*" is all of them). A finding in an enforced scenario fails
+# the check, as GDIR-FAIL: autoplay: <scenario> step <n>: <kind>: <summary>; in another scenario it is
+# a note, so `enforce` left empty makes smoke a note too. A missing file or key reads as off, and then
+# nothing here costs anything. Step 3c says when they are played.
+ap_on=0; ap_enforce=""; ap_scenarios=""
+rm -f "$state_dir"/autoplay_check*.log "$state_dir"/autoplay_check*.status
+if [ -f tools/check.cfg ] && [ -f tools/autoplay.sh ] && [ -f tools/autoplay.gd ] \
+    && [ -f tools/autoplay_adapter.gd ] && [ -f tools/autoplay_scenarios.gd ]; then
+  ap_cfg="$(awk '/^\[/ { in_ap = ($0 ~ /^\[autoplay\]/); next }
+    in_ap && /^[ \t]*(check_in_check|enforce)[ \t]*=/ { k = $0; sub(/[ \t]*=.*$/, "", k); sub(/^[ \t]*/, "", k)
+      v = $0; sub(/^[^=]*=[ \t]*/, "", v); sub(/[ \t\r]*(;.*)?$/, "", v); if (!(k in seen)) print k "=" v; seen[k] = 1 }' tools/check.cfg)"
+  if [ "$(printf '%s\n' "$ap_cfg" | sed -n 's/^check_in_check=//p')" = "true" ]; then
+    ap_on=1
+    ap_enforce="$(printf '%s\n' "$ap_cfg" | sed -n 's/^enforce=//p' | tr -d '[]" \r' | tr ',' ' ')"
+    ap_scenarios="smoke"
+    set -f   # enforce may hold "*": no file name expansion
+    for id in $ap_enforce; do
+      case "$id" in "*") ap_scenarios="--all"; break ;; smoke) ;; *) ap_scenarios="$ap_scenarios $id" ;; esac
+    done
+    set +f
+  fi
+fi
+
+# test_jobs is how many processes run the tests. With more than one process allowed and a test to run,
+# the load pass and the tests run apart (par=1), and autoplay in the check takes one process of the
+# count: it plays beside the test jobs (ap_beside=1), so the CPU count is not exceeded.
+test_jobs="$jobs"; par=0; ap_beside=0
 if [ "$jobs" -gt 1 ]; then
   tests_dir="$(cfg_value tests dir)"; tests_dir="${tests_dir#res://}"; tests_dir="${tests_dir%/}"
   [ -n "$tests_dir" ] || tests_dir="tests"
   test_count="$(/usr/bin/find "$tests_dir" -type f -name 'test_*.gd' 2>/dev/null | wc -l | tr -d ' ')"
-  [ "${test_count:-0}" -lt "$jobs" ] && jobs="${test_count:-0}"
-  [ "$jobs" -ge 1 ] || jobs=1
+  [ "$ap_on" -eq 1 ] && [ "${test_count:-0}" -ge 1 ] && { ap_beside=1; test_jobs=$((jobs - 1)); }
+  [ "${test_count:-0}" -lt "$test_jobs" ] && test_jobs="${test_count:-0}"
+  [ "$test_jobs" -ge 1 ] || test_jobs=1
+  if [ "$ap_beside" -eq 1 ] || [ "$test_jobs" -gt 1 ]; then par=1; fi
 fi
 
 failed=0
@@ -231,19 +266,7 @@ timed_out=""
 hard_fail=0   # a failure that isn't a timeout: it wins over exit 3
 echo "check: Godot $version"
 
-# --- 1. import ----------------------------------------------------------------------------------
-status=0
-if [ "$force_import" -eq 0 ] && import_skip; then
-  echo "check: import pass skipped (no imported file changed)"
-else
-  run_godot "$state_dir/import.log" --headless --path . --import
-  status=$?
-  import_record "$status"
-fi
-if [ "$status" -eq 124 ]; then timed_out="the import pass"; echo "check: the import pass timed out after ${limit} s"; failed=1
-elif [ "$status" -ne 0 ]; then echo "check: the import pass exited with $status"; failed=1; hard_fail=1; fi
-
-# --- 2. load, rules, tests ----------------------------------------------------------------------
+# --- helpers of the steps below -----------------------------------------------------------------
 esc="$(printf '\033')"
 clean() { tr -d '\r' < "$1" | sed "s/${esc}\[[0-9;]*m//g"; }
 # timed_out_in <what> <log>: say which test file a run that hit the timeout was in.
@@ -256,36 +279,145 @@ timed_out_in() {
   failed=1
 }
 
+# The lines the scan below ignores: engine noise at quick exit, what the given logs ask to ignore, and
+# tools/check.ignore.
+allow="$state_dir/allow.txt"
+write_allow() { # write_allow <log files...>
+  local log
+  {
+    # Engine noise at quick exit. Real leaks show up in the editor too.
+    printf '%s\n' "ObjectDB instances leaked at exit" "resources still in use at exit" "Pages in use exist at exit"
+    # Lines a test prints to expect an error. C4G-IGNORE: is the 2.x spelling, deprecated: remove in 4.0.
+    for log in "$@"; do [ -f "$log" ] && clean "$log"; done | sed -n -e "s/^GDIR-IGNORE://p" -e "s/^C4G-IGNORE://p"
+    # Project-approved suppressions (tools/check.ignore: one substring per line, # comments).
+    [ -f tools/check.ignore ] && grep -v '^[[:space:]]*#' tools/check.ignore
+  } | grep -v '^[[:space:]]*$' > "$allow"
+}
+
+# Matching lines, plus the "at:" line under each, minus allowlisted ones.
+scan() { # scan <extended regex> <log files...>
+  local pattern="$1" file
+  shift
+  for file in "$@"; do [ -f "$file" ] && clean "$file"; done | awk -v pattern="$pattern" -v allowfile="$allow" '
+    BEGIN { count = 0; while ((getline line < allowfile) > 0) if (line != "") allowed_text[count++] = line }
+    function allowed(text,   i) { for (i = 0; i < count; i++) if (index(text, allowed_text[i]) > 0) return 1; return 0 }
+    keep && /^[ \t]+at: / { print; keep = 0; next }
+    { keep = 0 }
+    $0 ~ pattern && !allowed($0) { print; keep = 1 }
+  '
+}
+error_pattern='^[ \t]*(ERROR|SCRIPT ERROR|USER ERROR|USER SCRIPT ERROR|GDIR-FAIL):|Parse Error'
+
+# A process that exits non-zero (a crash, say) and prints no error line gave no reason for the FAIL. These
+# say so in one line, with its status and its log (step 1, 2 and 3b call them).
+# exit_text <status>: the status, with the name of the signal a crash usually gives (128 + signal).
+exit_text() {
+  case "$1" in
+    134) echo "134 (abort)" ;;
+    136) echo "136 (floating-point exception)" ;;
+    137) echo "137 (killed)" ;;
+    139) echo "139 (segmentation fault)" ;;
+    *) echo "$1" ;;
+  esac
+}
+# silent_exit <log>: succeeds when the log has no error line the scan reports. It writes the allow list
+# from that log alone (write_allow); the final scan allows at least those lines for a test log too.
+silent_exit() {
+  write_allow "$1"
+  [ -z "$(scan "$error_pattern" "$1")" ]
+}
+# exit_quiet <what> <status> <log>: the line for a process that exited non-zero and printed no error.
+exit_quiet() { echo "check: $1 exited with $(exit_text "$2") and printed no error; see $3"; }
+
+# --- 1. import ----------------------------------------------------------------------------------
+status=0
+if [ "$force_import" -eq 0 ] && import_skip; then
+  echo "check: import pass skipped (no imported file changed)"
+else
+  run_godot "$state_dir/import.log" --headless --path . --import
+  status=$?
+  import_record "$status"
+fi
+if [ "$status" -eq 124 ]; then timed_out="the import pass"; echo "check: the import pass timed out after ${limit} s"; failed=1
+elif [ "$status" -ne 0 ]; then
+  if silent_exit "$state_dir/import.log"; then exit_quiet "the import pass" "$status" "$state_dir/import.log"
+  else echo "check: the import pass exited with $status"; fi
+  failed=1; hard_fail=1
+fi
+
+# --- 2. load, rules, tests ----------------------------------------------------------------------
+# Autoplay in the check (step 3c) plays the scenarios one at a time, each call's output and exit status in
+# .godot/godot-director/autoplay_check-<scenario>.log and .status. It never reads or writes the variables
+# of this script, so it can run in the background beside the test jobs. AUTOPLAY_JOBS=1: a sweep (--all)
+# plays one scenario at a time too, as this is one process of the count.
+ap_file() { # ap_file <scenario or --all> <log|status>: where its output or exit status goes
+  local tag="${1#--}"
+  printf '%s/autoplay_check-%s.%s' "$state_dir" "${tag//[!A-Za-z0-9_]/_}" "$2"
+}
+ap_play() {
+  local id
+  for id in $ap_scenarios; do
+    GDIR_LOCK_HELD=1 AUTOPLAY_JOBS=1 AUTOPLAY_TIMEOUT="$limit" GODOT_BIN="$godot" bash tools/autoplay.sh $id --no-images > "$(ap_file "$id" log)" 2>&1
+    echo $? > "$(ap_file "$id" status)"
+  done
+}
+ap_dir="playtesting/autoplay"
+ap_before=""; ap_ran=0; ap_pid=""
+
 # A relative script path on purpose: Git Bash would rewrite some res:// forms.
 rm -f "$state_dir"/tests-*.log
 test_logs="$state_dir/check.log"
-if [ "$jobs" -le 1 ]; then
+if [ "$par" -eq 0 ]; then
   run_godot "$state_dir/check.log" --headless --path . --script tools/check.gd
   status=$?
   if [ "$status" -eq 124 ]; then timed_out_in "tools/check.gd" "$state_dir/check.log"
-  elif [ "$status" -ne 0 ]; then failed=1; hard_fail=1; fi
+  elif [ "$status" -ne 0 ]; then
+    if silent_exit "$state_dir/check.log"; then exit_quiet "tools/check.gd" "$status" "$state_dir/check.log"; fi
+    failed=1; hard_fail=1
+  fi
 else
   # The loading and the screen rules run once, beside the test groups.
-  echo "check: running the tests in $jobs processes"
+  [ "$test_jobs" -eq 1 ] && echo "check: running the tests in 1 process" || echo "check: running the tests in $test_jobs processes"
   run_godot "$state_dir/check.log" --headless --path . --script tools/check.gd -- --no-tests &
   main_pid=$!
   pids=""; test_logs=""; k=1
-  while [ "$k" -le "$jobs" ]; do
-    run_godot "$state_dir/tests-$k.log" --headless --path . --script tools/check.gd -- --tests "$k" "$jobs" &
+  while [ "$k" -le "$test_jobs" ]; do
+    run_godot "$state_dir/tests-$k.log" --headless --path . --script tools/check.gd -- --tests "$k" "$test_jobs" &
     pids="$pids $!"; test_logs="$test_logs $state_dir/tests-$k.log"; k=$((k + 1))
   done
   wait "$main_pid"; status=$?
   if [ "$status" -eq 124 ]; then timed_out_in "tools/check.gd (loading and screen rules)" "$state_dir/check.log"
-  elif [ "$status" -ne 0 ]; then failed=1; hard_fail=1; fi
+  elif [ "$status" -ne 0 ]; then
+    if silent_exit "$state_dir/check.log"; then exit_quiet "the load pass (tools/check.gd --no-tests)" "$status" "$state_dir/check.log"; fi
+    failed=1; hard_fail=1
+  fi
+  # The import and the load pass are done. If both were clean (the game's own code is about to run),
+  # autoplay starts now, in its own process beside the test jobs.
+  if [ "$ap_beside" -eq 1 ] && [ "$failed" -eq 0 ]; then
+    write_allow "$state_dir/check.log"
+    if [ -z "$(scan "$error_pattern" "$state_dir/import.log" "$state_dir/check.log")" ]; then
+      echo "check: playing the autoplay scenarios beside the tests"
+      ap_before="$(ls "$ap_dir" 2>/dev/null)"
+      ap_play &
+      ap_pid=$!; ap_ran=1
+    fi
+  fi
   k=1
   for pid in $pids; do
     wait "$pid"; status=$?
     log="$state_dir/tests-$k.log"
-    if [ "$status" -eq 124 ]; then timed_out_in "test group $k of $jobs" "$log"
-    elif ! clean "$log" | grep -q '^GDIR-TESTS: '; then echo "check: test group $k of $jobs didn't finish (see $log)"; failed=1
-    elif [ "$status" -ne 0 ]; then failed=1; hard_fail=1; fi
+    if [ "$status" -eq 124 ]; then timed_out_in "test group $k of $test_jobs" "$log"
+    elif ! clean "$log" | grep -q '^GDIR-TESTS: '; then
+      if [ "$status" -ne 0 ] && silent_exit "$log"; then exit_quiet "test group $k of $test_jobs" "$status" "$log"
+      else echo "check: test group $k of $test_jobs didn't finish (see $log)"; fi
+      failed=1
+    elif [ "$status" -ne 0 ]; then
+      if silent_exit "$log"; then exit_quiet "test group $k of $test_jobs" "$status" "$log"; fi
+      failed=1; hard_fail=1
+    fi
     k=$((k + 1))
   done
+  [ -z "$ap_pid" ] || wait "$ap_pid"
   test_logs="$state_dir/check.log$test_logs"
   if [ "${GDIR_CHECK_DEAL:-}" = "1" ]; then clean "$state_dir/tests-1.log" | sed -n 's/^GDIR-DEAL: /check: deal: job /p'; fi
 fi
@@ -325,29 +457,8 @@ rm -f "$times_file.new" "$times_file.tmp"
 
 # --- 3. scan the output -------------------------------------------------------------------------
 
-allow="$state_dir/allow.txt"
-{
-  # Engine noise at quick exit. Real leaks show up in the editor too.
-  printf '%s\n' "ObjectDB instances leaked at exit" "resources still in use at exit" "Pages in use exist at exit"
-  # Lines a test prints to expect an error. C4G-IGNORE: is the 2.x spelling, deprecated: remove in 4.0.
-  for log in $test_logs; do [ -f "$log" ] && clean "$log"; done | sed -n -e "s/^GDIR-IGNORE://p" -e "s/^C4G-IGNORE://p"
-  # Project-approved suppressions (tools/check.ignore: one substring per line, # comments).
-  [ -f tools/check.ignore ] && grep -v '^[[:space:]]*#' tools/check.ignore
-} | grep -v '^[[:space:]]*$' > "$allow"
-
-# Matching lines, plus the "at:" line under each, minus allowlisted ones.
-scan() { # scan <extended regex> <log files…>
-  local pattern="$1" file
-  shift
-  for file in "$@"; do [ -f "$file" ] && clean "$file"; done | awk -v pattern="$pattern" -v allowfile="$allow" '
-    BEGIN { count = 0; while ((getline line < allowfile) > 0) if (line != "") allowed_text[count++] = line }
-    function allowed(text,   i) { for (i = 0; i < count; i++) if (index(text, allowed_text[i]) > 0) return 1; return 0 }
-    keep && /^[ \t]+at: / { print; keep = 0; next }
-    { keep = 0 }
-    $0 ~ pattern && !allowed($0) { print; keep = 1 }
-  '
-}
-errors="$(scan '^[ \t]*(ERROR|SCRIPT ERROR|USER ERROR|USER SCRIPT ERROR|GDIR-FAIL):|Parse Error' "$state_dir/import.log" $test_logs)"
+write_allow $test_logs
+errors="$(scan "$error_pattern" "$state_dir/import.log" $test_logs)"
 warnings="$(scan '^[ \t]*(WARNING|SCRIPT WARNING|USER WARNING):' "$state_dir/import.log" $test_logs)"
 
 # --- 3b. layout lint of the screens (opt in) ----------------------------------------------------
@@ -366,7 +477,7 @@ if [ "$failed" -eq 0 ] && [ -z "$errors" ] && [ -f tools/ui_capture.cfg ] && [ -
     run_godot "$ui_log" --headless --path . --script tools/ui_capture.gd -- --check
     ui_status=$?
     if [ "$ui_status" -eq 124 ]; then timed_out="${timed_out:+$timed_out, }the layout lint"; echo "check: the layout lint timed out after ${limit} s"; failed=1; fi
-    ui_errors="$(scan '^[ \t]*(ERROR|SCRIPT ERROR|USER ERROR|USER SCRIPT ERROR|GDIR-FAIL):|Parse Error' "$ui_log")"
+    ui_errors="$(scan "$error_pattern" "$ui_log")"
     if [ -n "$ui_errors" ]; then errors="$ui_errors"; fi
     ui_warnings="$(scan '^[ \t]*(WARNING|SCRIPT WARNING|USER WARNING):' "$ui_log")"
     if [ -n "$ui_warnings" ]; then warnings="${warnings:+$warnings
@@ -374,71 +485,58 @@ if [ "$failed" -eq 0 ] && [ -z "$errors" ] && [ -f tools/ui_capture.cfg ] && [ -
   fi
 fi
 
-# --- 3c. autoplay smoke (opt in) ----------------------------------------------------------------
-# tools/check.cfg > [autoplay] check_in_check = true plays the smoke scenario headless (--no-images),
-# and any other scenario `enforce` names ("*" is all of them), once everything above was clean: the
-# game's own code runs. A finding in an enforced scenario fails the check, as GDIR-FAIL: autoplay:
-# <scenario> step <n>: <kind>: <summary>; in another scenario it is a note, so `enforce` left empty
-# makes smoke a note too. A missing file or key reads as off, and then nothing here costs anything.
-# While the game's adapter is still the seed's, the run is skipped with a note that names what to wire.
+# --- 3c. autoplay (opt in) ----------------------------------------------------------------------
+# The scenarios and what fails the check are read above (tools/check.cfg > [autoplay]). A parallel run
+# started them already, as soon as the import and the load pass were clean, beside the test jobs; a
+# serial run plays them here, once everything above was clean: the game's own code runs. Either way the
+# result joins the report here. While the game's adapter is still the seed's, the run is skipped with a
+# note that names what to wire.
 ap_notes=""
-ap_log="$state_dir/autoplay_check.log"
-rm -f "$ap_log"
-if [ "$failed" -eq 0 ] && [ -z "$errors" ] && [ -f tools/check.cfg ] && [ -f tools/autoplay.sh ] && [ -f tools/autoplay.gd ] \
-    && [ -f tools/autoplay_adapter.gd ] && [ -f tools/autoplay_scenarios.gd ]; then
-  ap_cfg="$(awk '/^\[/ { in_ap = ($0 ~ /^\[autoplay\]/); next }
-    in_ap && /^[ \t]*(check_in_check|enforce)[ \t]*=/ { k = $0; sub(/[ \t]*=.*$/, "", k); sub(/^[ \t]*/, "", k)
-      v = $0; sub(/^[^=]*=[ \t]*/, "", v); sub(/[ \t\r]*(;.*)?$/, "", v); if (!(k in seen)) print k "=" v; seen[k] = 1 }' tools/check.cfg)"
-  ap_on="$(printf '%s\n' "$ap_cfg" | sed -n 's/^check_in_check=//p')"
-  ap_enforce="$(printf '%s\n' "$ap_cfg" | sed -n 's/^enforce=//p' | tr -d '[]" \r' | tr ',' ' ')"
-  if [ "$ap_on" = "true" ]; then
-    ap_scenarios="smoke"
-    set -f   # enforce may hold "*": no file name expansion
-    for id in $ap_enforce; do
-      case "$id" in "*") ap_scenarios="--all"; break ;; smoke) ;; *) ap_scenarios="$ap_scenarios $id" ;; esac
-    done
-    set +f
-    ap_dir="playtesting/autoplay"
-    ap_before="$(ls "$ap_dir" 2>/dev/null)"
-    for id in $ap_scenarios; do
-      enforced=0
-      case " $ap_enforce " in *" $id "*|*" * "*) enforced=1 ;; esac
-      GDIR_LOCK_HELD=1 AUTOPLAY_TIMEOUT="$limit" GODOT_BIN="$godot" bash tools/autoplay.sh $id --no-images > "$ap_log" 2>&1
-      ap_status=$?
-      ap_out="$(clean "$ap_log")"
-      ap_fail="$(printf '%s\n' "$ap_out" | sed -n 's/^autoplay: FAIL: /autoplay: /p')"
-      if [ "$ap_status" -eq 1 ] || [ -n "$ap_fail" ]; then
-        [ -n "$ap_fail" ] || ap_fail="autoplay: $id failed (see $ap_log)"
-        if [ "$enforced" -eq 1 ]; then
-          errors="${errors:+$errors
-}$(printf '%s\n' "$ap_fail" | sed 's/^/GDIR-FAIL: /')"
-          failed=1
-        else
-          ap_notes="${ap_notes:+$ap_notes
-}$(printf '%s\n' "$ap_fail" | sed 's/^/check: note: (not enforced) /')"
-        fi
-      elif [ "$ap_status" -eq 3 ]; then
-        ap_notes="${ap_notes:+$ap_notes
-}check: note: autoplay $id couldn't run: $(printf '%s\n' "$ap_out" | head -n 1)"
-      elif [ "$ap_status" -ne 0 ]; then
+if [ "$ap_on" -eq 1 ] && [ "$par" -eq 0 ] && [ "$failed" -eq 0 ] && [ -z "$errors" ]; then
+  ap_before="$(ls "$ap_dir" 2>/dev/null)"
+  ap_play
+  ap_ran=1
+fi
+if [ "$ap_ran" -eq 1 ]; then
+  for id in $ap_scenarios; do
+    enforced=0
+    case " $ap_enforce " in *" $id "*|*" * "*) enforced=1 ;; esac
+    ap_log="$(ap_file "$id" log)"
+    ap_status="$(cat "$(ap_file "$id" status)" 2>/dev/null)"
+    case "$ap_status" in ''|*[!0-9]*) ap_status=1 ;; esac
+    ap_out="$(clean "$ap_log")"
+    ap_fail="$(printf '%s\n' "$ap_out" | sed -n 's/^autoplay: FAIL: /autoplay: /p')"
+    if [ "$ap_status" -eq 1 ] || [ -n "$ap_fail" ]; then
+      [ -n "$ap_fail" ] || ap_fail="autoplay: $id failed (see $ap_log)"
+      if [ "$enforced" -eq 1 ]; then
         errors="${errors:+$errors
-}GDIR-FAIL: autoplay: $id exited with $ap_status (see $ap_log)"
+}$(printf '%s\n' "$ap_fail" | sed 's/^/GDIR-FAIL: /')"
         failed=1
       else
         ap_notes="${ap_notes:+$ap_notes
-}$(printf '%s\n' "$ap_out" | grep -E '^autoplay: .* · (skipped:|[0-9]+ steps? · )' | sed -e 's/ · playtesting\/autoplay\/[^ ]*$//' -e 's/^/check: note: /')"
+}$(printf '%s\n' "$ap_fail" | sed 's/^/check: note: (not enforced) /')"
       fi
-    done
-    # A clean run's folder isn't kept (every check would add one); a run with findings keeps its own.
-    for folder in $(ls "$ap_dir" 2>/dev/null); do
-      case "$nl$ap_before$nl" in *"$nl$folder$nl"*) continue ;; esac
-      [ -f "$ap_dir/$folder/repro.json" ] || rm -rf "${ap_dir:?}/$folder"
-    done
-  fi
+    elif [ "$ap_status" -eq 3 ]; then
+      ap_notes="${ap_notes:+$ap_notes
+}check: note: autoplay $id couldn't run: $(printf '%s\n' "$ap_out" | head -n 1)"
+    elif [ "$ap_status" -ne 0 ]; then
+      errors="${errors:+$errors
+}GDIR-FAIL: autoplay: $id exited with $ap_status (see $ap_log)"
+      failed=1
+    else
+      ap_notes="${ap_notes:+$ap_notes
+}$(printf '%s\n' "$ap_out" | grep -E '^autoplay: .* · (skipped:|[0-9]+ steps? · )' | sed -e 's/ · playtesting\/autoplay\/[^ ]*$//' -e 's/^/check: note: /')"
+    fi
+  done
+  # A clean run's folder isn't kept (every check would add one); a run with findings keeps its own.
+  for folder in $(ls "$ap_dir" 2>/dev/null); do
+    case "$nl$ap_before$nl" in *"$nl$folder$nl"*) continue ;; esac
+    [ -f "$ap_dir/$folder/repro.json" ] || rm -rf "${ap_dir:?}/$folder"
+  done
 fi
 
 summary="$(clean "$state_dir/check.log" | grep -E '^GDIR(-NOTE)?:')"
-if [ "$jobs" -gt 1 ]; then
+if [ "$par" -eq 1 ]; then
   # A parallel run: the groups' notes, and their passed tests in the main run's line.
   tests_passed="$(for log in $test_logs; do [ -f "$log" ] && clean "$log"; done | awk '/^GDIR-TESTS: / { n += $2 } END { print n + 0 }')"
   [ "$tests_passed" -eq 1 ] && tests_word="1 test" || tests_word="$tests_passed tests"
@@ -456,7 +554,10 @@ elif [ -z "$timed_out" ]; then
 fi
 if [ "$ui_ran" -eq 1 ]; then
   clean "$ui_log" | sed -n 's/^GDIR-NOTE: ui lint/check: note: ui lint/p'
-  if [ "$ui_status" -ne 0 ] && [ -z "$(clean "$ui_log" | grep -E '^[[:space:]]*(GDIR-FAIL|ERROR|SCRIPT ERROR):')" ]; then
+  if [ "$ui_status" -ne 0 ] && [ "$ui_status" -ne 124 ] && [ -z "$ui_errors" ]; then
+    exit_quiet "the layout lint (tools/ui_capture.gd --check)" "$ui_status" "$ui_log"
+    failed=1
+  elif [ "$ui_status" -ne 0 ] && [ -z "$(clean "$ui_log" | grep -E '^[[:space:]]*(GDIR-FAIL|ERROR|SCRIPT ERROR):')" ]; then
     echo "check: the layout lint stopped early (see $ui_log)"
     failed=1
   fi
