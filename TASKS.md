@@ -4,9 +4,16 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T32 · B3 · R1
+**Next IDs:** T33 · B3 · R1
 
 ## Queue
+
+### T32 · The check names a Godot process that exits without an error line · done · S · agent
+- Touches: framework/tools/check.sh, selftest.sh, CHANGELOG.md
+- Done when: when the import pass, the load pass, a test group or the layout lint exits non-zero (a crash such as a segmentation fault included) and its log has no error line the scan reports, the check prints one line naming that process, its exit status and its log before the FAIL, instead of a FAIL with no reason; the selftest covers a load pass and a test group that exit non-zero with a clean log (test)
+- GDD: (none)
+- Source: Director-Driven-Development T218
+- Found in T190: the load pass's Godot process crashed after its report once in 12 runs on The Guildkeeper, and the check failed with no error line.
 
 ### T31 · The check plays its autoplay scenarios beside the tests · done · M · agent
 - Touches: framework/tools/check.sh, framework/tools/autoplay.sh, project/tools/check.cfg, selftest.sh, CHANGELOG.md

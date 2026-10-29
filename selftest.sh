@@ -1093,11 +1093,63 @@ cp tests/test_market.gd "$work/saved"
 printf '\nfunc test_selftest_failure() -> void:\n\texpect_eq(1, 2)\n' >> tests/test_market.gd
 out="$(bash tools/check.sh --jobs 3 2>&1)"; expect_status "a failing test in one group fails the parallel run" 1 $? "$out"
 expect_output "and names it" "test_market\.gd::test_selftest_failure: expected 2, got 1" "$out"
+expect_no_output "and names no process that exited without an error line" "exited with" "$out"
 cp "$work/saved" tests/test_market.gd
 # Every run records the times. Without [tests] balance the deal is file order and nothing splits.
 times="$logs/test-times.tsv"
 [ -f "$times" ] && grep -qE '^res://tests/test_market\.gd	([0-9]+\.[0-9]{3})	1	[0-9]+\.[0-9]{3}$' "$times" \
   && ok "a whole run stores each test file's time, one shard and its time as the longest" || bad "a whole run stores each test file's time, one shard and its time as the longest" "$(cat "$times" 2>/dev/null)"
+# A Godot process that exits 139 (a segmentation fault) with a clean log: the check names the process, its
+# status and its log in one line before the FAIL, and the exit code stays 1. crashy <pattern> [silent]: a
+# stand-in for Godot that runs the real one, then exits 139 for a call whose arguments contain the pattern;
+# with "silent" it exits 139 before running anything, so the log stays empty.
+crashy() {
+  if [ "${2:-}" = "silent" ]; then
+    cat > "$work/godot-crash" <<CRASH
+#!/usr/bin/env bash
+case "\$*" in *"$1"*) exit 139 ;; esac
+"$godot" "\$@"
+CRASH
+  else
+    cat > "$work/godot-crash" <<CRASH
+#!/usr/bin/env bash
+"$godot" "\$@"
+status=\$?
+case "\$*" in *"$1"*) exit 139 ;; esac
+exit \$status
+CRASH
+  fi
+  chmod +x "$work/godot-crash"
+}
+line_of() { printf '%s\n' "$1" | grep -n -E -- "$2" | head -n 1 | cut -d: -f1; }
+before() { # before <output> <regex> <regex>: the first line matching the first regex comes before the second's
+  local a b
+  a="$(line_of "$1" "$2")"; b="$(line_of "$1" "$3")"
+  [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]
+}
+crashy "--import"
+out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --import --jobs 2 2>&1)"; expect_status "an import pass that crashes with a clean log fails the check" 1 $? "$out"
+expect_output "names the import pass, its status and its log" "check: the import pass exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/import\.log" "$out"
+before "$out" "printed no error" "^check: FAIL" && ok "and the FAIL follows it" || bad "and the FAIL follows it" "$out"
+crashy "--no-tests"
+out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --jobs 2 2>&1)"; expect_status "a load pass that crashes with a clean log fails the check" 1 $? "$out"
+expect_output "names the load pass, its status and its log" "check: the load pass \(tools/check\.gd --no-tests\) exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/check\.log" "$out"
+before "$out" "printed no error" "^check: FAIL" && ok "and the FAIL follows it" || bad "and the FAIL follows it" "$out"
+crashy "--tests 2 2"
+out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --jobs 2 2>&1)"; expect_status "a test group that crashes after its report fails the check" 1 $? "$out"
+expect_output "names the group, its status and its log" "check: test group 2 of 2 exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/tests-2\.log" "$out"
+before "$out" "printed no error" "^check: FAIL" && ok "and the FAIL follows it" || bad "and the FAIL follows it" "$out"
+crashy "--tests 2 2" silent
+out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --jobs 2 2>&1)"; expect_status "a test group that crashes before its report fails the check" 1 $? "$out"
+expect_output "names the group, its status and its log" "check: test group 2 of 2 exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/tests-2\.log" "$out"
+expect_no_output "and doesn't also say it didn't finish" "didn't finish" "$out"
+crashy "ui_capture.gd"
+out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --jobs 2 2>&1)"; expect_status "a layout lint that crashes with a clean log fails the check" 1 $? "$out"
+expect_output "names the lint, its status and its log" "check: the layout lint \(tools/ui_capture\.gd --check\) exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/ui_lint\.log" "$out"
+before "$out" "printed no error" "^check: FAIL" && ok "and the FAIL follows it" || bad "and the FAIL follows it" "$out"
+crashy "tools/check.gd"
+out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --jobs 1 2>&1)"; expect_status "a serial run whose check crashes with a clean log fails the check" 1 $? "$out"
+expect_output "names the check, its status and its log" "check: tools/check\.gd exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/check\.log" "$out"
 deal_of() { printf '%s\n' "$1" | sed -n 's/^check: deal: job \([0-9]*\) [0-9.?]* /\1 /p' | tr '\n' ';'; }
 printf 'res://tests/test_dev_menu.gd\t5\nres://tests/test_market.gd\t200\nres://tests/test_play_log.gd\t30\n' > "$times"
 out="$(GDIR_CHECK_DEAL=1 bash tools/check.sh --jobs 3 2>&1)"; expect_status "with no balance setting, --jobs 3 passes" 0 $? "$out"

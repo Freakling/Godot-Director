@@ -266,19 +266,7 @@ timed_out=""
 hard_fail=0   # a failure that isn't a timeout: it wins over exit 3
 echo "check: Godot $version"
 
-# --- 1. import ----------------------------------------------------------------------------------
-status=0
-if [ "$force_import" -eq 0 ] && import_skip; then
-  echo "check: import pass skipped (no imported file changed)"
-else
-  run_godot "$state_dir/import.log" --headless --path . --import
-  status=$?
-  import_record "$status"
-fi
-if [ "$status" -eq 124 ]; then timed_out="the import pass"; echo "check: the import pass timed out after ${limit} s"; failed=1
-elif [ "$status" -ne 0 ]; then echo "check: the import pass exited with $status"; failed=1; hard_fail=1; fi
-
-# --- 2. load, rules, tests ----------------------------------------------------------------------
+# --- helpers of the steps below -----------------------------------------------------------------
 esc="$(printf '\033')"
 clean() { tr -d '\r' < "$1" | sed "s/${esc}\[[0-9;]*m//g"; }
 # timed_out_in <what> <log>: say which test file a run that hit the timeout was in.
@@ -320,6 +308,44 @@ scan() { # scan <extended regex> <log files...>
 }
 error_pattern='^[ \t]*(ERROR|SCRIPT ERROR|USER ERROR|USER SCRIPT ERROR|GDIR-FAIL):|Parse Error'
 
+# A process that exits non-zero (a crash, say) and prints no error line gave no reason for the FAIL. These
+# say so in one line, with its status and its log (step 1, 2 and 3b call them).
+# exit_text <status>: the status, with the name of the signal a crash usually gives (128 + signal).
+exit_text() {
+  case "$1" in
+    134) echo "134 (abort)" ;;
+    136) echo "136 (floating-point exception)" ;;
+    137) echo "137 (killed)" ;;
+    139) echo "139 (segmentation fault)" ;;
+    *) echo "$1" ;;
+  esac
+}
+# silent_exit <log>: succeeds when the log has no error line the scan reports. It writes the allow list
+# from that log alone (write_allow); the final scan allows at least those lines for a test log too.
+silent_exit() {
+  write_allow "$1"
+  [ -z "$(scan "$error_pattern" "$1")" ]
+}
+# exit_quiet <what> <status> <log>: the line for a process that exited non-zero and printed no error.
+exit_quiet() { echo "check: $1 exited with $(exit_text "$2") and printed no error; see $3"; }
+
+# --- 1. import ----------------------------------------------------------------------------------
+status=0
+if [ "$force_import" -eq 0 ] && import_skip; then
+  echo "check: import pass skipped (no imported file changed)"
+else
+  run_godot "$state_dir/import.log" --headless --path . --import
+  status=$?
+  import_record "$status"
+fi
+if [ "$status" -eq 124 ]; then timed_out="the import pass"; echo "check: the import pass timed out after ${limit} s"; failed=1
+elif [ "$status" -ne 0 ]; then
+  if silent_exit "$state_dir/import.log"; then exit_quiet "the import pass" "$status" "$state_dir/import.log"
+  else echo "check: the import pass exited with $status"; fi
+  failed=1; hard_fail=1
+fi
+
+# --- 2. load, rules, tests ----------------------------------------------------------------------
 # Autoplay in the check (step 3c) plays the scenarios one at a time, each call's output and exit status in
 # .godot/godot-director/autoplay_check-<scenario>.log and .status. It never reads or writes the variables
 # of this script, so it can run in the background beside the test jobs. AUTOPLAY_JOBS=1: a sweep (--all)
@@ -345,7 +371,10 @@ if [ "$par" -eq 0 ]; then
   run_godot "$state_dir/check.log" --headless --path . --script tools/check.gd
   status=$?
   if [ "$status" -eq 124 ]; then timed_out_in "tools/check.gd" "$state_dir/check.log"
-  elif [ "$status" -ne 0 ]; then failed=1; hard_fail=1; fi
+  elif [ "$status" -ne 0 ]; then
+    if silent_exit "$state_dir/check.log"; then exit_quiet "tools/check.gd" "$status" "$state_dir/check.log"; fi
+    failed=1; hard_fail=1
+  fi
 else
   # The loading and the screen rules run once, beside the test groups.
   [ "$test_jobs" -eq 1 ] && echo "check: running the tests in 1 process" || echo "check: running the tests in $test_jobs processes"
@@ -358,7 +387,10 @@ else
   done
   wait "$main_pid"; status=$?
   if [ "$status" -eq 124 ]; then timed_out_in "tools/check.gd (loading and screen rules)" "$state_dir/check.log"
-  elif [ "$status" -ne 0 ]; then failed=1; hard_fail=1; fi
+  elif [ "$status" -ne 0 ]; then
+    if silent_exit "$state_dir/check.log"; then exit_quiet "the load pass (tools/check.gd --no-tests)" "$status" "$state_dir/check.log"; fi
+    failed=1; hard_fail=1
+  fi
   # The import and the load pass are done. If both were clean (the game's own code is about to run),
   # autoplay starts now, in its own process beside the test jobs.
   if [ "$ap_beside" -eq 1 ] && [ "$failed" -eq 0 ]; then
@@ -375,8 +407,14 @@ else
     wait "$pid"; status=$?
     log="$state_dir/tests-$k.log"
     if [ "$status" -eq 124 ]; then timed_out_in "test group $k of $test_jobs" "$log"
-    elif ! clean "$log" | grep -q '^GDIR-TESTS: '; then echo "check: test group $k of $test_jobs didn't finish (see $log)"; failed=1
-    elif [ "$status" -ne 0 ]; then failed=1; hard_fail=1; fi
+    elif ! clean "$log" | grep -q '^GDIR-TESTS: '; then
+      if [ "$status" -ne 0 ] && silent_exit "$log"; then exit_quiet "test group $k of $test_jobs" "$status" "$log"
+      else echo "check: test group $k of $test_jobs didn't finish (see $log)"; fi
+      failed=1
+    elif [ "$status" -ne 0 ]; then
+      if silent_exit "$log"; then exit_quiet "test group $k of $test_jobs" "$status" "$log"; fi
+      failed=1; hard_fail=1
+    fi
     k=$((k + 1))
   done
   [ -z "$ap_pid" ] || wait "$ap_pid"
@@ -516,7 +554,10 @@ elif [ -z "$timed_out" ]; then
 fi
 if [ "$ui_ran" -eq 1 ]; then
   clean "$ui_log" | sed -n 's/^GDIR-NOTE: ui lint/check: note: ui lint/p'
-  if [ "$ui_status" -ne 0 ] && [ -z "$(clean "$ui_log" | grep -E '^[[:space:]]*(GDIR-FAIL|ERROR|SCRIPT ERROR):')" ]; then
+  if [ "$ui_status" -ne 0 ] && [ "$ui_status" -ne 124 ] && [ -z "$ui_errors" ]; then
+    exit_quiet "the layout lint (tools/ui_capture.gd --check)" "$ui_status" "$ui_log"
+    failed=1
+  elif [ "$ui_status" -ne 0 ] && [ -z "$(clean "$ui_log" | grep -E '^[[:space:]]*(GDIR-FAIL|ERROR|SCRIPT ERROR):')" ]; then
     echo "check: the layout lint stopped early (see $ui_log)"
     failed=1
   fi
