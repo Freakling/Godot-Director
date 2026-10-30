@@ -2,7 +2,7 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
-## Unreleased
+## 4.6.2 (2026-10-30)
 
 - **The guard and the Read rules keep the agent out of the gh, git credential and SSH stores.** The settings template had no Read deny rules; it now denies the Read tool `~/.ssh/**`, `~/.git-credentials`, `~/.config/git/credentials`, `~/.config/gh/**` and `~/AppData/Roaming/GitHub CLI/**`, which are the SSH folder, git's credentials files and the gh CLI's config folders. A Read rule doesn't reach a shell command, so the guard hook (`guard-git.sh`) now also blocks `cat`, `head`, `tail`, `less`, `more` and `strings` of those stores, however the path is written (`~/`, `$HOME/`, `${HOME}/`, `/c/Users/<name>/`, `C:\Users\<name>\` or relative), and the commands that print a stored credential: `gh auth token`, `gh auth status -t`, and `git credential fill` or `get`. The store check runs for every Bash command, not only git ones, and starts no process. `selftest.sh` feeds the hook each case and checks that the template denies the five Read rules.
   - **Upgrade steps:** the hook and `.claude/settings.json` are framework-owned and arrive with the upgrade (if you edited `.claude/settings.json`, merge its `.gdir-new` file, keeping the five new `deny` rules). Restart Claude Code so the new deny rules load.
