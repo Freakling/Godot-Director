@@ -37,7 +37,11 @@
       "Bash(git push -f *)",
       "Bash(git reset --hard *)",
       "Bash(git commit --no-verify *)",
-      "Bash(git commit -n *)"
+      "Bash(git commit -n *)",
+      "Bash(git *--output*)",
+      "Bash(git *--no-index*)",
+      "Bash(git *--ext-diff*)",
+      "Bash(git commit *--file*)"
     ]
   },
   "hooks": {

@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T33 · B3 · R1
+**Next IDs:** T34 · B3 · R1
 
 ## Queue
+
+### T33 · The guard blocks the git flags that write or read any file · done · M · agent
+- Touches: framework/.claude/hooks/guard-git.sh, framework/.claude/settings.json, selftest.sh, CHANGELOG.md
+- Done when: the guard hook blocks the git flags that write a file (`--output`), read a file outside the repository (`--no-index`, `commit -F` and `--file`, a `git diff` of a path outside it) or run a configured command (`--ext-diff`), and passes the plain forms the procedures use (`git commit -F -`, `git commit -m "..."`) (check) · the settings template denies `Bash(git *--output*)`, `Bash(git *--no-index*)`, `Bash(git *--ext-diff*)` and `Bash(git commit *--file*)` (check) · `selftest.sh` feeds the hook each case, and fails when the template allows a wildcard git rule (`git diff *`, `git log *`, `git show *`, `git stash *`, `git commit *`) without all four deny rules (check)
+- GDD: (none)
+- Source: Director-Driven-Development T234
 
 ### T32 · The check names a Godot process that exits without an error line · done · S · agent
 - Touches: framework/tools/check.sh, selftest.sh, CHANGELOG.md
