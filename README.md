@@ -31,11 +31,11 @@ AI writes game code fast. Without structure, that speed goes wrong in familiar w
 
 ### Start here: write your design document
 
-Before you install, write your game design document in your own words. The [template](https://raw.githubusercontent.com/Freakling/Godot-Director/v4.6.2/project/design/director-gdd.md) shows what to cover; fill in what you know and leave the rest blank. Then install Godot Director below: onboarding reads your document and asks only about what you left open.
+Before you install, write your game design document in your own words. The [template](https://raw.githubusercontent.com/Freakling/Godot-Director/v4.7.0/project/design/director-gdd.md) shows what to cover; fill in what you know and leave the rest blank. Then install Godot Director below: onboarding reads your document and asks only about what you left open.
 
 ### Install
 
-Your game needs git (`git init` if it has none) and no uncommitted changes. You also need Godot 4.5 or newer, and bash (on Windows it comes with Git for Windows).
+Your game needs git (`git init` if it has none) and no uncommitted changes. You also need Godot 4.5 or newer, and bash (on Windows it comes with Git for Windows). [gitleaks](https://github.com/gitleaks/gitleaks#installing) is optional and recommended: with it installed, the check and the pre-commit hook scan for secrets (`winget install gitleaks`, `brew install gitleaks`); without it they print a note and go on.
 
 **Option 1: the skill.** In your game's folder, run:
 
@@ -133,6 +133,7 @@ your-game/
 ├── design/research/            dated research notes, one per topic; the decision line links to its note
 ├── playtesting/TEMPLATE.md     playtest template, one section per core loop
 ├── tools/check.cfg             check settings: screen folders, folders to skip, whether the check plays smoke
+├── .gitleaks.toml              gitleaks settings for the check and the hook: the built-in rules, and the .godot/ cache allowlisted
 ├── tools/ui_screens.gd         the screen catalog: every screen, how to open it in a state, the overlays it shows
 ├── tools/ui_capture.cfg        capture sizes and seed, lint thresholds, which screens the check lints, verify tolerance
 ├── tools/play_log.gd           the PlayLog autoload: what the play log's header, snapshots and progress line say for this game
@@ -157,7 +158,7 @@ your-game/
 ├── tools/dev_menu_base.gd      the dev menu: a tab per system with its actions and hidden values, and the play log's tail
 ├── tools/setup-clone.sh        per clone: finds Godot, installs the pre-commit hook
 ├── tools/release.sh            runs the upload commands release.cfg names, per export preset
-├── .githooks/pre-commit        runs the check before commits that touch code, scenes or data
+├── .githooks/pre-commit        runs the check before commits that touch code, scenes or data, and scans every commit for secrets (with gitleaks)
 ├── playtesting/README.md       how playtests and function checks work
 │
 │  Godot Director's, Claude Code adapter: updated on upgrade
@@ -205,14 +206,15 @@ The game plays itself, so an assistant can playtest a change before you do, and 
 - **Reading a review.** `bash tools/log_review.sh` writes `review.md` and `findings.json` next to the log: a timeline in turns and views, the findings by signature (the same problem keeps its `sig-xxxxxxxx` across runs), the coverage of views and actions, and a delta against the previous run of the scenario. "I just played, check the logs" reviews your newest session the same way (`--player`). An assistant that can't view images reads the element map beside each screenshot: every element's name, text, position and focus order.
 
 ### The check
-`bash tools/check.sh` runs five steps:
-1. Godot's import pass;
-2. loads every script, scene and resource (views that only load when opened too), checks screen scripts for game rules, and runs `tests/**/test_*.gd`;
-3. scans Godot's output for errors;
-4. plays the smoke scenario headless, when `tools/check.cfg` › `[autoplay]` turns it on;
-5. runs `tools/check.local.sh`, if the game has one.
+`bash tools/check.sh` runs six steps:
+1. scans the working tree for secrets with gitleaks, when it's installed (credentials are listed as `file:line` with the values redacted; `.gitleaks.toml` holds the settings, and the check prints a note instead when gitleaks isn't installed);
+2. Godot's import pass;
+3. loads every script, scene and resource (views that only load when opened too), checks screen scripts for game rules, and runs `tests/**/test_*.gd`;
+4. scans Godot's output for errors;
+5. plays the smoke scenario headless, when `tools/check.cfg` › `[autoplay]` turns it on;
+6. runs `tools/check.local.sh`, if the game has one.
 
-It exits 0 on pass, 1 on fail, and 3 when it can't run, including when a Godot run hits its timeout (`tools/check.cfg` › `[tests] timeout`, 600 seconds by default): the report then names the test file it was in, so a slow suite never reads as a failing one. It remembers the last passing state, so hooks don't run it again when nothing has changed. Game-specific settings go in `tools/check.cfg`, and extra steps (for example an existing GUT suite) go in `tools/check.local.sh`.
+It exits 0 on pass, 1 on fail, and 3 when it can't run, including when a Godot run hits its timeout (`tools/check.cfg` › `[tests] timeout`, 600 seconds by default): the report then names the test file it was in, so a slow suite never reads as a failing one. An installed gitleaks that is too old (`[gitleaks] min-version`, 8.18.0 by default) or that can't scan, such as 8.19.0, also exits 3. It remembers the last passing state, so hooks don't run it again when nothing has changed. Game-specific settings go in `tools/check.cfg`, and extra steps (for example an existing GUT suite) go in `tools/check.local.sh`.
 
 - **Parallel tests.** The tests run in several headless Godot processes at once, one per CPU core by default (`[tests] jobs`, or `--jobs N` for one run; `--jobs 1` runs them in one process). Each process takes a contiguous group of the sorted test files, in file order, with its own log in `.godot/godot-director/`, and the check merges them into one report. So a test must not depend on autoload or `user://` state that another test file left behind: it sets up what it reads. Test files also run at the same time and share one `user://` and one `.godot/`, so two of them must not write the same `user://` file: use a unique name per test (or per file, in a `no-split` file).
 - **Balanced and split runs (opt-in).** `[tests] balance = true` deals the test files longest first by their times in the last run instead (files with no time yet go first), each to the process with the least time so far. With it on, `[tests] split_over = <seconds>` splits a file whose whole time is over that into shards of its test methods, each in its own process, its tests counted once; a file whose tests share state across methods keeps a line `# gdir: no-split` among its first ten lines and runs whole. Every run records the times in `.godot/godot-director/test-times.tsv` (each file's whole time, which sizes the split; a split run that finishes all its shards lowers it to their sum but never raises it, and the shard count and longest shard of its last run), so turning it on works at once; `bash tools/check.sh --jobs 1` re-measures every file whole, which is how a file that got slower gets a larger split. Turn it on once no test depends on another having run first, when a few files hold up the run; where heavy files then compete for the CPU it may not help, so compare the slowest-files summary before and after.

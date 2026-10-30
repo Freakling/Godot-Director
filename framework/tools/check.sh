@@ -3,14 +3,22 @@
 #
 # The single definition of "it works":
 #   bash tools/check.sh                 run the check
-#   bash tools/check.sh --if-changed    repeat the last result at once if these exact files were checked
+#   bash tools/check.sh --if-changed    repeat the last result at once if these exact files were checked with this gitleaks
 #   bash tools/check.sh --fingerprint   print the fingerprint of the current files (for hooks)
 #   bash tools/check.sh --jobs N        run in N Godot processes at once (N or auto; 1 is serial); autoplay in the check takes one of them
 #   bash tools/check.sh --import        run the import pass even when no imported file changed
-# Exit codes: 0 = pass · 1 = fail · 3 = couldn't run (Godot missing or older than 4.5, or a Godot
-# run timed out: the report names the test file it was in)
+# Exit codes: 0 = pass · 1 = fail · 3 = couldn't run (Godot missing or older than 4.5, a gitleaks that
+# is installed but too old or unable to scan, or a Godot run that timed out: the report names the test file it was in)
 #
 # Steps:
+#   0. secrets, when gitleaks is installed (credentials in source): gitleaks dir --redact on the working
+#      tree (detect --no-git before 8.19.1; 8.19.0 can't scan at all, so the check exits 3). Without
+#      gitleaks the check prints one note and goes on; it never exits 3 for a gitleaks that isn't
+#      installed. Findings are listed as file:line, with the values redacted (the report is
+#      .godot/godot-director/gitleaks.json). The minimum version is [gitleaks] min-version in
+#      tools/check.cfg (default 8.18.0). The cached result of --if-changed records gitleaks's version, so
+#      installing, removing or changing it runs the scan again. The settings are the game's
+#      .gitleaks.toml and .gitleaksignore.
 #   1. an import pass (so a fresh clone gets its import cache and class list, and new assets are
 #      picked up). It is skipped, with a line saying so, when no file Godot imports, no script's
 #      class_name, extends or @icon line, and no scene or shader path has changed since the last pass
@@ -63,6 +71,7 @@ done
 state_dir=".godot/godot-director"
 nl="
 "
+GITLEAKS_MIN_DEFAULT="8.18.0"
 
 # cfg_value <section> <key>: a value from tools/check.cfg, without quotes or a trailing comment.
 cfg_value() {
@@ -76,6 +85,20 @@ limit="${CHECK_TIMEOUT:-}"
 [ "$mode" = "--fingerprint" ] || [ -n "$limit" ] || limit="$(cfg_value tests timeout)"
 case "$limit" in ''|*[!0-9]*|0) limit=600 ;; esac
 
+# version_gte <installed> <minimum>: succeeds when installed >= minimum (both dotted numbers).
+version_gte() {
+  local inst="$1" min="$2" ia ib ic ma mb mc rest
+  ia="${inst%%.*}"; rest="${inst#*.}"; ib="${rest%%.*}"; ic="${rest#*.}"
+  ma="${min%%.*}"; rest="${min#*.}"; mb="${rest%%.*}"; mc="${rest#*.}"
+  ia="${ia:-0}"; ib="${ib:-0}"; ic="${ic:-0}"
+  ma="${ma:-0}"; mb="${mb:-0}"; mc="${mc:-0}"
+  [ "$ia" -gt "$ma" ] && return 0
+  [ "$ia" -lt "$ma" ] && return 1
+  [ "$ib" -gt "$mb" ] && return 0
+  [ "$ib" -lt "$mb" ] && return 1
+  [ "$ic" -ge "$mc" ]
+}
+
 # Hash of every file that can change the result. Empty outside a git repository.
 fingerprint() {
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
@@ -83,7 +106,7 @@ fingerprint() {
   paths="$( {
     git -c core.quotePath=false ls-files -z -c -o --exclude-standard -- '*.gd' '*.tscn' '*.scn' \
       '*.tres' '*.res' '*.gdshader' '*.gdshaderinc' project.godot tools/check.cfg tools/ui_capture.cfg \
-      tools/check.sh tools/check.local.sh tools/autoplay.sh 2>/dev/null | tr '\0' '\n'
+      tools/check.sh tools/check.local.sh tools/autoplay.sh .gitleaks.toml .gitleaksignore 2>/dev/null | tr '\0' '\n'
     echo tools/godot_bin.local
     echo tools/check.ignore
   } | while IFS= read -r path; do [ -f "$path" ] && printf '%s\n' "$path"; done )"
@@ -135,14 +158,30 @@ import_record() {
 if [ "$mode" = "--fingerprint" ]; then fingerprint; exit 0; fi
 mkdir -p "$state_dir" || exit 3
 before="$(fingerprint)"
+
+# gitleaks's version, or "missing". Read once: the cached result depends on it (cache_key), and the
+# secrets step uses it, so a run starts gitleaks once for it, and not at all when it isn't installed.
+gl_ver="missing"
+if command -v gitleaks >/dev/null 2>&1; then
+  gl_ver="$(gitleaks version 2>/dev/null | tr -d 'v \r\n')"
+  gl_ver="${gl_ver%%[!0-9.]*}"   # 8.30.1-rc1 → 8.30.1
+  [ -n "$gl_ver" ] || gl_ver="unreadable"
+fi
+
+# What a cached result stands for: the files' fingerprint and gitleaks's version. A gitleaks that was
+# installed, removed or changed makes the cache miss, so --if-changed runs the secrets step again.
+cache_key() { printf '%s gitleaks=%s' "$1" "$gl_ver"; }
+
 # --if-changed: reuse the last result for exactly these files (asked again once the lock is ours).
 reuse_last() {
   [ "$mode" = "--if-changed" ] && [ -n "$before" ] || return 0
-  if [ "$(cat "$state_dir/last-pass" 2>/dev/null)" = "$before" ]; then
+  local key
+  key="$(cache_key "$before")"
+  if [ "$(cat "$state_dir/last-pass" 2>/dev/null)" = "$key" ]; then
     echo "check: PASS (nothing changed since the last passing run)"
     exit 0
   fi
-  if [ "$(cat "$state_dir/last-fail" 2>/dev/null)" = "$before" ]; then
+  if [ "$(cat "$state_dir/last-fail" 2>/dev/null)" = "$key" ]; then
     echo "check: FAIL (nothing changed since the last failing run; run 'bash tools/check.sh' to see why)"
     exit 1
   fi
@@ -328,6 +367,77 @@ silent_exit() {
 }
 # exit_quiet <what> <status> <log>: the line for a process that exited non-zero and printed no error.
 exit_quiet() { echo "check: $1 exited with $(exit_text "$2") and printed no error; see $3"; }
+
+# --- 0. secrets (gitleaks, when installed) ------------------------------------------------------
+# gitleaks is optional, so a game needs no extra install. Not installed: one note, and the check goes
+# on. Installed but too old or unable to scan: the check couldn't run (exit 3), since the human chose
+# to install it, and a scan that didn't happen must not read as a pass. It runs first so that a
+# gitleaks that can't scan is reported before any Godot time is spent. The working tree is scanned as
+# it is: gitleaks dir doesn't read .gitignore, so the game's .gitleaks.toml allowlists .godot/.
+gl_min="$(cfg_value gitleaks min-version)"
+case "$gl_min" in ''|*[!0-9.]*) gl_min="$GITLEAKS_MIN_DEFAULT" ;; esac
+gl_report="$state_dir/gitleaks.json"
+# gitleaks 8.19.1 is the first release whose `dir` command works; 8.18 scans the folder with
+# `detect --no-git`. Both write the same JSON report (a File, a StartLine and a Fingerprint per finding).
+# gitleaks 8.19.0 can't scan at all: every command fails with "flag accessed but not defined: source"
+# and writes no report. So a failed scan that left no finding in the report is "couldn't scan"
+# (exit 3), never "credentials found". The scan's output is kept for that message.
+gl_scan() {
+  rm -f "$gl_report"
+  if version_gte "$gl_ver" 8.19.1; then
+    gitleaks dir --redact --report-path="$gl_report" . 2>&1
+  else
+    gitleaks detect --no-git --redact --report-path="$gl_report" --source . 2>&1
+  fi
+}
+# gl_findings: "file:line (rule)" for each finding in the report. Only these are printed; the values
+# stay redacted in the report.
+gl_findings() {
+  tr -d '\r' < "$gl_report" | awk '
+    /"RuleID"[ \t]*:/ { rule = $0; sub(/.*"RuleID"[ \t]*:[ \t]*"/, "", rule); sub(/".*/, "", rule) }
+    /"StartLine"[ \t]*:/ { line = $0; sub(/.*"StartLine"[ \t]*:[ \t]*/, "", line); sub(/[^0-9].*/, "", line) }
+    /"File"[ \t]*:/ { file = $0; sub(/.*"File"[ \t]*:[ \t]*"/, "", file); sub(/",?[ \t]*$/, "", file); gsub(/\\\\/, "/", file) }
+    /^[ \t]*\},?[ \t]*$/ { if (file != "") print file ":" line " (" rule ")"; file = ""; line = ""; rule = "" }
+  '
+}
+if [ "$gl_ver" = "missing" ]; then
+  echo "check: note: gitleaks isn't installed, so the check doesn't scan for secrets; install it from https://github.com/gitleaks/gitleaks#installing"
+elif [ "$gl_ver" = "unreadable" ]; then
+  echo "check: secrets FAIL: gitleaks is installed, but 'gitleaks version' printed no version number."
+  echo "       Reinstall it: https://github.com/gitleaks/gitleaks#installing"
+  exit 3
+elif ! version_gte "$gl_ver" "$gl_min"; then
+  echo "check: secrets FAIL: gitleaks $gl_ver is below the minimum $gl_min ([gitleaks] min-version in tools/check.cfg)."
+  echo "       Upgrade: https://github.com/gitleaks/gitleaks#installing"
+  exit 3
+else
+  gl_out="$(gl_scan)"; gl_rc=$?
+  if [ "$gl_rc" -eq 0 ]; then
+    rm -f "$gl_report"
+    echo "check: secrets: no credentials found (gitleaks $gl_ver)"
+  elif grep -qs '"File"' "$gl_report"; then
+    gl_found="$(gl_findings)"
+    gl_count="$(printf '%s\n' "$gl_found" | grep -c .)"
+    echo "check: secrets FAIL: gitleaks found $gl_count possible credential(s) in the working tree:"
+    printf '%s\n' "$gl_found" | head -n 20 | sed 's/^/       /'
+    [ "$gl_count" -gt 20 ] && echo "       ... and $((gl_count - 20)) more (see the report)"
+    echo "       Report (values redacted): $gl_report"
+    echo "       Move the credential out of the file (the environment, or a gitignored file); if it was ever"
+    echo "       committed or shared, rotate it. A false positive: add its Fingerprint, from the report, to"
+    echo "       .gitleaksignore, record why in design/decisions.md, and have the human approve both."
+    failed=1; hard_fail=1
+  else
+    echo "check: secrets FAIL: gitleaks couldn't scan the working tree."
+    gl_last="$(printf '%s\n' "$gl_out" | tr -d '\r' | tail -n 1)"
+    [ -n "$gl_last" ] && echo "       gitleaks: $gl_last"
+    if [ "$gl_ver" = "8.19.0" ]; then
+      echo "       gitleaks 8.19.0 can't scan (every command fails). Upgrade to 8.19.1 or later."
+    else
+      echo "       Check the error above. Upgrading gitleaks may help."
+    fi
+    exit 3
+  fi
+fi
 
 # --- 1. import ----------------------------------------------------------------------------------
 status=0
@@ -617,7 +727,7 @@ fi
 if [ "$failed" -eq 0 ]; then
   after="$(fingerprint)"
   if [ -n "$before" ] && [ "$before" = "$after" ]; then
-    printf '%s' "$before" > "$state_dir/last-pass"
+    cache_key "$before" > "$state_dir/last-pass"
   elif [ -n "$before" ]; then
     echo "check: note: files changed while the check ran; run it again to cover the changes."
   fi
@@ -680,7 +790,7 @@ fi
 # A failing run may have left Godot's class cache stale (scripts aren't in the import fingerprint), so
 # the next run imports again.
 rm -f "$state_dir/last-pass" "$state_dir/import-fingerprint"
-if [ -n "$before" ] && [ "$before" = "$(fingerprint)" ]; then printf '%s' "$before" > "$state_dir/last-fail"; fi
+if [ -n "$before" ] && [ "$before" = "$(fingerprint)" ]; then cache_key "$before" > "$state_dir/last-fail"; fi
 slowest
 echo "check: FAIL (full logs in $state_dir/)"
 exit 1

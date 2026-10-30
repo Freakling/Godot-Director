@@ -54,6 +54,8 @@ Run `bash "$GDIR/install.sh" --tools <claude|none> .` for a first install. For a
 ## 3. Godot for this clone
 Run `bash tools/setup-clone.sh --skip-hook`, adding the Godot path if the human gave one. It finds Godot 4.5+ and saves the path in `tools/godot_bin.local`, which is gitignored and never committed. If it exits 3, ask the human where Godot is and rerun it with the path. On Windows, prefer the `*_console.exe` build.
 
+gitleaks is optional and recommended: with it on the PATH, the check and the pre-commit hook scan for secrets, and without it they print a note and go on. If `command -v gitleaks` finds nothing, tell the human it's worth installing (`winget install gitleaks`, `brew install gitleaks`, or https://github.com/gitleaks/gitleaks#installing) and carry on; never stop for it.
+
 Then run `bash tools/check.sh` once and keep the result. An existing game often fails at first; that's information, not a blocker. The pre-commit hook is installed at the very end (step 9), so the install commit isn't blocked.
 
 ## 4. Scan the project (read only)

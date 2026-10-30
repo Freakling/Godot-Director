@@ -1507,6 +1507,232 @@ bash "$src/install.sh" "$no_project" >/dev/null 2>&1
   && git add -A && git_q commit -qm "install" >/dev/null 2>&1)
 expect_status "commits in a repository without project.godot yet" 0 $?
 
+# --- secrets (gitleaks) -------------------------------------------------------------------------
+# gitleaks is optional. With it installed, the check scans the working tree (each credential listed as
+# file:line, the value redacted) and the pre-commit hook scans the staged changes of every commit,
+# whatever is staged. Without it both print a note and go on, so a game needs no extra install. A
+# gitleaks that is installed but too old or unable to scan is a check that couldn't run (exit 3). A
+# stand-in gitleaks covers the exit codes, the scan commands and the hook's output on any machine; the
+# cases with the real one are skipped with a note when it isn't installed (or is 8.19.0, which can't
+# scan). Every token is assembled at run time ("ghp_" and 36 generated letters and digits) and written
+# only into a temporary copy of the example, never into a tracked file.
+echo "secrets"
+gen_token() { # gen_token: sets _tok to "ghp_" and 36 generated letters and digits
+  local chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789' i
+  _tok="ghp_"
+  for ((i = 0; i < 36; i++)); do _tok="$_tok${chars:$((RANDOM % 62)):1}"; done
+}
+_gl_ok=0; _gl_real=""
+if command -v gitleaks >/dev/null 2>&1; then
+  _gl_real="$(gitleaks version 2>/dev/null | tr -d 'v \r\n')"
+  _gl_maj="${_gl_real%%.*}"; _gl_rest="${_gl_real#*.}"; _gl_mnr="${_gl_rest%%.*}"
+  case "$_gl_maj$_gl_mnr" in
+    ''|*[!0-9]*) ;;
+    *) if [ "$_gl_real" != "8.19.0" ] && { [ "$_gl_maj" -gt 8 ] || { [ "$_gl_maj" -eq 8 ] && [ "$_gl_mnr" -ge 18 ]; }; }; then _gl_ok=1; fi ;;
+  esac
+fi
+# A PATH without gitleaks: every directory that holds it is left out (the other tools must remain).
+_no_gl_path=""
+while IFS= read -r _dir; do
+  [ -n "$_dir" ] || continue
+  if [ -x "$_dir/gitleaks" ] || [ -x "$_dir/gitleaks.exe" ]; then continue; fi
+  _no_gl_path="${_no_gl_path:+$_no_gl_path:}$_dir"
+done <<EOF
+$(printf '%s\n' "$PATH" | tr ':' '\n')
+EOF
+_no_gl_ok=1
+for _tool in git bash awk sed tr grep head tail cat mkdir rm find sort; do
+  PATH="$_no_gl_path" command -v "$_tool" >/dev/null 2>&1 || _no_gl_ok=0
+done
+PATH="$_no_gl_path" command -v gitleaks >/dev/null 2>&1 && _no_gl_ok=0
+[ "$_no_gl_ok" -eq 1 ] || echo "  skip  the cases without gitleaks on PATH (no PATH without it keeps the other tools)"
+
+# The seeds: gitleaks's built-in rules, and the allowlist for .godot/ (Godot's gitignored cache, which holds
+# the export credentials). The example carries the same file.
+if grep -q '^useDefault = true$' "$src/project/.gitleaks.toml" && grep -qF "'''^\\.godot[\\\\/]'''" "$src/project/.gitleaks.toml" \
+    && cmp -s "$src/project/.gitleaks.toml" "$src/examples/market-day/.gitleaks.toml" \
+    && grep -q '^\[gitleaks\]$' "$src/project/tools/check.cfg" && grep -q '^min-version="8\.18\.0"$' "$src/project/tools/check.cfg"; then
+  ok "the seeds: .gitleaks.toml (built-in rules, .godot/ allowlisted, the example's copy the same) and [gitleaks] min-version in check.cfg"
+else
+  bad "the seeds: .gitleaks.toml and [gitleaks] min-version in check.cfg"
+fi
+
+# A stand-in gitleaks: it reports FAKE_GL_VERSION, logs each call to FAKE_GL_LOG, and a scan finds nothing,
+# or fails with FAKE_GL_ERROR's text and no report (as 8.19.0 does for every command). protect, the staged
+# scan, writes one finding in FAKE_GL_FINDING (a file) when it is set, in the report's own layout.
+_fake_gl="$work/fake-gl"; mkdir -p "$_fake_gl"
+cat > "$_fake_gl/gitleaks" << 'FAKE'
+#!/usr/bin/env bash
+[ -n "${FAKE_GL_LOG:-}" ] && printf '%s\n' "$*" >> "$FAKE_GL_LOG"
+case "$1" in
+  version) echo "v${FAKE_GL_VERSION:-8.30.1}" ;;
+  dir|detect|protect)
+    for a in "$@"; do case "$a" in --report-path=*) report="${a#--report-path=}" ;; esac; done
+    if [ -n "${FAKE_GL_ERROR:-}" ]; then echo "$FAKE_GL_ERROR"; exit 1; fi
+    if [ "$1" = protect ] && [ -n "${FAKE_GL_FINDING:-}" ]; then
+      printf '[\n {\n  "RuleID": "selftest-rule",\n  "StartLine": 7,\n  "Match": "REDACTED",\n  "Secret": "REDACTED",\n  "File": "%s",\n  "Fingerprint": "%s:selftest-rule:7"\n }\n]\n' "$FAKE_GL_FINDING" "$FAKE_GL_FINDING" > "$report"
+      exit 1
+    fi
+    exit 0 ;;
+  *) exit 0 ;;
+esac
+FAKE
+chmod +x "$_fake_gl/gitleaks"
+
+sg="$work/secrets-game"
+cp -R "$game" "$sg" && rm -rf "$sg/clones"
+cd "$sg" || exit 1
+git add -A && { git_q commit -qm "state for the secrets tests" >/dev/null 2>&1 || true; }
+cp tools/check.cfg "$work/saved-check-cfg-gl"
+
+# Exit codes with a stand-in: an installed gitleaks that is too old, or can't scan, is a check that
+# couldn't run (3), and the minimum comes from tools/check.cfg. None of them is a finding.
+out="$(PATH="$_fake_gl:$PATH" FAKE_GL_VERSION=8.17.0 bash tools/check.sh 2>&1)"; status=$?
+expect_status "a gitleaks below the minimum is a check that couldn't run (stand-in 8.17.0)" 3 "$status" "$out"
+expect_output "and says which minimum" "gitleaks 8\.17\.0 is below the minimum 8\.18\.0" "$out"
+out="$(PATH="$_fake_gl:$PATH" FAKE_GL_VERSION=8.19.0 FAKE_GL_ERROR="flag accessed but not defined: source" bash tools/check.sh 2>&1)"; status=$?
+expect_status "gitleaks 8.19.0, which can't scan, is a check that couldn't run (stand-in)" 3 "$status" "$out"
+expect_output "and says to upgrade to 8.19.1 or later" "8\.19\.0 can't scan.*8\.19\.1 or later" "$out"
+expect_no_output "and doesn't call a scan error a finding" "possible credential|found in" "$out"
+out="$(PATH="$_fake_gl:$PATH" FAKE_GL_VERSION=8.30.1 FAKE_GL_ERROR="could not read the config" bash tools/check.sh 2>&1)"; status=$?
+expect_status "a scan that fails with no finding is a check that couldn't run (stand-in 8.30.1)" 3 "$status" "$out"
+expect_output "and shows gitleaks's own last line" "gitleaks: could not read the config" "$out"
+printf '\n[gitleaks]\nmin-version="9.0.0"\n' >> tools/check.cfg
+out="$(PATH="$_fake_gl:$PATH" FAKE_GL_VERSION=8.30.1 bash tools/check.sh 2>&1)"; status=$?
+expect_status "the minimum is read from tools/check.cfg [gitleaks] min-version" 3 "$status" "$out"
+expect_output "and the message names it" "below the minimum 9\.0\.0" "$out"
+cp "$work/saved-check-cfg-gl" tools/check.cfg
+
+# The scan command: dir from 8.19.1, detect --no-git before it; gitleaks's version is read once per run.
+_fake_log="$work/fake-gl.log"; rm -f "$_fake_log"
+out="$(PATH="$_fake_gl:$PATH" FAKE_GL_VERSION=8.30.1 FAKE_GL_LOG="$_fake_log" bash tools/check.sh 2>&1)"; status=$?
+expect_status "a clean game passes with a stand-in gitleaks 8.30.1" 0 "$status" "$out"
+expect_output "and says that nothing was found" "check: secrets: no credentials found \(gitleaks 8\.30\.1\)" "$out"
+grep -q '^dir --redact --report-path=' "$_fake_log" && ok "gitleaks 8.30.1 scans with dir" || bad "gitleaks 8.30.1 scans with dir" "$(cat "$_fake_log")"
+[ "$(grep -c '^version$' "$_fake_log")" -eq 1 ] && ok "and gitleaks's version is read once" || bad "and gitleaks's version is read once" "$(cat "$_fake_log")"
+rm -f "$_fake_log"
+out="$(PATH="$_fake_gl:$PATH" FAKE_GL_VERSION=8.18.0 FAKE_GL_LOG="$_fake_log" bash tools/check.sh 2>&1)"; status=$?
+expect_status "a clean game passes with a stand-in gitleaks 8.18.0" 0 "$status" "$out"
+grep -q '^detect --no-git --redact --report-path=' "$_fake_log" && ok "gitleaks 8.18.0 scans with detect --no-git" || bad "gitleaks 8.18.0 scans with detect --no-git" "$(cat "$_fake_log")"
+
+# A game with a secret in a script and in a config file, assembled at run time.
+gen_token; tok_script="$_tok"; gen_token; tok_cfg="$_tok"; gen_token; tok_note="$_tok"
+printf 'extends RefCounted\n\nconst API_TOKEN: String = "%s"\n' "$tok_script" > scripts/secret_config.gd
+printf '[store]\nupload_token="%s"\n' "$tok_cfg" > data/store.cfg
+printf '# Upload\n\nstore_token = %s\n' "$tok_note" > notes_upload.md
+
+if [ "$_no_gl_ok" -eq 1 ]; then
+  out="$(PATH="$_no_gl_path" bash tools/check.sh 2>&1)"; status=$?
+  expect_status "the same game passes the check without gitleaks on PATH" 0 "$status" "$out"
+  expect_output "and prints the note that names the install" "check: note: gitleaks isn't installed, so the check doesn't scan for secrets; install it from https://github.com/gitleaks/gitleaks#installing" "$out"
+  expect_no_output "and doesn't scan" "check: secrets" "$out"
+fi
+
+if [ "$_gl_ok" -eq 1 ]; then
+  # --if-changed after a pass recorded without gitleaks: the cached result depends on gitleaks's version,
+  # so installing it makes the fast path scan.
+  out="$(bash tools/check.sh --if-changed 2>&1)"; status=$?
+  expect_status "installing gitleaks makes --if-changed scan, and the secrets fail the check" 1 "$status" "$out"
+  expect_no_output "it doesn't repeat the pass recorded without gitleaks" "nothing changed" "$out"
+  expect_output "the script's secret is named by file and line" "scripts/secret_config\.gd:3 \(" "$out"
+  expect_output "and the config file's" "data/store\.cfg:2 \(" "$out"
+  expect_output "and a Markdown note's: the working tree is scanned whatever the file" "notes_upload\.md:3 \(" "$out"
+  expect_output "the report is named, with the values redacted" "Report \(values redacted\): \.godot/godot-director/gitleaks\.json" "$out"
+  expect_no_output "the output has no token" "$tok_script|$tok_cfg|$tok_note" "$out"
+  grep -qE "$tok_script|$tok_cfg|$tok_note" .godot/godot-director/gitleaks.json \
+    && bad "the report has no token" || ok "the report has no token"
+  expect_output "the tests still ran beside the finding" "[0-9]+ tests? passed" "$out"
+  out="$(bash tools/check.sh --if-changed 2>&1)"; status=$?
+  expect_status "--if-changed repeats the failure while nothing changed" 1 "$status" "$out"
+  expect_output "and says so" "nothing changed since the last failing run" "$out"
+  # An approved false positive: the fingerprints in .gitleaksignore (part of the check's fingerprint).
+  sed -n 's/.*"Fingerprint"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' .godot/godot-director/gitleaks.json > .gitleaksignore
+  out="$(bash tools/check.sh --if-changed 2>&1)"; status=$?
+  expect_status "findings listed in .gitleaksignore pass, and --if-changed notices the file" 0 "$status" "$out"
+  expect_output "with the scan said" "check: secrets: no credentials found" "$out"
+  rm -f .gitleaksignore
+
+  # The pre-commit hook: the staged scan runs on every commit, whatever is staged.
+  mkdir -p notes && printf '# Upload\n\nstore_token = %s\n' "$tok_note" > notes/upload.md
+  git add notes/upload.md
+  out="$(git_q commit -qm "a note with a token" 2>&1)"; status=$?
+  expect_status "the hook blocks a staged Markdown file with a token (real gitleaks)" 1 "$status" "$out"
+  expect_output "it scanned a commit with no code staged" "scanning staged changes for secrets" "$out"
+  expect_output "names the file and line" "found in: notes/upload\.md:3 \(" "$out"
+  expect_output "says the commit is blocked" "commit blocked" "$out"
+  expect_no_output "doesn't run the project check for a Markdown file" "running the project check" "$out"
+  expect_no_output "doesn't print the token" "$tok_note" "$out"
+  grep -q "$tok_note" .godot/godot-director/gitleaks-staged.json && bad "the staged report has no token" || ok "the staged report has no token"
+  git reset -q HEAD -- notes/upload.md; rm -f notes/upload.md notes_upload.md
+  git add scripts/secret_config.gd data/store.cfg
+  out="$(git_q commit -qm "a script with a token" 2>&1)"; status=$?
+  expect_status "the hook blocks a staged script with a token (real gitleaks)" 1 "$status" "$out"
+  expect_no_output "and doesn't print it" "$tok_script" "$out"
+  git reset -q HEAD -- scripts/secret_config.gd data/store.cfg
+fi
+
+# The hook with a stand-in gitleaks: it names each finding as file:line (rule), blocks one that can't scan
+# (8.19.0) without calling it a finding, and passes when the scan finds nothing.
+rm -f scripts/secret_config.gd data/store.cfg notes_upload.md
+mkdir -p notes && printf '# Plain\n' > notes/plain.md && git add notes/plain.md
+out="$(export PATH="$_fake_gl:$PATH" FAKE_GL_FINDING=notes/plain.md; git_q commit -qm "stand-in finding" 2>&1)"; status=$?
+expect_status "the hook blocks a commit the scan reports (stand-in)" 1 "$status" "$out"
+expect_output "and names the finding as file:line (rule)" "found in: notes/plain\.md:7 \(selftest-rule\)" "$out"
+out="$(export PATH="$_fake_gl:$PATH" FAKE_GL_VERSION=8.19.0 FAKE_GL_ERROR="flag accessed but not defined: source"; git_q commit -qm "stand-in cannot scan" 2>&1)"; status=$?
+expect_status "the hook blocks a commit when gitleaks can't scan (stand-in 8.19.0)" 1 "$status" "$out"
+expect_output "and says it couldn't scan" "couldn't scan the staged changes" "$out"
+expect_no_output "and doesn't call it a finding" "found in:" "$out"
+out="$(export PATH="$_fake_gl:$PATH"; git_q commit -qm "stand-in clean" 2>&1)"; status=$?
+expect_status "the hook passes a commit the scan finds nothing in (stand-in)" 0 "$status" "$out"
+expect_output "and says it scanned" "pre-commit: scanning staged changes for secrets" "$out"
+if [ "$_no_gl_ok" -eq 1 ]; then
+  printf '# Plain again\n' > notes/plain2.md && git add notes/plain2.md
+  out="$(export PATH="$_no_gl_path"; git_q commit -qm "without gitleaks" 2>&1)"; status=$?
+  expect_status "the hook lets a commit through without gitleaks on PATH" 0 "$status" "$out"
+  expect_output "and prints the note that names the install" "pre-commit: note: gitleaks isn't installed, so this commit isn't scanned for secrets; install it from https://github.com/gitleaks/gitleaks#installing" "$out"
+fi
+
+if [ "$_gl_ok" -eq 1 ]; then
+  # A clean game passes, with Godot's gitignored export credentials in .godot/ (a password and a key,
+  # assembled here): the seed's allowlist keeps them from failing the check, and without it they do.
+  _hex='0123456789abcdef'
+  gen_token; _pw="${_tok#ghp_}"; _pw="${_pw:0:20}"; _key=""
+  for ((_i = 0; _i < 64; _i++)); do _key="$_key${_hex:$((RANDOM % 16)):1}"; done
+  mkdir -p .godot
+  printf '[preset.0.options]\n\nscript_encryption_key="%s"\nkeystore/release_user="upload"\nkeystore/release_password="%s"\n' "$_key" "$_pw" > .godot/export_credentials.cfg
+  out="$(bash tools/check.sh 2>&1)"; status=$?
+  expect_status "a clean game passes the check with export credentials in .godot/" 0 "$status" "$out"
+  expect_output "having scanned" "check: secrets: no credentials found \(gitleaks " "$out"
+  mv .gitleaks.toml "$work/saved-gitleaks.toml"
+  gitleaks dir --redact --report-path="$work/no-allowlist.json" . >/dev/null 2>&1; status=$?
+  expect_status "without the seed's allowlist gitleaks flags the same .godot/ file" 1 "$status"
+  grep -q '"File": "\.godot/export_credentials\.cfg"' "$work/no-allowlist.json" && ok "and it is the export credentials" || bad "and it is the export credentials" "$(grep '"File"' "$work/no-allowlist.json")"
+  mv "$work/saved-gitleaks.toml" .gitleaks.toml
+  rm -f .godot/export_credentials.cfg
+  # Godot's own strings and files: uid:// values, .import files, .gd.uid files, the cache's paths with
+  # their hashes. Generated here so that no fixed value sits in this file.
+  _uid_fx="$work/uid-fixture"; mkdir -p "$_uid_fx/scenes" "$_uid_fx/assets" "$_uid_fx/scripts" "$_uid_fx/.godot/imported"
+  cp "$src/project/.gitleaks.toml" "$_uid_fx/.gitleaks.toml"
+  _b34='abcdefghijklmnopqrstuvwxy012345678'
+  _uid_a="uid://"; _uid_b="uid://"; _md5=""
+  for ((_i = 0; _i < 13; _i++)); do _uid_a="$_uid_a${_b34:$((RANDOM % 34)):1}"; _uid_b="$_uid_b${_b34:$((RANDOM % 34)):1}"; done
+  for ((_i = 0; _i < 32; _i++)); do _md5="$_md5${_hex:$((RANDOM % 16)):1}"; done
+  printf '[gd_scene load_steps=2 format=3 uid="%s"]\n\n[ext_resource type="Texture2D" uid="%s" path="res://assets/icon.svg" id="1_abcde"]\n\n[node name="Main" type="Control"]\n' "$_uid_a" "$_uid_b" > "$_uid_fx/scenes/main.tscn"
+  printf '[remap]\n\nimporter="texture"\ntype="CompressedTexture2D"\nuid="%s"\npath="res://.godot/imported/icon.svg-%s.ctex"\n\n[deps]\n\nsource_file="res://assets/icon.svg"\ndest_files=["res://.godot/imported/icon.svg-%s.ctex"]\n\n[params]\n\ncompress/mode=0\n' "$_uid_b" "$_md5" "$_md5" > "$_uid_fx/assets/icon.svg.import"
+  printf '%s\n' "$_uid_a" > "$_uid_fx/scripts/main.gd.uid"
+  printf '[remap]\n\nuid="%s"\npath="res://.godot/imported/icon.svg-%s.ctex"\nmd5="%s"\n' "$_uid_b" "$_md5" "$_md5" > "$_uid_fx/.godot/imported/icon.svg-$_md5.md5"
+  out="$(cd "$_uid_fx" && gitleaks dir --redact --report-path=report.json . 2>&1)"; status=$?
+  expect_status "gitleaks finds nothing in Godot's uid:// strings, .import files and .godot/ cache" 0 "$status" "$out"
+  # A clean commit with the hook.
+  printf '# Plain three\n' > notes/plain3.md && git add notes/plain3.md
+  out="$(git_q commit -qm "a clean note" 2>&1)"; status=$?
+  expect_status "the hook passes a clean commit (real gitleaks)" 0 "$status" "$out"
+  expect_output "after scanning it" "scanning staged changes for secrets" "$out"
+else
+  echo "  skip  the real-gitleaks cases (gitleaks isn't installed, or is below 8.18.0, or is 8.19.0, which can't scan)"
+fi
+cd "$game" || exit 1
+
 # --- screen capture (/ui-design) ----------------------------------------------------------------
 echo "ui capture"
 captures=design/ui/captures
@@ -2792,6 +3018,11 @@ printf 'config_version=5\n\n[application]\nconfig/name="Fresh"\nconfig/features=
 printf '[gd_scene format=3]\n\n[node name="Main" type="Control"]\n' > "$fresh/main.tscn"
 (cd "$fresh" && git init -q && git config core.autocrlf false && git add -A && git_q commit -qm init) || exit 1
 out="$(bash "$src/install.sh" "$fresh" 2>&1)"; expect_status "installs into a fresh game" 0 $? "$out"
+if cmp -s "$fresh/.gitleaks.toml" "$src/project/.gitleaks.toml" && grep -q '^min-version="8\.18\.0"$' "$fresh/tools/check.cfg"; then
+  ok "a new project gets the .gitleaks.toml seed and [gitleaks] min-version in tools/check.cfg"
+else
+  bad "a new project gets the .gitleaks.toml seed and [gitleaks] min-version in tools/check.cfg" "$out"
+fi
 if grep -q '^\[autoplay\]$' "$fresh/tools/check.cfg" && grep -q '^check_in_check=true$' "$fresh/tools/check.cfg" && grep -q '^enforce=\["smoke"\]$' "$fresh/tools/check.cfg" \
     && ! printf '%s' "$out" | grep -q 'autoplay in the check off'; then
   ok "a new project's tools/check.cfg has autoplay in the check on, with smoke enforced"
