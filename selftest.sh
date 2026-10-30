@@ -993,6 +993,46 @@ for cmd in $'python3 - <<\'EOF\'\nprint("hi")\nEOF' 'python3 --version 2>/dev/nu
   guard 0 "$cmd"
 done
 
+# The credential stores: shell reads of ~/.ssh, git's credentials files and the gh CLI's config folders,
+# and the commands that print a stored credential. A command that names a store without reading it, or
+# reads a name that only ends in ssh, passes, and so do two commands on separate lines.
+for cmd in 'cat ~/.ssh/id_ed25519' 'head "$HOME/.git-credentials"' 'cat ~/.config/gh/hosts.yml' \
+    'less "/c/Users/V/AppData/Roaming/GitHub CLI/hosts.yml"' 'cat "C:\Users\V\.ssh\id_rsa"' \
+    'tail -n 5 "${HOME}/.config/git/credentials"' 'strings .ssh/known_hosts' \
+    'gh auth token' 'gh auth status -t' \
+    "printf 'protocol=https\\nhost=github.com\\n' | git credential fill" \
+    "printf 'protocol=https\\nhost=github.com\\n' | git credential get"; do
+  guard 2 "$cmd"
+done
+for cmd in 'cat README.md' 'cat framework/.godot-director/rules.md' 'cat notes/x.ssh' \
+    'grep -n ssh framework/.godot-director/rules.md' 'git log --oneline -3' 'ls ~/.ssh' 'gh auth status' \
+    $'cat README.md\necho ~/.ssh'; do
+  guard 0 "$cmd"
+done
+# The Read tool is the harness's own layer, and a Read rule doesn't reach a shell command, so the
+# settings template denies the Read tool the same stores. Tested on planted settings, so a check that
+# stops flagging a missing rule fails here.
+read_deny_missing() { # read_deny_missing <settings file>: the Read deny rules it lacks
+  local rule deny
+  deny="$(sed -n '/"deny": *\[/,/\]/p' "$1")"
+  for rule in 'Read(~/.ssh/**)' 'Read(~/.git-credentials)' 'Read(~/.config/git/credentials)' \
+      'Read(~/.config/gh/**)' 'Read(~/AppData/Roaming/GitHub CLI/**)'; do
+    printf '%s\n' "$deny" | grep -qF "\"$rule\"" || printf '%s\n' "$rule"
+  done
+}
+read_planted=""
+printf '{\n  "permissions": {\n    "deny": [\n      "Read(.env)"\n    ]\n  }\n}\n' > "$work/read-deny-none.json"
+[ "$(read_deny_missing "$work/read-deny-none.json" | wc -l | tr -d ' ')" = 5 ] || read_planted=" none"
+if [ ! -f "$settings" ]; then
+  bad "the settings template is missing, so its Read deny rules can't be checked"
+elif [ -n "$(read_deny_missing "$settings")" ]; then
+  bad "the settings template doesn't deny the Read tool these credential stores:" "$(read_deny_missing "$settings")"
+elif [ -n "$read_planted" ]; then
+  bad "the Read deny check misses a planted case:$read_planted"
+else
+  ok "settings.json denies the Read tool the SSH folder, git's credentials and the gh CLI's config folders"
+fi
+
 # --- protected-space guard (Claude Code PreToolUse hook) ----------------------------------------
 # Claude Code sends the path as given: relative, absolute POSIX, or Windows (JSON-escaped). The
 # project root is $CLAUDE_PROJECT_DIR (the Windows cases pass a made-up root; the hook only reads text).

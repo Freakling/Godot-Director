@@ -10,6 +10,10 @@
 # It also blocks the commands that hang or run past five minutes (an empty Python heredoc, an
 # unbounded wait loop, a Godot run without `timeout`, a sleep over 280 seconds); see Hangs below.
 #
+# It also blocks shell reads of the credential stores (the SSH folder, git's credentials files, the gh
+# CLI's config folders) and the commands that print a stored credential (gh auth token, gh auth status
+# -t, git credential fill or get); see "Credential stores" below.
+#
 # It also blocks the git flags that write a file, read a file outside the repository or run a
 # configured command (--output, --no-index, --ext-diff, commit -F and --file), because the allow
 # rules in settings.json let `git diff *`, `git log *`, `git show *` and `git commit *` run with
@@ -86,19 +90,48 @@ if [[ ! $raw =~ (^|[^[:alnum:]_./-])git[[:space:]]+commit ]]; then
   done
 fi
 
-[[ $raw =~ (^|[^[:alnum:]_./-])git([[:space:]]|$) ]] || exit 0
-
-# `code` is the command with quoted strings blanked, so a commit message can't trip a flag test.
+# `code` is the command with quoted strings blanked, so a commit message can't trip a flag or a
+# credential test. `real` is the command as the shell reads it: JSON escapes undone, and the \n that
+# separates commands becomes a newline. Both use Bash expansions only, so no process starts. They come
+# before the git check below, which exits early for any other command.
 code="$raw"
 dq='\\"([^\\]|\\[^"])*\\"'
 while [[ $code =~ $dq ]]; do code="${code/"${BASH_REMATCH[0]}"/ Q }"; done
 sq="'[^']*'"
 while [[ $code =~ $sq ]]; do code="${code/"${BASH_REMATCH[0]}"/ Q }"; done
+nl=$'\n'; bs='\'; sq1="'"
+real="${raw//\\\\/$'\x01'}"; real="${real//\\\"/\"}"; real="${real//\\n/$nl}"
+real="${real//\\t/ }"; real="${real//\\r/}"; real="${real//$'\x01'/$bs}"
 
 block() {
   echo "Godot Director: blocked: $1. If it's really needed, ask the human to run it." >&2
   exit 2
 }
+
+# --- Credential stores ----------------------------------------------------------------------------
+# Blocks shell reads of the credential stores: ~/.ssh (any key, known_hosts too), git's credentials
+# files and the gh CLI's config folders (.config/gh, or AppData's GitHub CLI). A path is blocked when
+# it is one of those or sits inside one, however it is written: ~/, $HOME/, ${HOME}/, /c/Users/<name>/,
+# C:\Users\<name>\ or relative. It also blocks the commands that print a stored credential (gh auth
+# token, gh auth status -t, git credential fill or get). A credential read in a conversation must be
+# treated as compromised and rotated. This is a best-effort check on the command text; indirect reads
+# are not detected.
+cred_end="([[:space:]\"';&|)]|\$)"
+cred_store_re='\.ssh([/\\]|'"$cred_end"')|\.git-credentials|\.config[/\\]git[/\\]credentials|\.config[/\\]gh([/\\]|'"$cred_end"')|GitHub CLI([/\\]|'"$cred_end"')'
+# A store read: the command word, then a path that is a store, or has one after a character that isn't
+# part of a name, so ~/.ssh, $HOME/.ssh and "C:\...\.ssh" match, and x.ssh doesn't. The newline that
+# separates commands becomes a `;`, so one command's words don't run into the next command's path.
+cmd="${real//$nl/;}"
+store_read_re='(^|[[:space:]|;&(])(cat|head|tail|less|more|strings)[[:space:]]+([^;&|]*[^[:alnum:]_.-])?('"$cred_store_re"')'
+[[ $cmd =~ $store_read_re ]] && block "reading a credential store (~/.ssh, git's credentials or the gh CLI's token) exposes a secret to the AI context, which must then be rotated"
+# Matched on code, so a commit message that names one of these commands isn't blocked.
+gh_print_re='(^|[^[:alnum:]_./-])gh[[:space:]]+auth[[:space:]]+(token([[:space:]]|$|[;&|)])|status[^;&|]*[[:space:]](-[[:alpha:]]*t[[:alpha:]]*|--show-token)([[:space:]]|$|[;&|)]))'
+git_print_re='(^|[^[:alnum:]_./-])git[[:space:]]+([^;&|]*[[:space:]])?credential[[:space:]]+(fill|get)([[:space:]]|$|[;&|)])'
+[[ $code =~ $gh_print_re ]] && block "gh auth token and gh auth status -t print the gh CLI's stored token"
+[[ $code =~ $git_print_re ]] && block "git credential fill and get print a credential from git's credential store"
+
+[[ $raw =~ (^|[^[:alnum:]_./-])git([[:space:]]|$) ]] || exit 0
+
 seg='[^;&|]*'   # stays within one command of a compound command line
 
 shopt -s nocasematch   # git config keys are case-insensitive
@@ -122,10 +155,8 @@ shopt -u nocasematch
 # git treats as --no-index; commit -F and --file) or the run of a configured command (--ext-diff).
 # The command is read as the shell hands it to git: '--output=x', "--output"=x and --out\put=x are
 # the flag, while a flag named inside a quoted message or a heredoc body is not. Variables and
-# $(...) outside quotes are not expanded, so this is a text match like the rest.
-nl=$'\n'; bs='\'; sq1="'"
-real="${raw//\\\\/$'\x01'}"; real="${real//\\\"/\"}"; real="${real//\\n/$nl}"
-real="${real//\\t/ }"; real="${real//\\r/}"; real="${real//$'\x01'/$bs}"
+# $(...) outside quotes are not expanded, so this is a text match like the rest. The text is `real`,
+# built above the credential stores.
 
 # Cut out the heredoc bodies (git commit -F - <<'EOF' ...). A quoted delimiter makes the body plain
 # text; an unquoted one expands $(...) and backticks, so a body with those stays.
