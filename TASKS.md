@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T34 · B3 · R1
+**Next IDs:** T35 · B3 · R1
 
 ## Queue
+
+### T34 · The guard and the Read rules keep the agent out of the gh, git credential and SSH stores · done · S · agent
+- Touches: framework/.claude/hooks/guard-git.sh, framework/.claude/settings.json, selftest.sh, CHANGELOG.md
+- Done when: the settings template denies the Read tool `~/.ssh/**`, `~/.git-credentials`, `~/.config/git/credentials`, `~/.config/gh/**` and `~/AppData/Roaming/GitHub CLI/**` (check) · the guard hook blocks shell reads of those stores (`cat`, `head`, `tail`, `less`, `more` and `strings`, however the path is written) and the commands that print a stored credential (`gh auth token`, `gh auth status -t`, `git credential fill` or `get`), for every Bash command, not only git ones (check) · `selftest.sh` covers each block and each pass case through the guard, and checks the five Read rules (check)
+- GDD: (none)
+- Source: Director-Driven-Development T241
 
 ### T33 · The guard blocks the git flags that write or read any file · done · M · agent
 - Touches: framework/.claude/hooks/guard-git.sh, framework/.claude/settings.json, selftest.sh, CHANGELOG.md
