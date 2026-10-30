@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T35 · B3 · R1
+**Next IDs:** T36 · B3 · R1
 
 ## Queue
+
+### T35 · The check and the pre-commit hook scan for secrets when gitleaks is installed · done · M · agent
+- Touches: framework/tools/check.sh, framework/.githooks/pre-commit, project/.gitleaks.toml (new), project/tools/check.cfg (+[gitleaks] min-version), examples/market-day/.gitleaks.toml (new), ONBOARDING.md, README.md, selftest.sh, CHANGELOG.md
+- Done when: with gitleaks installed, a credential in a game (a store upload key, an API token in a script or a config file) fails the check, which lists it as file:line with the value redacted, and is blocked by the pre-commit hook on every commit, whatever is staged (check) · without gitleaks both print a note that names the install and go on, and a gitleaks that is installed but too old or can't scan makes the check exit 3 (check) · `selftest.sh` proves the check and the hook with a secret assembled at run time, with a stand-in gitleaks and, when it is installed, the real one (check)
+- GDD: (none)
+- Source: Director-Driven-Development T247
 
 ### T34 · The guard and the Read rules keep the agent out of the gh, git credential and SSH stores · done · S · agent
 - Touches: framework/.claude/hooks/guard-git.sh, framework/.claude/settings.json, selftest.sh, CHANGELOG.md

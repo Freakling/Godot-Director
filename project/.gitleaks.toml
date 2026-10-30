@@ -1,0 +1,21 @@
+# Godot Director gitleaks settings · project-owned: edit freely; never overwritten on upgrade.
+# Read by the check (tools/check.sh) and the pre-commit hook, when gitleaks is installed.
+#
+# To allowlist one finding: add its Fingerprint (it is in .godot/godot-director/gitleaks.json after a
+# failed check) to .gitleaksignore, one per line, record why in design/decisions.md, and have the
+# human approve both.
+#
+# Reference: https://github.com/gitleaks/gitleaks#configuration
+
+[extend]
+# Keep gitleaks's built-in detection rules.
+useDefault = true
+
+[allowlist]
+description = "Godot's gitignored cache."
+# The check scans the working tree, and gitleaks doesn't read .gitignore. .godot/ is Godot's cache and
+# never enters git, and Godot keeps the export passwords and keys in .godot/export_credentials.cfg, which
+# the generic key rule flags. A credential in any other file is still found.
+paths = [
+  '''^\.godot[\\/]''',
+]

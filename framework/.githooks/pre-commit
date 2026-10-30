@@ -2,8 +2,13 @@
 # Godot Director pre-commit hook · framework-owned: replaced on upgrade.
 # `bash tools/setup-clone.sh` installs a small hook in .git/hooks that runs this file.
 #
-# Runs the project check when the commit includes code, scenes or data. It checks the working
-# tree, so commit what you checked (partially staged files aren't checked separately).
+# When a commit includes code, scenes or data:
+#   1. Runs the project check (working tree) with --if-changed caching. It checks the working
+#      tree, so commit what you checked (partially staged files aren't checked separately).
+# On every commit, whatever is staged:
+#   2. Runs gitleaks protect --staged --redact to catch secrets entering history, and names the
+#      files. gitleaks is optional: without it the hook prints a note and goes on.
+# Both steps block the commit on failure.
 
 # ls-files also lists a nested repository in an ignored folder (such as a clone) as a
 # directory, so keep only the paths that really end in .gdir-new.
@@ -13,9 +18,10 @@ if [ -n "$pending" ]; then
   printf '%s\n' "$pending" | sed 's/^/  /'
   exit 1
 fi
-[ -f project.godot ] && [ -f tools/check.sh ] || exit 0   # no Godot project yet: nothing to check
 
-if git -c core.quotePath=false diff --cached --name-only -z --diff-filter=ACMRD | tr '\0' '\n' \
+# No Godot project yet (or no check): nothing to check, but the staged scan below still runs.
+if [ -f project.godot ] && [ -f tools/check.sh ] \
+    && git -c core.quotePath=false diff --cached --name-only -z --diff-filter=ACMRD | tr '\0' '\n' \
     | grep -qE '\.(gd|tscn|scn|tres|res|gdshader|gdshaderinc)$|^project\.godot$|^tools/check\.(cfg|sh|local\.sh)$'; then
   echo "pre-commit: running the project check"
   bash tools/check.sh --if-changed
@@ -28,5 +34,42 @@ if git -c core.quotePath=false diff --cached --name-only -z --diff-filter=ACMRD 
     echo "pre-commit: the check fails; commit blocked."
     exit 1
   fi
+fi
+
+# Staged-changes scan: catches a secret before it enters history, even when the check's working-tree
+# scan was cached or didn't run. protect is the staged scan that works on the gitleaks releases checked
+# from 8.18.0 to 8.30.1, all but 8.19.0, which can't scan at all. The report names the files and lines;
+# only those are printed, and the values stay redacted. It runs on every commit, whatever is staged.
+if command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: scanning staged changes for secrets"
+  staged_report=".godot/godot-director/gitleaks-staged.json"
+  mkdir -p .godot/godot-director && rm -f "$staged_report"
+  scan_out="$(gitleaks protect --staged --redact --report-path="$staged_report" 2>&1)"
+  if [ $? -ne 0 ]; then
+    # Each finding is named as file:line (rule). A failure with no finding in the report means the
+    # scan couldn't run.
+    found="$(tr -d '\r' < "$staged_report" 2>/dev/null | awk '
+      /"RuleID"[ \t]*:/ { rule = $0; sub(/.*"RuleID"[ \t]*:[ \t]*"/, "", rule); sub(/".*/, "", rule) }
+      /"StartLine"[ \t]*:/ { line = $0; sub(/.*"StartLine"[ \t]*:[ \t]*/, "", line); sub(/[^0-9].*/, "", line) }
+      /"File"[ \t]*:/ { file = $0; sub(/.*"File"[ \t]*:[ \t]*"/, "", file); sub(/",?[ \t]*$/, "", file); gsub(/\\\\/, "/", file) }
+      /^[ \t]*\},?[ \t]*$/ { if (file != "") print file ":" line " (" rule ")"; file = ""; line = ""; rule = "" }
+    ')"
+    if [ -n "$found" ]; then
+      echo "pre-commit: gitleaks found a possible secret in the staged changes; commit blocked."
+      printf '%s\n' "$found" | head -n 20 | sed 's/^/            found in: /'
+      echo "            Report (values redacted): $staged_report"
+      echo "            Take the credential out of the file and unstage it. A false positive: add its"
+      echo "            Fingerprint to .gitleaksignore, record why in design/decisions.md, and have the human approve."
+    else
+      echo "pre-commit: gitleaks couldn't scan the staged changes; commit blocked."
+      last_line="$(printf '%s\n' "$scan_out" | tr -d '\r' | tail -n 1)"
+      [ -n "$last_line" ] && echo "            gitleaks: $last_line"
+      echo "            Check 'gitleaks version': 8.19.0 can't scan, so use 8.19.1 or later."
+    fi
+    exit 1
+  fi
+  rm -f "$staged_report"
+else
+  echo "pre-commit: note: gitleaks isn't installed, so this commit isn't scanned for secrets; install it from https://github.com/gitleaks/gitleaks#installing"
 fi
 exit 0
