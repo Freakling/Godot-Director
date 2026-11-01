@@ -26,6 +26,9 @@ extends SceneTree
 ## file does. Each file's or shard's time is printed as `GDIR-TIME: <ms> <path>`, a shard's also as
 ## `GDIR-SHARDS: <K> <path>`, and job 1 prints the deal as
 ## `GDIR-DEAL: <job> <seconds or ?> <path>[ shard <i>/<K>]`.
+##
+## `-- --only <path>` (repeatable, relative to the project or res://; `bash tools/check.sh --only tests/<file>.gd`) runs just those
+## test files, whatever their folder or name, and reports like one job of a parallel run.
 
 const CONFIG_PATH: String = "res://tools/check.cfg"
 const TYPED_SETTING: String = "debug/gdscript/warnings/untyped_declaration"
@@ -45,6 +48,7 @@ var _run_tests_on: bool = true
 var _run_rest_on: bool = true
 var _group: int = 1
 var _groups: int = 1
+var _only: PackedStringArray = PackedStringArray()
 
 var _skip: PackedStringArray = PackedStringArray(["addons", "script_templates"])
 var _screen_dirs: PackedStringArray = PackedStringArray()
@@ -108,6 +112,13 @@ func _read_args() -> void:
 		_run_rest_on = false
 		_group = maxi(1, int(args[at + 1]))
 		_groups = maxi(_group, int(args[at + 2]))
+	for index: int in args.size():
+		if args[index] == "--only" and index + 1 < args.size():
+			var only_path: String = args[index + 1].trim_prefix("./")
+			_only.append(only_path if only_path.begins_with("res://") else "res://" + only_path)
+	if not _only.is_empty():
+		_run_rest_on = false
+		_run_tests_on = true
 
 
 # --- configuration ------------------------------------------------------------------------------
@@ -278,6 +289,15 @@ func _code_only(line: String) -> String:
 # --- 3. tests -----------------------------------------------------------------------------------
 
 func _run_tests(files: Array[String]) -> void:
+	if not _only.is_empty():
+		for path: String in _only:
+			if not FileAccess.file_exists(path):
+				_failures.append("%s: no such test file" % path)
+				continue
+			var started: int = Time.get_ticks_msec()
+			_run_test_file(path)
+			print("GDIR-TIME: %d %s" % [Time.get_ticks_msec() - started, path])
+		return
 	var tests_root: String = "res://%s/" % _tests_dir
 	var test_files: Array[String] = []
 	for path: String in files:

@@ -8,9 +8,10 @@
 #
 # It reads a play log's JSONL and writes review.md and findings.json next to it: a timeline in turns
 # and views, the findings grouped by signature, the coverage, and the delta against the previous
-# autoplay run of the same scenario (tools/log_review.gd says how). Signatures are recorded in
-# playtesting/signatures.tsv; --check sig-xxxxxxxx then says whether one is in the log reviewed, so a
-# fix can be confirmed. Without an argument it reviews the newest autoplay run (--latest).
+# autoplay run of the same scenario (tools/log_review.gd says how). New signatures are added to
+# playtesting/signatures.tsv, which is committed and changes only then; the build each was last seen
+# in goes to the gitignored .godot/godot-director/signatures-last-seen.tsv. --check sig-xxxxxxxx then
+# says whether one is in the log reviewed, so a fix can be confirmed. Without an argument it reviews the newest autoplay run (--latest).
 #   <run folder or .jsonl>  that run's newest run-*.jsonl, or that file
 #   --latest                the newest folder in playtesting/autoplay/
 #   --player                the newest run-*.jsonl a person played, in the game's real user://logs/play

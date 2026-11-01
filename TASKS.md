@@ -4,9 +4,32 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T36 · B3 · R1
+**Next IDs:** T37 · B6 · R1
 
 ## Queue
+
+### B3 · Log review dirties the committed signatures file on every run · done · S · agent · high
+- Touches: framework/tools/log_review.gd, framework/tools/log_review.sh, framework/.godot-director/procedures/autoplay.md, project/playtesting/signatures.tsv, examples/market-day/playtesting/signatures.tsv, README.md, selftest.sh, CHANGELOG.md
+- Repro: on a clean tree, run autoplay and `bash tools/log_review.sh` on a run whose findings are all in `playtesting/signatures.tsv` → expected: `git status` stays clean / actual: the file's `last_seen_build` column is rewritten, so builders restore it with `git checkout --` (about 40 prompts in one session)
+- Found in: ad hoc (The Guildkeeper, on 4.5.0 / 6a4473d)
+- GDD: (none)
+
+### B4 · The settings template asks before a single-file restore or checkout · done · XS · agent · med
+- Touches: framework/.claude/settings.json, framework/.claude/hooks/guard-git.sh, selftest.sh, CHANGELOG.md
+- Repro: `git checkout -- <one file>` or `git restore --staged <file>` in a game → expected: runs, since the guard blocks the destructive forms / actual: a permission prompt every time, which a game can't allow locally because an allow rule can't override an ask rule
+- Found in: ad hoc (The Guildkeeper)
+- GDD: (none)
+
+### B5 · The guard reads a heredoc body as git commit -n · done · S · agent · med
+- Touches: framework/.claude/hooks/guard-git.sh, selftest.sh, CHANGELOG.md
+- Repro: a Python heredoc whose text has "commit" and later ` -len (x)` → expected: allowed / actual: refused as `git commit -n`, because the flag tests blank quoted strings but not heredoc bodies
+- Found in: ad hoc (The Guildkeeper)
+- GDD: (none)
+
+### T36 · One test file runs with `bash tools/check.sh --only` · done · S · agent
+- Touches: framework/tools/check.sh, framework/tools/check.gd, framework/.claude/hooks/guard-git.sh, framework/.claude/agents/builder.md, framework/.godot-director/procedures/build.md, framework/.godot-director/rules.md, README.md, selftest.sh, CHANGELOG.md
+- Done when: `bash tools/check.sh --only tests/<file>.gd` (repeatable) runs just those tests under the check's time limit, with exit codes 0, 1 and 3, and records nothing for `--if-changed` (check) · the build procedure, the rules, the builder agent and the guard's refusal of a direct Godot run name it (check) · `selftest.sh` covers a pass, several files, a failing and a broken test, and the refusals (check)
+- GDD: (none)
 
 ### T35 · The check and the pre-commit hook scan for secrets when gitleaks is installed · done · M · agent
 - Touches: framework/tools/check.sh, framework/.githooks/pre-commit, project/.gitleaks.toml (new), project/tools/check.cfg (+[gitleaks] min-version), examples/market-day/.gitleaks.toml (new), ONBOARDING.md, README.md, selftest.sh, CHANGELOG.md
