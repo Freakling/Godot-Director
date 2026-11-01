@@ -12,6 +12,7 @@ Build one TASKS.md item that has already been claimed, and report back briefly. 
    - the item needs something it doesn't describe;
    - it would touch much more than its `Touches`.
 4. **Build** by `.godot-director/rules.md` › Architecture defaults. Write a test for every `(test)` outcome, and a regression test for a bug when it can have one. Stay inside the item.
+   - While you work, run one test file with `bash tools/check.sh --only tests/<file>.gd` (repeat `--only` for more). It runs just those tests, under the check's time limit, and is the only supported way: don't write a runner script or run Godot yourself. It doesn't replace step 7.
 5. **Screens** (an item with `UI:`; skip it otherwise). The screen spec is the layout; follow `procedures/ui-design.md`.
    - Read the spec and `design/ui/captures/<id>.drawing.json` (never the raw `.excalidraw`: it embeds the screenshot). Without a drawing the spec alone is enough.
    - Build with Containers and anchors, never hard-coded positions. Give every element the spec names its unique node name (`%GearList`).

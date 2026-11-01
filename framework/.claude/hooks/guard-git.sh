@@ -5,7 +5,11 @@
 # `git push origin main --force` would slip past them. This hook looks at the whole command and
 # blocks what .godot-director/rules.md › Git reserves for the human. It pattern-matches the text,
 # so it's a strong safety net, not a guarantee. It starts no other processes (it runs on every
-# Bash call).
+# Bash call). Heredoc bodies are data, not commands, so the flag tests skip them.
+#
+# settings.json lets `git restore <file>` and `git checkout -- <file>` run without a prompt, so this
+# hook is what keeps the whole-tree forms with the human: a pathspec of the whole tree (., ./, :/,
+# *, :(top), quoted or not), --pathspec-from-file, and a `git restore` that names no file.
 #
 # It also blocks the commands that hang or run past five minutes (an empty Python heredoc, an
 # unbounded wait loop, a Godot run without `timeout`, a sleep over 280 seconds); see Hangs below.
@@ -76,7 +80,7 @@ if [[ ! $raw =~ (^|[^[:alnum:]_./-])git[[:space:]]+commit ]]; then
     if [[ $raw =~ $gre ]]; then
       [[ $raw =~ $gflag ]]
       pre="${raw%%"${BASH_REMATCH[0]}"*}"
-      has_timeout "$pre" || hang "a direct Godot run needs a time limit of 280 seconds or less: \`timeout 120 \"\$G\" --headless --path . --script x.gd\`. A scratch script that fails to compile keeps Godot running until it is killed. \`bash tools/check.sh\`, \`bash tools/autoplay.sh\` and \`bash tools/ui_capture.sh\` cap their own runs."
+      has_timeout "$pre" || hang "a direct Godot run needs a time limit of 280 seconds or less. To run one test file, don't write a runner: \`bash tools/check.sh --only tests/<file>.gd\` runs it (repeat --only for more files) under the check's own time limit. \`bash tools/check.sh\`, \`bash tools/autoplay.sh\` and \`bash tools/ui_capture.sh\` cap their own runs too. Anything else: \`timeout 120 \"\$G\" --headless --path . --script x.gd\` (a scratch script that fails to compile keeps Godot running until it is killed)."
     fi
   fi
   # (4) A sleep past the five-minute prompt cache.
@@ -94,7 +98,43 @@ fi
 # credential test. `real` is the command as the shell reads it: JSON escapes undone, and the \n that
 # separates commands becomes a newline. Both use Bash expansions only, so no process starts. They come
 # before the git check below, which exits early for any other command.
+# Heredoc bodies are data the command reads, not commands: they are cut out first (<<'X' and <<X,
+# <<-X too), so a Python body that says "commit" and later "-len (x)" isn't read as git commit -n.
+# An unquoted delimiter expands $(...) and backticks, so such a body stays, and a body that never
+# closes stays too (a false block beats a miss). In $raw a newline is the two characters \n.
+heredoc_free() { # heredoc_free <raw text>: sets hd_out to it with the heredoc bodies removed (no subshell)
+  local text="${1//\\\\/$'\x01'}" out="" line more=1 hd_re t i
+  local -a delims=() quoted=()
+  local body="" open=0
+  hd_re='(^|[^<])<<-?[[:space:]]*(\\"|'"'"')?([A-Za-z_][A-Za-z0-9_]*)(\\"|'"'"')?'
+  while ((more)); do
+    if [[ $text == *'\n'* ]]; then line="${text%%\\n*}"; text="${text#*\\n}"; else line="$text"; more=0; fi
+    if ((open < ${#delims[@]})); then
+      t="$line"
+      while [[ $t == [' '$'\t']* || $t == '\t'* ]]; do if [[ $t == '\t'* ]]; then t="${t#\\t}"; else t="${t:1}"; fi; done
+      if [[ $t == "${delims[open]}" ]]; then
+        [[ -n ${quoted[open]} || ( $body != *'$('* && $body != *'`'* ) ]] || out+="$body"
+        body=""; ((open++))
+      else body+="$line\n"; fi
+      continue
+    fi
+    out+="$line"; ((more)) && out+='\n'
+    delims=(); quoted=(); open=0; t="$line"
+    while [[ $t =~ $hd_re ]]; do
+      delims+=("${BASH_REMATCH[3]}"); quoted+=("${BASH_REMATCH[2]}")
+      t="${t#*"${BASH_REMATCH[0]}"}"
+    done
+  done
+  out+="${body%\\n}"
+  hd_out="${out//$'\x01'/\\\\}"
+}
 code="$raw"
+if [[ $raw == *'<<'* ]]; then heredoc_free "$raw"; code="$hd_out"; fi
+# A pathspec of the whole tree in quotes ('*', ":/") is still that pathspec: it is unquoted here,
+# before the quoted strings are blanked, so the checkout and restore tests below see it.
+for wt in '.' './' '.*' ':/' ':/*' ':/:' '*' ':(top)'; do
+  code="${code//"'$wt'"/ $wt }"; code="${code//"\\\"$wt\\\""/ $wt }"
+done
 dq='\\"([^\\]|\\[^"])*\\"'
 while [[ $code =~ $dq ]]; do code="${code/"${BASH_REMATCH[0]}"/ Q }"; done
 sq="'[^']*'"
@@ -130,7 +170,8 @@ git_print_re='(^|[^[:alnum:]_./-])git[[:space:]]+([^;&|]*[[:space:]])?credential
 [[ $code =~ $gh_print_re ]] && block "gh auth token and gh auth status -t print the gh CLI's stored token"
 [[ $code =~ $git_print_re ]] && block "git credential fill and get print a credential from git's credential store"
 
-[[ $raw =~ (^|[^[:alnum:]_./-])git([[:space:]]|$) ]] || exit 0
+# A command on a later line follows the two characters \n in $raw.
+[[ $raw =~ (^|[^[:alnum:]_./-]|\\n)git([[:space:]]|\\n|$) ]] || exit 0
 
 seg='[^;&|]*'   # stays within one command of a compound command line
 
@@ -145,6 +186,7 @@ shopt -u nocasematch
 [[ $code =~ clean${seg}[[:space:]](-[a-zA-Z]*f|--force) ]] && block "git clean -f deletes untracked files"
 [[ $code =~ (checkout|switch)${seg}[[:space:]](-f|--force|--discard-changes)([[:space:]]|$) ]] && block "this discards uncommitted changes"
 [[ $code =~ (checkout|restore)${seg}[[:space:]](--[[:space:]]+)?\.([[:space:]]|$) ]] && block "this discards every uncommitted change"
+[[ $code =~ (checkout|restore)${seg}[[:space:]](\.\*|\./|:/|:/\*|:/:|\*|:\((top|top,[^\)]*)\)\.?)([[:space:]]|$) ]] && block "this discards every uncommitted change"
 [[ $code =~ stash[[:space:]]+(drop|clear) ]] && block "this deletes stashed work"
 [[ $code =~ branch${seg}[[:space:]]-D([[:space:]]|$) ]] && block "git branch -D deletes unmerged work"
 
@@ -223,6 +265,25 @@ for gs in "${gsegs[@]}"; do
     case ${w[k]} in -C|-c) ((k += 2)) ;; -*) ((k++)) ;; *) break ;; esac
   done
   case ${w[k]:-} in
+    restore|checkout)
+      # settings.json lets `git restore <file>` and `git checkout -- <file>` run without a prompt;
+      # the whole-tree forms discard every uncommitted change and stay with the human: a pathspec of
+      # the whole tree (., ./, :/, *, :(top)), --pathspec-from-file, and a git restore with no path.
+      sub="${w[k]}"; paths=0; after_dd=0
+      for ((k++; k < n; k++)); do
+        a="${w[k]}"
+        if ((after_dd == 0)); then
+          case $a in
+            --) after_dd=1; continue ;;
+            --pathspec-from-file*) block "git $sub --pathspec-from-file can name every file and discard their changes" ;;
+            -s|--source) ((k++)); continue ;;
+            -*) continue ;;
+          esac
+        fi
+        [[ $a =~ ^(\.|\./|\.\*|:/|:/\*|:/:|\*)$ ]] && block "git $sub on the whole tree discards every uncommitted change"
+        paths=$((paths + 1))
+      done
+      [[ $sub == restore && $paths -eq 0 ]] && block "git restore needs the files to restore; name them (git restore <file>, git restore --staged <file>)" ;;
     commit)
       for ((k++; k < n; k++)); do
         a="${w[k]}"

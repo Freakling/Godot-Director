@@ -31,7 +31,7 @@ AI writes game code fast. Without structure, that speed goes wrong in familiar w
 
 ### Start here: write your design document
 
-Before you install, write your game design document in your own words. The [template](https://raw.githubusercontent.com/Freakling/Godot-Director/v4.7.0/project/design/director-gdd.md) shows what to cover; fill in what you know and leave the rest blank. Then install Godot Director below: onboarding reads your document and asks only about what you left open.
+Before you install, write your game design document in your own words. The [template](https://raw.githubusercontent.com/Freakling/Godot-Director/v4.8.0/project/design/director-gdd.md) shows what to cover; fill in what you know and leave the rest blank. Then install Godot Director below: onboarding reads your document and asks only about what you left open.
 
 ### Install
 
@@ -140,7 +140,7 @@ your-game/
 ├── tools/autoplay_adapter.gd   how autoplay starts a run, which actions are legal and how each is performed
 ├── tools/autoplay_scenarios.gd the scenarios autoplay plays: smoke, scripted ones and strategies
 ├── tools/autoplay_invariants.gd  the game's own always-true checks, run after every autoplay step
-├── playtesting/signatures.tsv  the problems log review has seen, each with a stable signature
+├── playtesting/signatures.tsv  the problems log review has seen, each with a stable signature (changes only when one is new)
 ├── tools/dev_menu.gd           the DevMenu autoload, if you want one: how it is enabled and which systems it shows
 ├── design/ui/                  one spec per screen (and a gitignored captures/ folder); README.md says how to draw
 ├── director/ui/                your screen drawings (you create it; the agent only reads it)
@@ -216,6 +216,7 @@ The game plays itself, so an assistant can playtest a change before you do, and 
 
 It exits 0 on pass, 1 on fail, and 3 when it can't run, including when a Godot run hits its timeout (`tools/check.cfg` › `[tests] timeout`, 600 seconds by default): the report then names the test file it was in, so a slow suite never reads as a failing one. An installed gitleaks that is too old (`[gitleaks] min-version`, 8.18.0 by default) or that can't scan, such as 8.19.0, also exits 3. It remembers the last passing state, so hooks don't run it again when nothing has changed. Game-specific settings go in `tools/check.cfg`, and extra steps (for example an existing GUT suite) go in `tools/check.local.sh`.
 
+- **One test file.** `bash tools/check.sh --only tests/<file>.gd` (repeat `--only` for more) runs just those tests, after the import pass when one is needed, under the check's time limit. It skips the rest of the check and records nothing for `--if-changed`, so a builder uses it while working and the full check still decides done. It is the supported way to run one test file: the Bash guard refuses a direct Godot run without a short `timeout`, and the refusal points here.
 - **Parallel tests.** The tests run in several headless Godot processes at once, one per CPU core by default (`[tests] jobs`, or `--jobs N` for one run; `--jobs 1` runs them in one process). Each process takes a contiguous group of the sorted test files, in file order, with its own log in `.godot/godot-director/`, and the check merges them into one report. So a test must not depend on autoload or `user://` state that another test file left behind: it sets up what it reads. Test files also run at the same time and share one `user://` and one `.godot/`, so two of them must not write the same `user://` file: use a unique name per test (or per file, in a `no-split` file).
 - **Balanced and split runs (opt-in).** `[tests] balance = true` deals the test files longest first by their times in the last run instead (files with no time yet go first), each to the process with the least time so far. With it on, `[tests] split_over = <seconds>` splits a file whose whole time is over that into shards of its test methods, each in its own process, its tests counted once; a file whose tests share state across methods keeps a line `# gdir: no-split` among its first ten lines and runs whole. Every run records the times in `.godot/godot-director/test-times.tsv` (each file's whole time, which sizes the split; a split run that finishes all its shards lowers it to their sum but never raises it, and the shard count and longest shard of its last run), so turning it on works at once; `bash tools/check.sh --jobs 1` re-measures every file whole, which is how a file that got slower gets a larger split. Turn it on once no test depends on another having run first, when a few files hold up the run; where heavy files then compete for the CPU it may not help, so compare the slowest-files summary before and after.
 - **Slowest files.** Each test file's time is in the logs, and every run ends with the ten slowest files and their share of the test time, so you know which tests to make faster.

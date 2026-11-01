@@ -371,7 +371,7 @@ for file in framework/tools/log_review.sh framework/tools/log_review.gd project/
     examples/market-day/playtesting/signatures.tsv tests/log-review/signature-cases.tsv; do
   [ -f "$src/$file" ] || wired="$wired $file"
 done
-[ "$(cat "$src/project/playtesting/signatures.tsv")" = "$(printf 'id\tkind\ttext\tfirst_seen_build\tlast_seen_build')" ] \
+[ "$(cat "$src/project/playtesting/signatures.tsv")" = "$(printf 'id\tkind\ttext\tfirst_seen_build')" ] \
   && cmp -s "$src/project/playtesting/signatures.tsv" "$src/examples/market-day/playtesting/signatures.tsv" || wired="$wired signatures.tsv seed(header, example copy)"
 grep -q 'GODOT_BIN' "$src/framework/tools/log_review.sh" && grep -q '\[ "\$minor" -lt 5 \]' "$src/framework/tools/log_review.sh" \
   && grep -q 'tools/log_review.gd' "$src/framework/tools/log_review.sh" || wired="$wired log_review.sh(Godot lookup, 4.5 minimum)"
@@ -536,7 +536,7 @@ else
   bad "installs autoplay and the run folders' gitignore line, keeping the game's adapter and scenarios" "$out"
 fi
 if [ -x tools/log_review.sh ] && [ -f tools/log_review.gd ] && cut -f2 .godot-director/manifest | grep -q '^tools/log_review\.gd$' \
-    && [ "$(cat playtesting/signatures.tsv)" = "$(printf 'id\tkind\ttext\tfirst_seen_build\tlast_seen_build')" ] \
+    && [ "$(cat playtesting/signatures.tsv)" = "$(printf 'id\tkind\ttext\tfirst_seen_build')" ] \
     && grep -q '^/tools/log_review\.gd text eol=lf$' .gitattributes && grep -q '^/playtesting/signatures\.tsv text eol=lf$' .gitattributes; then
   ok "installs log review, the signatures.tsv seed and the .gitattributes lines for both"
 else
@@ -876,12 +876,43 @@ for cmd in 'git commit -m x --no-verify' 'git commit -nm "x"' 'git push origin m
     'git checkout -f main' 'git switch --discard-changes main'; do
   guard 2 "$cmd"
 done
+# settings.json no longer asks before `git restore` and `git checkout --`, so the guard keeps every
+# whole-tree form with the human: the pathspecs of the whole tree, quoted or not, --pathspec-from-file,
+# a git restore that names no file, and git on a later line of the command.
+for cmd in 'git restore' 'git restore --staged' 'git restore --source=HEAD~3' 'git restore --source HEAD~3 .' \
+    'git restore -s HEAD :/' 'git restore -- .' 'git restore ./' 'git restore "*"' "git restore ':(top)'" \
+    'git restore --pathspec-from-file=list.txt' 'git checkout -- :/' "git checkout -- '.'" 'git checkout HEAD -- *' \
+    'git checkout --pathspec-from-file=list.txt' 'git -C sub restore .' $'echo start\ngit push --force' \
+    $'cat <<EOF\nhi\nEOF\ngit commit -nm x' $'cat <<EOF\n$(git commit -n -m x)\nEOF' \
+    $'cat <<\'EOF\'\nnever closed\ngit commit -nm x'; do
+  guard 2 "$cmd"
+done
 for cmd in 'git status --short' 'git commit -m "feat: x (T12)" -- a.gd' 'git commit --amend --no-edit' \
     'git push origin feature-flag' 'git restore --staged a.gd' 'git checkout -b topic' 'bash tools/check.sh' \
     'git commit -m "docs: grep -n usage" -- a.md' "git commit -m 'fix: handle -f flag' -- a.gd" \
     'git reset --soft HEAD~1' 'git switch main'; do
   guard 0 "$cmd"
 done
+# The single-file forms run without a prompt now, and a heredoc body is data: a Python body that says
+# "commit" and later " -len (x)" isn't git commit -n (The Guildkeeper hit this).
+for cmd in 'git restore a.gd' 'git checkout -- scripts/systems/market.gd' 'git restore --source=HEAD~1 scripts/a.gd' \
+    'git restore -s HEAD~1 -- scripts/a.gd' 'git restore --staged scripts/a.gd && git checkout -- scripts/a.gd' \
+    "git commit -m 'docs: git restore . is blocked' -- a.md" 'git commit -m "docs: git checkout -- * is blocked" -- a.md' \
+    $'python3 - <<\'EOF\'\n# commit totals per day\nx = -len (rows)\nEOF' \
+    $'python3 - <<EOF\n# commit totals per day\nx = -len (rows)\nEOF' \
+    $'cd x && python3 - <<-PY\n\t# commit totals\n\ty = -n + 1\n\tPY\necho done' \
+    $'git commit -q -F - <<\'EOF\'\nfix: handle -n in the parser\nEOF'; do
+  guard 0 "$cmd"
+done
+asks="$(sed -n '/"ask": \[/,/\]/p' .claude/settings.json)"
+if printf '%s' "$asks" | grep -q 'git restore' || printf '%s' "$asks" | grep -q 'git checkout'; then
+  bad "settings.json no longer asks before git restore and git checkout --" "$asks"
+elif printf '%s' "$asks" | grep -q '"Bash(git push \*)"' && printf '%s' "$asks" | grep -q '"Bash(git rebase \*)"' \
+    && printf '%s' "$asks" | grep -q '"Bash(git -c \*)"' && printf '%s' "$asks" | grep -q '"Bash(git config \*)"'; then
+  ok "settings.json asks before push, rebase, -c and config, and not before a single-file restore or checkout"
+else
+  bad "settings.json keeps asking before push, rebase, -c and config" "$asks"
+fi
 
 # The wildcard git allow rules (`git diff *`, `git log *`, `git show *`, `git commit *`) take any
 # flag, and some flags write a file (--output), read a file outside the repository (--no-index,
@@ -965,6 +996,8 @@ printf '{\n  "permissions": {\n    "allow": [\n      "Bash(git status)",\n      
   || bad "the git deny check misses a planted case:$git_planted"
 
 # Hangs: an empty Python heredoc, unbounded waits, a Godot run without a time limit, a long sleep.
+out="$(printf '{"tool_name":"Bash","tool_input":{"command":"timeout 600 godot --headless --script run_one.gd"}}' | bash .claude/hooks/guard-git.sh 2>&1)"
+expect_output "the Godot-run refusal points to the supported way to run one test file" 'bash tools/check\.sh --only tests/<file>\.gd' "$out"
 for cmd in $'python3 - <<\'EOF\' 2>/dev/null || echo "no python"\nEOF' $'python - <<EOF\nEOF' \
     $'py.exe - <<-"EOF"\n  EOF  ' $'python3 - <<\'EOF\' 2>/dev/null || python - <<\'EOF2\'\nEOF\nprint(1)\nEOF2' \
     $'cd x && python3 - <<EOF\nEOF\necho done' \
@@ -1182,6 +1215,35 @@ expect_output "sets the check meta under the new and the deprecated 2.x name" "1
 rm -f tests/test_selftest_meta.gd tests/test_selftest_meta.gd.uid
 
 out="$(bash tools/check.sh 2>&1)"; expect_status "passes again after the faults are removed" 0 $? "$out"
+
+# --only: one test file, the supported way to run it (the Bash guard refuses a direct Godot run past
+# 280 s, and builders wrote runner scripts). It never records a result for --if-changed.
+echo "one test file (--only)"
+last_pass_before="$(cat .godot/godot-director/last-pass 2>/dev/null)"
+out="$(bash tools/check.sh --only tests/test_market.gd 2>&1)"; expect_status "--only runs one test file" 0 $? "$out"
+expect_output "and says it ran only that file" "check: PASS \(tests/test_market\.gd: [0-9]+ tests? passed; only these files" "$out"
+expect_no_output "with no load pass, screen rules or slowest files" "screen script|slowest test files|running tools/check.local.sh" "$out"
+out="$(cd tests && bash ../tools/check.sh --only test_play_log.gd --only res://tests/test_dev_menu.gd 2>&1)"
+expect_status "--only takes several files, from the caller's folder or res://" 0 $? "$out"
+expect_output "and names them" "check: PASS \(tests/test_play_log\.gd tests/test_dev_menu\.gd: " "$out"
+[ "$(cat .godot/godot-director/last-pass 2>/dev/null)" = "$last_pass_before" ] \
+  && ok "--only leaves the result --if-changed repeats as it was" || bad "--only changed last-pass" "$(cat .godot/godot-director/last-pass 2>/dev/null)"
+cp tests/test_market.gd "$work/saved-only"
+printf '\nfunc test_selftest_only_failure() -> void:\n\texpect_eq(1, 2)\n' >> tests/test_market.gd
+out="$(bash tools/check.sh --only tests/test_market.gd 2>&1)"; expect_status "--only fails on a failing test" 1 $? "$out"
+expect_output "and names it" "test_market\.gd::test_selftest_only_failure: expected 2, got 1" "$out"
+printf '\nfunc test_selftest_only_broken() -> void:\n\tvar n: int = "x"\n' >> tests/test_market.gd
+out="$(bash tools/check.sh --only tests/test_market.gd 2>&1)"; expect_status "--only fails on a test file that doesn't compile" 1 $? "$out"
+expect_output "and says so" "test_market\.gd: test script doesn't compile" "$out"
+cp "$work/saved-only" tests/test_market.gd
+out="$(bash tools/check.sh --only tests/test_nope.gd 2>&1)"; expect_status "--only refuses a file that isn't there" 3 $? "$out"
+out="$(bash tools/check.sh --only README.md 2>&1)"; expect_status "--only refuses a file that isn't a .gd script" 3 $? "$out"
+out="$(bash tools/check.sh --only 2>&1)"; expect_status "--only needs a file" 3 $? "$out"
+out="$(bash tools/check.sh --if-changed --only tests/test_market.gd 2>&1)"; expect_status "--only runs on its own, not with --if-changed" 3 $? "$out"
+grep -q 'check\.sh --only' .godot-director/procedures/build.md && grep -q 'check\.sh --only' .godot-director/rules.md \
+  && grep -q 'check\.sh --only' .claude/agents/builder.md && grep -q 'check\.sh --only' .claude/hooks/guard-git.sh \
+  && ok "the build procedure, the rules, the builder agent and the guard's refusal name --only" \
+  || bad "the build procedure, the rules, the builder agent and the guard's refusal name --only"
 
 # --- parallel tests, per-file times, timeout ----------------------------------------------------
 echo "parallel tests"
@@ -2570,8 +2632,10 @@ fixture_start() { fl 10 0 session session.start "Market Day $1 · Godot 4.7 · W
 index_sig="sig-2f29a879"; cart_sig="sig-d8ddb8e4"; sell_sig="sig-0dc8bfae"; hitch_sig="sig-40dd34bd"
 out="$(bash tools/log_review.sh "$logs/run-20260101-090000.jsonl" 2>&1)"; expect_status "reviews a .jsonl by its path" 0 $? "$out"
 expect_output "and says a person played it" "played by a person · 0 steps · 1 turn · 2 findings \(error 1, hitch 1\)" "$out"
-grep -q "^$index_sig${tab}error${tab}Index <n> is out of bounds (size <n>)\. (at res://scripts/roster\.gd:<n> in pick())${tab}0\.3\.0${tab}0\.3\.0\$" playtesting/signatures.tsv \
-  && ok "the signatures file gets the signature, its kind, text and the build it was first and last seen in" || bad "the signatures file gets the signature" "$(cat playtesting/signatures.tsv)"
+last_seen=".godot/godot-director/signatures-last-seen.tsv"
+grep -q "^$index_sig${tab}error${tab}Index <n> is out of bounds (size <n>)\. (at res://scripts/roster\.gd:<n> in pick())${tab}0\.3\.0\$" playtesting/signatures.tsv \
+  && grep -q "^$index_sig${tab}0\.3\.0\$" "$last_seen" \
+  && ok "the signatures file gets the signature, its kind, text and first build; the last seen build goes to the gitignored sidecar" || bad "the signatures file gets the signature" "$(cat playtesting/signatures.tsv "$last_seen")"
 out="$(as_player bash tools/log_review.sh --player 2>&1)"; expect_status "--player reviews the newest run in the game's user://logs/play" 0 $? "$out"
 expect_output "which is the one a person played last, not the boot file" "played by a person · 0 steps · 3 turns · 4 findings \(error 1, blocked 1, warning 1, hitch 1\)" "$out"
 review="$logs/review.md"; findings="$logs/findings.json"
@@ -2596,9 +2660,10 @@ expect_output "coverage: and that a person took no adapter actions" "^- Adapter 
 expect_output "delta: only autoplay runs have one" "^None: only an autoplay run folder has a delta" "$(review_section "$review" Delta)"
 grep -q '"schema": 1' "$findings" && grep -q '"autoplay": false' "$findings" && [ "$(grep -c '"signature":' "$findings")" = "4" ] && grep -q '"first_step": null' "$findings" \
   && ok "findings.json holds the four signatures, with no step for a person's log" || bad "findings.json" "$(head -n 30 "$findings")"
-grep -q "^$index_sig${tab}error${tab}.*${tab}0\.3\.0${tab}0\.3\.1\$" playtesting/signatures.tsv && grep -q "^$cart_sig${tab}blocked${tab}the grain cart is late, grain <n>${tab}0\.3\.1${tab}0\.3\.1\$" playtesting/signatures.tsv \
-  && [ "$(grep -c "^$index_sig${tab}" playtesting/signatures.tsv)" = "1" ] \
-  && ok "the signatures file moves a known signature's last seen build and adds the new ones" || bad "the signatures file after the second log" "$(cat playtesting/signatures.tsv)"
+grep -q "^$index_sig${tab}error${tab}.*${tab}0\.3\.0\$" playtesting/signatures.tsv && grep -q "^$cart_sig${tab}blocked${tab}the grain cart is late, grain <n>${tab}0\.3\.1\$" playtesting/signatures.tsv \
+  && [ "$(grep -c "^$index_sig${tab}" playtesting/signatures.tsv)" = "1" ] && grep -q "^$index_sig${tab}0\.3\.1\$" "$last_seen" \
+  && grep -q "^$cart_sig${tab}0\.3\.1\$" "$last_seen" \
+  && ok "a known signature keeps its row, its last seen build moves in the sidecar, and the new ones are added" || bad "the signatures file after the second log" "$(cat playtesting/signatures.tsv "$last_seen")"
 # 0.3.2: the index error is gone and the cart is still late.
 { fixture_start 0.3.2
   fl 20 1 snapshot snapshot "day=1" '{"day":1}'
@@ -2611,6 +2676,27 @@ out="$(as_player bash tools/log_review.sh --player --check "$cart_sig" 2>&1)"; e
 expect_output "and says how often and where it first came" "check $cart_sig: PRESENT in .* build 0\.3\.2 .* \(1x, first at T1, line [0-9]+\)" "$out"
 out="$(as_player bash tools/log_review.sh --player --check sig-00000000 2>&1)"; expect_status "--check: a signature the file doesn't know is an error (exit 2)" 2 $? "$out"
 expect_output "and says to review first" "isn't in playtesting/signatures\.tsv" "$out"
+# A signatures file from before 4.8.0 has a fifth column, last_seen_build. It reads as before, a review
+# that finds only known signatures leaves it as it is, and the first new signature rewrites it
+# without the column, its values moved to the sidecar.
+cp playtesting/signatures.tsv "$work/sigs-new-format"; cp "$last_seen" "$work/sigs-last-seen"
+{ printf 'id\tkind\ttext\tfirst_seen_build\tlast_seen_build\n'
+  grep "^$index_sig${tab}" "$work/sigs-new-format" | sed "s/\$/${tab}0.2.9/"
+  grep "^$hitch_sig${tab}" "$work/sigs-new-format" | sed "s/\$/${tab}0.2.9/"
+  printf 'sig-0000beef\terror\tan old error\t0.1.0\t0.2.0\n'
+} > playtesting/signatures.tsv
+cp playtesting/signatures.tsv "$work/sigs-old-format"; rm -f "$last_seen"
+out="$(bash tools/log_review.sh "$logs/run-20260101-090000.jsonl" 2>&1)"; expect_status "an old five-column signatures file still reads" 0 $? "$out"
+cmp -s playtesting/signatures.tsv "$work/sigs-old-format" && ok "and a review with only known signatures leaves it as it is" || bad "the old file is left as it is" "$(cat playtesting/signatures.tsv)"
+out="$(bash tools/log_review.sh "$logs/run-20260101-090000.jsonl" --check sig-0000beef 2>&1)"; expect_status "--check on the old file: a signature not in the log is absent" 0 $? "$out"
+expect_output "and its last seen build comes from the old column" "first seen in build 0\.1\.0, last seen in build 0\.2\.0" "$out"
+out="$(bash tools/log_review.sh "$logs/run-20260102-100000.jsonl" 2>&1)"; expect_status "a review with new signatures on the old file" 0 $? "$out"
+[ "$(head -n 1 playtesting/signatures.tsv)" = "$(printf 'id\tkind\ttext\tfirst_seen_build')" ] \
+  && grep -q "^sig-0000beef${tab}error${tab}an old error${tab}0\.1\.0\$" playtesting/signatures.tsv \
+  && grep -q "^$cart_sig${tab}blocked${tab}.*${tab}0\.3\.1\$" playtesting/signatures.tsv \
+  && grep -q "^sig-0000beef${tab}0\.2\.0\$" "$last_seen" && grep -q "^$index_sig${tab}0\.3\.1\$" "$last_seen" \
+  && ok "rewrites it without last_seen_build, adds the new ones and moves the old values to the sidecar" || bad "the old file after a new signature" "$(cat playtesting/signatures.tsv "$last_seen")"
+cp "$work/sigs-new-format" playtesting/signatures.tsv; cp "$work/sigs-last-seen" "$last_seen"
 # use_custom_user_dir puts the folder straight under the data folder, named by custom_user_dir_name.
 cp project.godot "$work/saved-project-godot"
 after_line "$work/saved-project-godot" 'config/name="Market Day"' 'config/use_custom_user_dir=true\nconfig/custom_user_dir_name="Market Stall"' > project.godot
@@ -2653,12 +2739,17 @@ expect_output "delta: and nothing is still present" "^- Still present: none$" "$
 grep -q '"first_step": 1,' "$findings" && grep -q '"kind": "error",' "$findings" && grep -q '"elements": "0001-error.elements.json",' "$findings" \
   && grep -q '"repro": "repro.json",' "$findings" && grep -q '"save": "saves/before-0001.save"' "$findings" && grep -q '"against": "playtesting/autoplay/smoke-' "$findings" \
   && ok "findings.json has the step, the files the finding names and the delta" || bad "findings.json" "$(head -n 40 "$findings")"
-grep -q "^$sig${tab}error${tab}Cannot call method 'queue_free' on a null value\. (at res://scripts/ui/shop_screen\.gd:<n> in _on_buy_pressed())${tab}unversioned${tab}unversioned\$" playtesting/signatures.tsv \
+grep -q "^$sig${tab}error${tab}Cannot call method 'queue_free' on a null value\. (at res://scripts/ui/shop_screen\.gd:<n> in _on_buy_pressed())${tab}unversioned\$" playtesting/signatures.tsv \
   && ok "the signatures file has it, with the build named unversioned when the game sets no version" || bad "the signatures file has the planted error" "$(tail -n 3 playtesting/signatures.tsv)"
 # The same error two lines lower has the same signature, and is still present.
 after_line "$work/saved-shop" 'func _on_buy_pressed() -> void:' '\t# the same error, two lines lower:\n\t# the signature has no line number\n\tvar receipt: Node = null\n\treceipt.queue_free()' > scripts/ui/shop_screen.gd
 out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; lower="$(latest_run smoke-1)"
+git add playtesting/signatures.tsv && git_q -c core.hooksPath=/dev/null commit -qm "selftest: the signatures so far" -- playtesting/signatures.tsv
+status_before="$(git status --porcelain)"
 out="$(bash tools/log_review.sh "$lower" 2>&1)"; expect_status "reviews the next run" 0 $? "$out"
+[ "$(git status --porcelain)" = "$status_before" ] && git diff --quiet -- playtesting/signatures.tsv \
+  && ok "a review with only known signatures leaves the committed signatures file and git status as they were" \
+  || bad "the review left the tree dirty" "$(git status --porcelain; git diff -- playtesting/signatures.tsv)"
 [ "$lower" != "$planted" ] && [ "$(sig_of "$lower/findings.json")" = "$sig" ] && ok "the same error two lines lower has the same signature" || bad "the same signature at another line" "$(grep -h 'As logged' "$planted/review.md" "$lower/review.md")"
 delta="$(review_section "$lower/review.md" Delta)"
 expect_output "delta: still present" "^  - $sig " "$delta"

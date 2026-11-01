@@ -30,11 +30,16 @@ extends SceneTree
 ## and times) and runs of white space. So the same error at another line, with other object ids or a
 ## changing count, has one signature; two different errors have two. tests/log-review/ has the cases.
 ##
-## playtesting/signatures.tsv records each signature a review finds: id, kind, normalised text, the
-## build it was first seen in, the build it was last seen in (a project seed with the header). The
-## game's project owns it; a backend can import it. `--check sig-xxxxxxxx` reviews the log and
-## reports whether that signature appears in it: exit 0 absent (a fix confirmed for this run), 1
-## present, 2 not a signature in the file.
+## playtesting/signatures.tsv records each signature a review finds: id, kind, normalised text and
+## the build it was first seen in (a project seed with the header). The game's project owns and
+## commits it, so it changes only when a review finds a signature it doesn't have: a review that
+## finds only known signatures leaves it, and the working tree, as they were. The build each
+## signature was last seen in changes on every run, so it lives beside it in the gitignored
+## .godot/godot-director/signatures-last-seen.tsv (id and build, tab separated) of this clone. A file
+## from before 4.8.0 has a fifth column, last_seen_build: it still reads, and is rewritten without it
+## (its values moved to the sidecar) the next time a new signature is added. A backend can import
+## either. `--check sig-xxxxxxxx` reviews the log and reports whether that signature appears in it:
+## exit 0 absent (a fix confirmed for this run), 1 present, 2 not a signature in the file.
 ##
 ## The delta compares with the newest earlier non-replay run folder of the same scenario in the same
 ## folder (autoplay/<scenario>-<seed>-<datetime>), whatever its seed: new, gone and still-present
@@ -54,7 +59,8 @@ const FAIL_TAG: String = "GDIR-REVIEW-FAIL: "
 const SIGNATURES_PATH: String = "res://playtesting/signatures.tsv"
 const SCREENS_PATH: String = "res://tools/ui_screens.gd"
 const AUTOPLAY_DIR: String = "res://playtesting/autoplay"
-const TSV_HEADER: String = "id\tkind\ttext\tfirst_seen_build\tlast_seen_build"
+const TSV_HEADER: String = "id\tkind\ttext\tfirst_seen_build"
+const LAST_SEEN_PATH: String = "res://.godot/godot-director/signatures-last-seen.tsv"
 const SIGNATURE_FORMAT: String = "^sig-[0-9a-f]{8}$"
 const RUN_FOLDER: String = "^([a-z0-9_]+)-(\\d+)-(\\d{8}-\\d{6})(?:-(\\d\\d+))?(-replay)?(?:-(\\d\\d+))?$"
 const UNVERSIONED: String = "unversioned"
@@ -495,37 +501,76 @@ func _signature(kind: String, normal_text: String) -> String:
 	return "sig-" + ("%s|%s" % [kind, normal_text]).md5_text().substr(0, 8)
 
 
-## playtesting/signatures.tsv: adds the signatures this review found, and moves the last seen build
-## of those it knew. Other lines stay as they are.
+## playtesting/signatures.tsv: adds the signatures this review found that it doesn't have, and
+## writes it only then. The last seen build of each one found goes to the gitignored sidecar.
 func _update_signatures(findings: Array[Dictionary], build: String) -> void:
-	var lines: PackedStringArray = PackedStringArray()
-	if FileAccess.file_exists(SIGNATURES_PATH):
-		lines = FileAccess.get_file_as_string(SIGNATURES_PATH).replace("\r", "").split("\n")
-		while not lines.is_empty() and lines[lines.size() - 1].is_empty():
-			lines.remove_at(lines.size() - 1)
-	var changed: bool = false
-	if lines.is_empty():
-		lines.append(TSV_HEADER)
-		changed = true
-	var at: Dictionary = {}
-	for index: int in lines.size():
-		var cells: PackedStringArray = lines[index].split("\t")
-		if cells.size() >= 5 and not lines[index].begins_with("#"):
-			at[cells[0]] = index
+	var lines: PackedStringArray = _read_lines(SIGNATURES_PATH)
+	var known: Dictionary = {}
+	var old_format: bool = false
+	for line: String in lines:
+		var cells: PackedStringArray = line.split("\t")
+		if line.begins_with("#") or cells.size() < 4:
+			continue
+		if cells[0] == "id":
+			old_format = cells.size() >= 5
+		else:
+			known[cells[0]] = cells
+	var last_seen: Dictionary = _read_last_seen()
+	var added: PackedStringArray = PackedStringArray()
 	for finding: Dictionary in findings:
 		var sig: String = str(finding["signature"])
-		if at.has(sig):
-			var cells: PackedStringArray = lines[int(at[sig])].split("\t")
-			if cells[4] != build:
-				cells[4] = build
-				lines[int(at[sig])] = "\t".join(cells)
-				changed = true
-		else:
-			lines.append("\t".join([sig, str(finding["kind"]), str(finding["text"]), build, build]))
-			changed = true
-	if changed:
+		last_seen[sig] = build
+		if not known.has(sig):
+			known[sig] = PackedStringArray()
+			added.append("\t".join([sig, str(finding["kind"]), str(finding["text"]), build]))
+	if not added.is_empty():
+		var out: PackedStringArray = PackedStringArray()
+		if lines.is_empty():
+			out.append(TSV_HEADER)
+		for line: String in lines:
+			var cells: PackedStringArray = line.split("\t")
+			if old_format and not line.begins_with("#") and cells.size() >= 5:
+				# The old last_seen_build column moves to the sidecar, unless this clone knows a newer one.
+				if cells[0] != "id" and cells[4] != "" and not last_seen.has(cells[0]):
+					last_seen[cells[0]] = cells[4]
+				cells = cells.slice(0, 4)
+				line = "\t".join(cells)
+			out.append(line)
+		out.append_array(added)
 		DirAccess.make_dir_recursive_absolute(SIGNATURES_PATH.get_base_dir())
-		_write(SIGNATURES_PATH, "\n".join(lines) + "\n")
+		_write(SIGNATURES_PATH, "\n".join(out) + "\n")
+	if not findings.is_empty():
+		_write_last_seen(last_seen)
+
+
+## The lines of a text file, without a trailing empty one; empty when there is no file.
+func _read_lines(path: String) -> PackedStringArray:
+	if not FileAccess.file_exists(path):
+		return PackedStringArray()
+	var lines: PackedStringArray = FileAccess.get_file_as_string(path).replace("\r", "").split("\n")
+	while not lines.is_empty() and lines[lines.size() - 1].is_empty():
+		lines.remove_at(lines.size() - 1)
+	return lines
+
+
+## The sidecar: signature -> the build it was last seen in, on this clone.
+func _read_last_seen() -> Dictionary:
+	var result: Dictionary = {}
+	for line: String in _read_lines(LAST_SEEN_PATH):
+		var cells: PackedStringArray = line.split("\t")
+		if cells.size() >= 2 and not line.begins_with("#"):
+			result[cells[0]] = cells[1]
+	return result
+
+
+func _write_last_seen(last_seen: Dictionary) -> void:
+	var ids: Array = last_seen.keys()
+	ids.sort()
+	var out: PackedStringArray = PackedStringArray(["# Godot Director: the build each signature in playtesting/signatures.tsv was last seen in, on this clone"])
+	for id: Variant in ids:
+		out.append("%s\t%s" % [id, last_seen[id]])
+	DirAccess.make_dir_recursive_absolute(LAST_SEEN_PATH.get_base_dir())
+	_write(LAST_SEEN_PATH, "\n".join(out) + "\n")
 
 
 ## --check: the signature must be in the file; present or absent in this log decides the exit code.
@@ -538,9 +583,12 @@ func _check(analysis: Dictionary) -> int:
 		printerr(FAIL_TAG + "%s isn't in playtesting/signatures.tsv (a review adds the signatures it finds)" % _check_arg)
 		return 2
 	var cells: PackedStringArray = known.split("\t")
+	var last: String = str(_read_last_seen().get(_check_arg, cells[4] if cells.size() >= 5 else ""))
 	var where: String = "%s · build %s · %s" % [_shown(str(analysis["path"]).get_base_dir()), analysis["build"],
 		"scenario " + str(analysis["scenario"]) if not str(analysis["scenario"]).is_empty() else "played by a person"]
-	var history: String = "%s: %s · first seen in build %s, last seen in build %s" % [cells[1], cells[2], cells[3], cells[4]]
+	var history: String = "%s: %s · first seen in build %s" % [cells[1], cells[2], cells[3]]
+	if not last.is_empty():
+		history += ", last seen in build %s" % last
 	for finding: Dictionary in (analysis["findings"] as Array):
 		if str(finding["signature"]) == _check_arg:
 			print(TAG + "check %s: PRESENT in %s (%dx, first at %s) · %s" % [_check_arg, where, int(finding["count"]),

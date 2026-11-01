@@ -7,6 +7,12 @@
 #   bash tools/check.sh --fingerprint   print the fingerprint of the current files (for hooks)
 #   bash tools/check.sh --jobs N        run in N Godot processes at once (N or auto; 1 is serial); autoplay in the check takes one of them
 #   bash tools/check.sh --import        run the import pass even when no imported file changed
+#   bash tools/check.sh --only tests/test_x.gd   run just that test file (repeatable): the import
+#                                       pass if needed, then its tests, under the same time limit.
+#                                       No secrets scan, load pass, screen rules, lint, autoplay or
+#                                       check.local.sh, and nothing is recorded for --if-changed, so
+#                                       the full check still decides done. Use it while building
+#                                       instead of running Godot yourself.
 # Exit codes: 0 = pass · 1 = fail · 3 = couldn't run (Godot missing or older than 4.5, a gitleaks that
 # is installed but too old or unable to scan, or a Godot run that timed out: the report names the test file it was in)
 #
@@ -55,22 +61,44 @@
 # wait for debugger input); raise the ones that matter to Error in project.godot.
 
 set -u
+caller_dir="$(pwd)"
 cd "$(dirname "$0")/.." || exit 3
+root_dir="$(pwd)"
+nl="
+"
 mode=""
 jobs_arg=""
 force_import=0
+only=""   # --only: the test files, one per line, relative to the project
+# only_add <path>: a test file named from the caller's folder, from the project root or as res://.
+only_add() {
+  local path="${1#res://}" full
+  case "$path" in
+    /*|[A-Za-z]:*) full="$path" ;;
+    *) if [ -f "$caller_dir/$path" ]; then full="$caller_dir/$path"; else full="$root_dir/$path"; fi ;;
+  esac
+  if [ ! -f "$full" ]; then echo "check: --only: no such file: $1"; exit 3; fi
+  full="$(cd "$(dirname "$full")" && pwd)/$(basename "$full")"
+  case "$full" in
+    "$root_dir"/*.gd) only="$only${full#"$root_dir"/}$nl" ;;
+    *) echo "check: --only takes a .gd test file inside the project, not $1"; exit 3 ;;
+  esac
+}
 while [ $# -gt 0 ]; do
   case "$1" in
     --jobs) jobs_arg="${2:-}"; [ $# -gt 1 ] && shift ;;
     --jobs=*) jobs_arg="${1#--jobs=}" ;;
     --import) force_import=1 ;;
+    --only)
+      if [ $# -lt 2 ]; then echo "check: --only needs a test file: bash tools/check.sh --only tests/test_x.gd"; exit 3; fi
+      only_add "$2"; shift ;;
+    --only=*) only_add "${1#--only=}" ;;
     *) mode="$1" ;;
   esac
   shift
 done
+if [ -n "$only" ] && [ -n "$mode" ]; then echo "check: --only runs on its own, not with $mode"; exit 3; fi
 state_dir=".godot/godot-director"
-nl="
-"
 GITLEAKS_MIN_DEFAULT="8.18.0"
 
 # cfg_value <section> <key>: a value from tools/check.cfg, without quotes or a trailing comment.
@@ -367,6 +395,54 @@ silent_exit() {
 }
 # exit_quiet <what> <status> <log>: the line for a process that exited non-zero and printed no error.
 exit_quiet() { echo "check: $1 exited with $(exit_text "$2") and printed no error; see $3"; }
+
+# --- one test file (--only) --------------------------------------------------------------------
+# The import pass when needed, then the named test files in one Godot run. Nothing is recorded for
+# --if-changed and no test times are kept, so only a full run can say PASS for the project.
+if [ -n "$only" ]; then
+  only_shown="$(printf '%s' "$only" | tr '\n' ' ' | sed 's/ $//')"
+  status=0
+  if [ "$force_import" -eq 1 ] || ! import_skip; then
+    run_godot "$state_dir/import.log" --headless --path . --import
+    status=$?
+    import_record "$status"
+  fi
+  if [ "$status" -eq 124 ]; then echo "check: --only: the import pass timed out after ${limit} s"; exit 3; fi
+  if [ "$status" -ne 0 ]; then
+    write_allow "$state_dir/import.log"
+    scan "$error_pattern" "$state_dir/import.log"
+    echo "check: --only: the import pass exited with $(exit_text "$status") (see $state_dir/import.log)"
+    echo "check: FAIL ($only_shown)"
+    exit 1
+  fi
+  set --
+  while IFS= read -r path; do
+    [ -n "$path" ] && set -- "$@" --only "$path"
+  done <<ONLY_FILES
+$only
+ONLY_FILES
+  only_log="$state_dir/only.log"
+  run_godot "$only_log" --headless --path . --script tools/check.gd -- "$@"
+  status=$?
+  if [ "$status" -eq 124 ]; then
+    timed_out_in "$only_shown" "$only_log"
+    echo "check: couldn't run to the end ([tests] timeout in tools/check.cfg, or CHECK_TIMEOUT)"
+    exit 3
+  fi
+  write_allow "$only_log"
+  errors="$(scan "$error_pattern" "$only_log")"
+  clean "$only_log" | sed -n 's/^GDIR-NOTE: /check: note: /p'
+  tests="$(clean "$only_log" | sed -n 's/^GDIR-TESTS: //p' | tail -n 1)"
+  if [ "$status" -ne 0 ] || [ -n "$errors" ] || [ -z "$tests" ]; then
+    [ -n "$errors" ] && printf '%s\n' "$errors"
+    [ -z "$errors" ] && [ "$status" -ne 0 ] && exit_quiet "tools/check.gd" "$status" "$only_log"
+    echo "check: FAIL ($only_shown; log in $only_log)"
+    exit 1
+  fi
+  [ "$tests" = "1" ] && tests="1 test" || tests="$tests tests"
+  echo "check: PASS ($only_shown: $tests passed; only these files, so run the full check before you report done)"
+  exit 0
+fi
 
 # --- 0. secrets (gitleaks, when installed) ------------------------------------------------------
 # gitleaks is optional, so a game needs no extra install. Not installed: one note, and the check goes
