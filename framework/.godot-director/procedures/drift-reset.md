@@ -49,7 +49,7 @@ Commit after the human approves the revised GDD.
 
 ## 4. Plan the rebuild
 1. Compare the approved GDD with `as-built.md`. Each difference is work: code that follows a rejected reading, a missing rule, a rule in the wrong place.
-2. Turn the work into TASKS.md items in the format in `.godot-director/tasks.md`, planned in stages as `design.md` › Record each decision describes. Each item's `Touches` names every file it may change, and its `GDD:` names the revised heading. A rule the check wouldn't catch (step 1) gets a `(test)` outcome where it can have one.
+2. Turn the work into TASKS.md items in the format in `.godot-director/tasks.md`, planned in stages as `design.md` › Record each decision describes. Each item's `Touches` names every file it may change, its `GDD:` names the revised heading and, with user stories on, its `Stories:` the stories it serves. A rule the check wouldn't catch (step 1) gets a `(test)` outcome where it can have one.
 3. Write `plan.md`: the item IDs in build order, each with the difference from `as-built.md` it removes.
 4. Commit TASKS.md and `plan.md`, then hand over: the rebuild runs through `next-task.md` as usual.
 

@@ -1,7 +1,7 @@
 <!-- Godot Director · framework-owned: replaced on upgrade. -->
 # Function check
 
-Prepare or process a function check: a human verifies, item by item, that built rules work as written. A playtest asks how the game feels; a function check asks whether each rule works. `(test)` outcomes are proven by tests, `(check)` outcomes by commands the agent ran and `(autoplay)` outcomes by scenarios it played, so a function check covers the rest: `(play)` outcomes, and bug fixes that have no regression test.
+Prepare or process a function check: a human verifies, item by item, that built rules work as written and, in a game that uses user stories, that the stories behind them are still right. A playtest asks how the game feels; a function check asks whether each rule works. `(test)` outcomes are proven by tests, `(check)` outcomes by commands the agent ran and `(autoplay)` outcomes by scenarios it played, so a function check covers the rest: `(play)` outcomes, and bug fixes that have no regression test.
 
 The request is `prepare` (the default), `process`, or `all` (a full regression round).
 
@@ -21,6 +21,8 @@ The request is `prepare` (the default), `process`, or `all` (a full regression r
    ## Movement
    - **T12** Holding Sprint makes the stamina bar fall. *How:* start a run, hold Shift.
      - [ ] Works   - [ ] Broken / missing
+     - **US-3** As a player I sprint past danger and feel my stamina run low, so I choose when to run.
+       - [ ] Still right   - [ ] Needs a change
      - Notes:
 
    ## Pre-verified by autoplay
@@ -30,6 +32,7 @@ The request is `prepare` (the default), `process`, or `all` (a full regression r
    - Leave out the `Pre-verified by autoplay` section when no item has one; it has no boxes.
    - Write each item as what the player sees.
    - Add a *How:* hint when reaching the state isn't obvious. Mention dev tools if the project has them.
+   - With user stories on, under each item's ticks, the stories its `Stories:` names, word for word from `design/user-stories.md`, each with its own ticks (`design.md` › Still right? in a playtest or function check). A story that several items in the round serve appears once, under the first. An item with `Stories: (none)`, or a pre-verified one, gets none, and a story that's no longer in the file is left out. With them off, there are no story lines.
    - Leave nothing for the tester to copy or format.
    - The entry for a done `UI:` item asks the human to judge the screen against their drawing, and links the compare image:
      ```
@@ -42,8 +45,9 @@ The request is `prepare` (the default), `process`, or `all` (a full regression r
 ## Process
 1. **Works:** nothing to record; the ticked file is the record.
 2. **Broken:** make a `B` item.
-   - Take the repro from the notes, and set `Found in:` to the file.
+   - Take the repro from the notes, set `Found in:` to the file, and, with user stories on, take `Stories:` from the item it was found under.
    - Judge the severity from the notes: `high` if it crashes or blocks play, `low` if it's cosmetic, `med` otherwise.
    - If the notes say the rule itself should change, it's a design question instead: offer options (`design.md`), or add an Open Question.
 3. **Not ticked:** leave it. It comes back in the next round.
-4. **Finish:** under the header, add `**Processed:** YYYY-MM-DD → B7, Q9`. Commit the file and the new items as `docs: process function check YYYY-MM-DD` after the human approves.
+4. **Stories** (with user stories on): record each story's ticks in `design/user-stories.md` as `design.md` › Still right? in a playtest or function check says.
+5. **Finish:** under the header, add `**Processed:** YYYY-MM-DD → B7, Q9, US-2` (the new items and questions, and the corrected stories). Commit the file, the new items and the stories as `docs: process function check YYYY-MM-DD` after the human approves.

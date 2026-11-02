@@ -9,6 +9,7 @@ Read this before adding or editing an item.
 - Touches: scripts/systems/stamina.gd, data/stamina.tres (+drain_rate)
 - Done when: drains drain_rate per second (test) · the stamina bar falls while sprinting (play)
 - GDD: Movement › Sprint
+- Stories: US-3
 ```
 
 - **Heading.** It reads `ID · title · status · size · owner`, and a bug adds `· high|med|low`. New IDs (`T<n>`, `B<n>`, `R<n>`) come from the `Next IDs` line, which you then bump. If the line has no `R` counter yet, add `· R1`. IDs are never reused.
@@ -25,6 +26,7 @@ Read this before adding or editing an item.
 - **`Touches`.** The files expected to change. Mark new files `(new)` and schema fields `(+field)`.
 - **`Done when`.** 1-3 observable outcomes, each tagged `(test)`, `(check)`, `(autoplay)` or `(play)` (see `rules.md` › Doing the work). Naming `Q<n>` means an open question gates the real behaviour.
 - **`GDD:`.** The heading(s) the item implements, or `(none)` for items that aren't about the design.
+- **`Stories:`.** Only in a game that uses user stories (AGENTS.md › Project rules says `User stories: on`); with them off, items need none, and lines left from when they were on are ignored. The user stories the item serves (`US-2, US-5`, from `design/user-stories.md`), or `(none)` for foundation, tooling and infrastructure, which change nothing a player does. A feature item names at least one; one with no story yet gets one drafted before it is built (`procedures/design.md` › User stories). A bug names the story whose behaviour it restores, or `(none)`. A research item has none.
 - **`UI:`** (optional). `design/ui/<screen>.md`, the screen spec, for an item that builds or changes a screen (`procedures/ui-design.md`). The item builds to the spec and names its elements as the spec does. A `UI:` item sized `L` or `XL` is split per screen.
 - **Bugs.** Instead of `Done when`, a bug has `Repro: steps → expected / actual` and `Found in:` (a playtest file, an item ID or `ad hoc`). It's done when the repro no longer happens.
 - **Research.** A research item (`R<n>`) answers one question and changes no code. It looks like this:

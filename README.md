@@ -61,7 +61,7 @@ The plugin installs the latest release. Then open a new Claude Code session in y
 Either way, onboarding works out whether this is a new game, an existing game, a Godot Director 1.x project to migrate, or an upgrade. It then:
 1. installs the files and finds your Godot;
 2. interviews you (new game) or reads the existing game, or reads the Game Design Document you wrote yourself in `design/director-gdd.md` (an alternative or an addition; it adds context for everything that follows);
-3. agrees with you who owns what;
+3. agrees with you who owns what, and whether the game uses user stories;
 4. ends with one commit for you to approve.
 
 Afterwards, restart Claude Code so the new commands load. Each new clone of the game later needs one command: `bash tools/setup-clone.sh`.
@@ -82,7 +82,8 @@ Only Godot Director's own files are replaced, and your edits to them are kept. W
 | "Do the next task" (`/next-task`) | Builds the next ready item (high-severity bugs first), proves it with the check, updates the records, and asks you to approve the commit. |
 | "Do the next 3 tasks", "Work through the queue", "Grab tasks until you're blocked" | The same, item after item, committing each without pausing, until one needs you. |
 | "Which open questions block development?" (`/design questions`) | Ranks the open design questions by what they unblock, with options and a recommendation for each. |
-| "Let's brainstorm {topic}" (`/design {topic}`) | A design session. Your decisions become GDD text, decision-log lines and task items. |
+| "Let's brainstorm {topic}" (`/design {topic}`) | A design session. Your decisions become GDD text, decision-log lines, user stories (if the game uses them) and task items. |
+| "Validate the user stories" (`/design validate the stories`) | In a game that uses user stories: you confirm, correct or drop each story the recently built items served, and each one still unconfirmed. `/next-task` proposes it every 10 built items (`tools/check.cfg` › `[stories] every`); you can decline. Each playtest and function check also asks whether the stories behind what it covers are still right. |
 | "Research how other games handle {topic}", "What licence does this plugin use?" (`/research {question}`) | A read-only researcher looks into one question in a fresh context and saves a dated note in `design/research/`: the conclusion, the options, the sources with a confidence, and a recommendation. It informs; you decide. A design session asks it for facts it doesn't have, and you can queue a research item (`R1`, `R2`, ...) for later. |
 | "Export the game", "Make a Web build" (`/export`) | Exports every export preset headless with the Godot your clone already knows, after checking the export templates are installed, into the gitignored `builds/` folder, and reports what it produced. Onboarding asks which platforms you ship to and where exports run (this machine, a build container, or a hosted service such as GitHub Actions); skip it and the GDD gets an open question, so `/design Q{n}` sets it up later. |
 | "Release the game", "Push a build to UAT", "Promote to production" (`/release`) | Exports the presets, then runs the upload command you supplied for each preset to its UAT branch or channel (`release.cfg` names the commands and the CI secrets they read; Godot Director knows no store). It goes to production only when you ask, with the check passing. `.godot-director/templates/release-workflow.yml` is a GitHub Actions workflow that exports on every change, uploads to UAT from `main`, and runs production behind a protected Environment you approve. Onboarding asks for the commands and secret names, or you skip it and the GDD gets an open question. |
@@ -98,7 +99,7 @@ Only Godot Director's own files are replaced, and your edits to them are kept. W
 you play, or have an idea
         │
         ▼
-design session ── options + a recommendation ── you decide ──► GDD + decisions.md + TASKS.md items
+design session ── options + a recommendation ── you decide ──► GDD + decisions.md + TASKS.md items (+ user stories)
         │
         ▼
 next task ── builds the next ready item ── tests ── bash tools/check.sh ──► commit (you approve)
@@ -130,9 +131,10 @@ your-game/
 ├── design/gdd.md               the game's current design, and Open Questions
 ├── design/director-gdd.md      a GDD template for you to fill in, in your own words (optional); onboarding reads it first and never edits it
 ├── design/decisions.md         why: one line per design decision
+├── design/user-stories.md      if the game uses user stories: whom it's for and why each feature is built, confirmed by you; each feature item names the ones it serves
 ├── design/research/            dated research notes, one per topic; the decision line links to its note
 ├── playtesting/TEMPLATE.md     playtest template, one section per core loop
-├── tools/check.cfg             check settings: screen folders, folders to skip, whether the check plays smoke
+├── tools/check.cfg             check settings: screen folders, folders to skip, whether the check plays smoke, the stories validation cadence
 ├── .gitleaks.toml              gitleaks settings for the check and the hook: the built-in rules, and the .godot/ cache allowlisted
 ├── tools/ui_screens.gd         the screen catalog: every screen, how to open it in a state, the overlays it shows
 ├── tools/ui_capture.cfg        capture sizes and seed, lint thresholds, which screens the check lints, verify tolerance
@@ -158,6 +160,8 @@ your-game/
 ├── tools/dev_menu_base.gd      the dev menu: a tab per system with its actions and hidden values, and the play log's tail
 ├── tools/setup-clone.sh        per clone: finds Godot, installs the pre-commit hook
 ├── tools/release.sh            runs the upload commands release.cfg names, per export preset
+├── tools/stories.sh            whether the user stories are due for validation (says so when the game doesn't use them)
+├── .godot-director/templates/  the release workflow, and the user stories file a game gets when it turns them on
 ├── .githooks/pre-commit        runs the check before commits that touch code, scenes or data, and scans every commit for secrets (with gitleaks)
 ├── playtesting/README.md       how playtests and function checks work
 │
@@ -177,6 +181,7 @@ The full rules are in `.godot-director/rules.md`, and the assistant reads them e
 - **Rules live in systems, not screens.** They sit in plain classes that tests can build directly. Saves are JSON in `user://`, never Resources, which can run scripts when loaded.
 - **Everything is logged.** Every player action, turn step, view change and blocked progress button writes a line to the play log, a `.log` for you and a `.jsonl` for tools per run, and tests assert on those lines. The log ships in every build, never leaves the machine, and leaves out the user name, the home path and the install id.
 - **Every action is drivable.** Every player action is offered to autoplay while it's legal, through a key, a pad button or a uniquely named control, so the game can be played without a person.
+- **User stories, if you want them.** Onboarding asks once, and recommends neither: they tell the AI why each thing is built and keep it aligned with your design, and some developers prefer the GDD alone. With them on, `design/user-stories.md` holds one line per thing a player does and why ("As a player I ..., so ..."), under the GDD's pillars and systems, every feature item names the stories it serves, and you confirm them in design sessions, playtests, function checks and every 10 built items. With them off, nothing about them appears or asks.
 - **A dev menu, if you want one.** Onboarding asks, and recommends F12 in debug builds. A tab per system shows its `debug_*` actions and the values only code can see (`debug_inspect()`), plus the play log's tail, so an assistant can look inside the game. You choose how it is enabled: in game (the key, debug builds), a setting (`debug/dev_menu`), a command-line flag (`-- --dev-menu`), or none.
 - **Done means the check passes,** and the work is committed only with your approval.
 - **Guarded git:** in Claude Code, force-push, `reset --hard`, `--no-verify` and other work-destroying commands are blocked by a hook that checks the whole command line. It's a strong safety net, not a guarantee.

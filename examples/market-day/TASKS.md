@@ -22,36 +22,42 @@ Milestones, the work queue and bugs: the only place work is tracked. Item format
 - Touches: project.godot, tools/check.cfg
 - Done when: `bash tools/check.sh` exits 0 after deleting `.godot/` (check)
 - GDD: (none)
+- Stories: (none)
 
 ### T2 · Grain price moves each day · done · M · agent
 - Depends on: T1
 - Touches: scripts/systems/market.gd (new), scripts/resources/market_config.gd (new), data/market_config.tres (new), tests/test_market.gd (new)
 - Done when: the price stays within ±swing of the base (test) · the same seed gives the same prices (test) · the shop shows today's price (play)
 - GDD: Systems › Market
+- Stories: US-1, US-4
 
 ### T3 · Shop screen: buy, sell, next day · done · M · agent
 - Depends on: T2
 - Touches: scripts/autoload/run_state.gd (new), scripts/ui/shop_screen.gd (new), scenes/shop_screen.tscn (new), project.godot
 - Done when: buying needs enough gold (test) · each button updates the status line at once (play)
 - GDD: Systems › Shop screen
+- Stories: US-1, US-2
 
 ### T4 · The run ends after day 5, won or lost · done · S · agent
 - Depends on: T3
 - Touches: scripts/systems/market.gd (+is_over, +is_won), scripts/ui/shop_screen.gd, tests/test_market.gd
 - Done when: the run is over after the last day and won at the target (test) · after day 5 the screen says whether you won (play)
 - GDD: Win and Loss
+- Stories: US-5
 
 ### B1 · Buy stays clickable when you can't afford grain · todo · S · agent · low
 - Repro: start a run, buy until gold is below the price → expected: Buy is disabled / actual: Buy looks enabled and does nothing
 - Found in: playtesting/2026-09-28-playtest.md
 - Touches: scripts/ui/shop_screen.gd
 - GDD: Systems › Shop screen
+- Stories: US-2
 
 ### T5 · Show yesterday's price next to today's · todo · S · agent
 - Depends on: T3
 - Touches: scripts/ui/shop_screen.gd, scripts/autoload/run_state.gd (+previous_price)
 - Done when: from day 2 on, the status line shows yesterday's price (play)
 - GDD: Systems › Shop screen
+- Stories: US-3
 
 ### T6 · Tune the market values · todo · (none) · human
 - Depends on: T5

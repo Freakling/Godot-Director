@@ -104,12 +104,13 @@ Every project has `design/director-gdd.md`: the human's own Game Design Document
    [rendering]
    renderer/rendering_method="forward_plus"
    ```
-2. **A short design interview,** in short rounds, after reading the human's document if they filled one (above): ask only what it leaves open, and confirm what you took from it. For each question, give options with a recommendation and let the human pick:
+2. **A short design interview,** in short rounds, after reading the human's document if they filled one (above): ask only what it leaves open, and confirm what you took from it. For each question, give options with a recommendation and let the human pick (question 5 has none: User stories, below):
    1. pitch, genre, and the feeling the game should give;
    2. 3-5 Design Pillars;
    3. the core loop: moment to moment, session, run or campaign, and starting conditions;
-   4. platforms, input, 2D or 3D, camera, art direction and target aspect ratios.
-3. **Record it.** Write the answers into the GDD as the current design, and add a line to `design/decisions.md` for each. Anything undecided becomes a `Q<n>`.
+   4. platforms, input, 2D or 3D, camera, art direction and target aspect ratios;
+   5. whether the game uses user stories (User stories, below).
+3. **Record it.** Write the answers into the GDD as the current design, and add a line to `design/decisions.md` for each. Anything undecided becomes a `Q<n>`. Question 5's answer goes to AGENTS.md › Project rules instead (User stories, below).
 4. **Seed TASKS.md,** each item with Size, `Touches` and tagged `Done when`: the folder layout, a first autoload for game state, a first rule class with a test, and the first playable grey-box scene set as the main scene, with the play log wired into its run (`PlayLog.begin_run()`, and `log_snapshot()` where the player may act) and the autoplay adapter filled in (`tools/autoplay_adapter.gd`: start a run with a seed, every player action in `list_actions()`, `state()`), so `bash tools/autoplay.sh smoke` plays it. A new game's `tools/check.cfg` starts with `[autoplay]` on (`check_in_check=true`, `enforce=["smoke"]`): the check plays smoke headless, and skips it with a note while the adapter is still the seed's, so a game with nothing registered yet passes.
 
 ### Existing game
@@ -151,9 +152,15 @@ Rewrite the old files into the new format (`$GDIR/project/` shows the target sha
 
 Finally, search the documents for leftovers and fix them. Use `git grep -n -e … -- '*.md'`, which skips an excluded Godot Director folder. Search for `§`, `SYSTEMS.md`, `SETUP.md`, `FUNCTION_CHECK`, `Cowork`, `needs-validation`, `in-progress:`, `persona`, `dev-small`, `.promptx`, `**Version:**`, `--headless --path . --quit` and `{{GODOT_BIN}}`.
 
+### User stories (fresh start, existing game and migrate)
+Ask once whether the game uses user stories: in the design interview for a fresh start, and here for an existing or migrated game. Skip the question when AGENTS.md › Project rules already has a `User stories:` line (a full upgrade, say): the human has answered. Say in a sentence or two what they are for: one line per thing a player does and why ("As a player I sell my catch at the dock at sunset, so each evening ends with a clear result"), which tells the AI why each thing is built and keeps it aligned with the design; some developers prefer the GDD alone. Offer both answers without a recommendation: it's the human's taste.
+- Record the answer in AGENTS.md › Project rules in this exact format, `- User stories: on` or `- User stories: off`, since `tools/stories.sh` reads it.
+- **On:** once the GDD and TASKS.md are written, follow `.godot-director/procedures/design.md` › User stories › Turning them on. A fresh start drafts them from the interview, for the human to confirm with the GDD; an existing or migrated game gets them written from the code, unconfirmed. Tell the human the stories are validated in each playtest and function check, and every 10 built items (`tools/check.cfg` › `[stories] every`), which `/next-task` proposes.
+- **Off:** nothing else changes: there is no `design/user-stories.md`, no item has `Stories:`, and nothing asks again. They can turn them on later ("turn on user stories").
+
 ## 6. Project facts and settings
 - **AGENTS.md:** name, pitch, Godot version, dimension, platforms and rendering. Fill in the Layout table from the real folders (delete rows that don't apply), and the Architecture table (from step 5).
-- **`tools/check.cfg`:** set `[screens] dirs` to the real UI folders, and `known` as in step 5. Use `allow_writes_to` only for an autoload a screen legitimately edits, such as Settings, and ask the human first. Put third-party folders in `[scan] skip`. `[autoplay]` starts on for a new game and off for an existing or migrated one (step 8 of Existing game).
+- **`tools/check.cfg`:** set `[screens] dirs` to the real UI folders, and `known` as in step 5. Use `allow_writes_to` only for an autoload a screen legitimately edits, such as Settings, and ask the human first. Put third-party folders in `[scan] skip`. `[autoplay]` starts on for a new game and off for an existing or migrated one (step 8 of Existing game). `[stories] every`, in a game that uses user stories, is how many built items after the last validation of the stories `/next-task` proposes the next one (`.godot-director/procedures/design.md` › Validate the stories); the seed says 10, and the human can decline a proposal. Leave it unless the human wants them validated more or less often.
 - **`project.godot`:** it has `untyped_declaration` (step 5); `settings/gdscript/always_track_call_stacks=true` under `[debug]`, so the play log names the script line of an error in release builds too; and the `PlayLog` autoload first under `[autoload]`: `PlayLog="*res://tools/play_log.gd"` (the seed, which extends the framework's `tools/play_log_base.gd`). If the game already has its own `PlayLog`, or another play log, keep it registered as it is and leave the seed unregistered; add an item: "Migrate PlayLog to extend tools/play_log_base.gd, keeping its line formats" (`HH:MM:SS T<turn> [category] text`, so existing logs stay readable). For an existing or migrated game, also add an item to wire the play log: fill the seed's hooks, call `begin_run()` or `continue_run()`, `log_snapshot()` where the player may act, and log each player action from its system (`rules.md` › Everything is logged).
 - **Exports.** Offer the export step: the target platforms and where exports run (this machine, a build container, or a hosted service such as GitHub Actions). Follow `.godot-director/procedures/export.md` › Set up exports, in its voice: short rounds, options with a recommendation. Skip what the project already answers: an existing `export_presets.cfg` and the platforms in the GDD. The human can skip the step. A skip adds the open question and the "Set up exports" item that `export.md` › "When the human skips it" describes, so `/design Q<n>` runs the step later and `/next-task` builds the setup.
 - **Release.** Offer the release step once exports are set up: the command that uploads each preset's build to a platform's UAT branch or channel, the command for production, and the names of the CI secrets the commands need (values are never written in the repo or the chat). Follow `.godot-director/procedures/release.md` › Set up release, in its voice. The human can skip the step. A skip adds the open question and the "Set up release" item that `release.md` › "When the human skips it" describes.
@@ -221,7 +228,7 @@ If the loops aren't decided yet, leave the placeholders, and add an agent item "
 
 ## 9. Verify, commit, hand off
 1. Run `bash tools/check.sh` and report the result.
-2. Search for `{{` with `git grep -n "{{" -- '*.md'`. Only postponed template loops may remain, and only if an item exists for them. `git ls-files -o -i --exclude-standard -- '*.gdir-new' | grep '\.gdir-new$'` must print nothing (the grep drops nested clones, which `ls-files` lists as directories).
+2. Search for `{{` with `git grep -n "{{" -- '*.md' ':!.godot-director'` (the framework's own procedures and templates hold some). Only postponed template loops may remain, and only if an item exists for them. `git ls-files -o -i --exclude-standard -- '*.gdir-new' | grep '\.gdir-new$'` must print nothing (the grep drops nested clones, which `ls-files` lists as directories).
 3. Walk through the checks in `.godot-director/procedures/align.md`. Its fixes go into the install commit.
 4. List every file created, changed or deleted (`git status`). That includes the `.uid` files Godot 4.4+ creates next to scripts, among them `tools/check.gd.uid`.
 5. **Commit it all in one commit, after the human approves.**
@@ -236,7 +243,7 @@ If the loops aren't decided yet, leave the placeholders, and add an agent item "
 8. **Offer a "Development" section for the game's README:** clone, then `bash tools/setup-clone.sh`, then the commands.
 9. **Tell the human:**
    - what needs their confirmation;
-   - how to use it: "do the next task", "let's brainstorm…", "process my playtest", "prepare a function check", "check the docs are aligned", "research how other games handle…", "export the game", "capture the screens", and, when a pillar has been built two ways, "reset the design drift" (in Claude Code also `/next-task`, `/design`, `/research`, `/export`, `/ui-design`, `/playtest`, `/function-check`, `/align`, `/drift-reset`, `/prune`). Align often, reset when you have to;
+   - how to use it: "do the next task", "let's brainstorm…", "validate the user stories" (in a game that uses them), "process my playtest", "prepare a function check", "check the docs are aligned", "research how other games handle…", "export the game", "capture the screens", and, when a pillar has been built two ways, "reset the design drift" (in Claude Code also `/next-task`, `/design`, `/research`, `/export`, `/ui-design`, `/playtest`, `/function-check`, `/align`, `/drift-reset`, `/prune`). Align often, reset when you have to;
    - with the Claude adapter: to restart Claude Code, because skills, hooks and permissions load when a session starts;
    - to open the project in the Godot editor once, and commit the `.uid` and `.import` files it creates;
    - that every new clone needs `bash tools/setup-clone.sh`.

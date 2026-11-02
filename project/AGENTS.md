@@ -49,4 +49,5 @@ Examples:
   - XL: claude-opus-5-5
 - No git remote: never push.
 - Dev menu: in game (F12, debug builds only)
+- User stories: on
 -->

@@ -16,15 +16,18 @@ The request can be:
 1. **Find items without reading the whole file.** `grep -n '^### ' TASKS.md` lists every heading; then read only the candidates.
 2. **Is the tree clean?** If uncommitted changes from another item are in the working tree, don't start a new one. Ask the human whether to finish that item, commit it, or set it aside with `git stash push -- <paths>`.
 3. **Does the check pass now?** Run `bash tools/check.sh --if-changed`; it's instant after a passing commit. If it fails, say so, and offer the items that would fix it. Build others only if the human says to, telling the builder the failure was there before. A research item changes no code, so skip this for one.
-4. **Items already `in-progress`:**
+4. **Is a stories validation due?** Run `bash tools/stories.sh --due`. Its line counts built items against `tools/check.cfg` › `[stories] every`.
+   - `stories: not due: user stories are off`: the game doesn't use them (AGENTS.md › Project rules); there's nothing to propose.
+   - `stories: due` (the stories in `design/user-stories.md` never validated, or enough items built since their Last validated commit): propose validating them (`design.md` › Validate the stories) with that line, and run it before the next item if the human agrees; the human can decline. In a run of several items, don't stop or ask: carry on picking items, and only name it in the final report.
+5. **Items already `in-progress`:**
    - **Claimed today:** another session may be working on it right now, so ask before touching it.
    - **Older:** a session probably ended mid-task. Read its `Note:`, look at `git status` and `git diff`, then resume it or set it back to `todo`, and say which.
-5. **Candidates** are `agent` items with status `todo` whose `Depends on` items are all `done` (a `Q<n>` there counts once it is no longer in GDD › Open Questions), research items included. IDs missing from TASKS.md are in `TASKS-archive.md`.
-6. **Order:** `high` bugs first, then everything else in file order. File order is the human's priority, so don't reorder.
-7. **Nothing ready?** Report what's blocked and on what (dependencies, `human` items, open questions), and stop.
+6. **Candidates** are `agent` items with status `todo` whose `Depends on` items are all `done` (a `Q<n>` there counts once it is no longer in GDD › Open Questions), research items included. IDs missing from TASKS.md are in `TASKS-archive.md`.
+7. **Order:** `high` bugs first, then everything else in file order. File order is the human's priority, so don't reorder.
+8. **Nothing ready?** Report what's blocked and on what (dependencies, `human` items, open questions), and stop.
 
 ## 2. Claim
-Set the item to `in-progress YYYY-MM-DD` (today).
+Set the item to `in-progress YYYY-MM-DD` (today). With user stories on, a feature item (not a research item) with no story gets one before it is built: draft it and set the item's `Stories:` as `design.md` › User stories says, and name the drafted story in your report. A run of several items doesn't stop for it.
 
 ## 3. Build
 A research item goes to Research items instead, and skips steps 4 and 6.
@@ -65,7 +68,7 @@ Only when `rules.md` › Reviews and model size calls for one, judged from the i
 4. Review again only if the fixes were substantial.
 
 ## 7. Commit and report
-- **Commit** as `rules.md` › Git describes: one commit for the item's paths, including its records. The pre-commit hook is the gate. A research item's paths are its note and TASKS.md, and its message is `docs: <summary> (R3)`. Pause for approval unless the human has said to work autonomously ("do the next N tasks", "work through the queue", "grab tasks until you're blocked"), in which case commit without pausing and include all commits in the final report.
+- **Commit** as `rules.md` › Git describes: one commit for the item's paths, including its records (with `design/user-stories.md` when the claim drafted a story). The pre-commit hook is the gate. A research item's paths are its note and TASKS.md, and its message is `docs: <summary> (R3)`. Pause for approval unless the human has said to work autonomously ("do the next N tasks", "work through the queue", "grab tasks until you're blocked"), in which case commit without pausing and include all commits in the final report.
 - **Report** in a few lines: what changed, the check result, placeholders added, and anything waiting on the human. Mention that the item's `(play)` outcomes, or a bug fix without a regression test, will be in the next function check.
 - **After the commit,** the records hold everything about the item. A new item can start in a fresh session, or after `/clear` in Claude Code, without losing anything.
 
@@ -90,7 +93,7 @@ Repeat steps 1-7 for each item, skipping `human` items as step 1 does. Report on
 
 A finished research item doesn't stop the run: it goes on with the next candidate.
 
-End with the list of items done, the questions that research has made ready for a design call, and what's next.
+End with the list of items done, a stories validation if Pick step 4 found one due, the stories drafted for items that had none (for the human to confirm), the questions that research has made ready for a design call, and what's next.
 
 ## Stopping partway through
 If you must stop before the item is done, add `- Note: <where it stands, what's next>` to the item.
