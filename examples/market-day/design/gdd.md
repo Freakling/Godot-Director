@@ -19,6 +19,8 @@ A five-day grain market in one screen. Each day the price moves; buy low, sell h
 2. **Readable luck:** prices vary, but the player can see enough to make a reasoned bet.
 3. **Two-minute runs:** a whole run fits in a coffee break.
 
+Why each feature is built, and for whom: `design/user-stories.md`.
+
 ## Core Loop
 ### Moment to moment
 Read today's price, then buy or sell grain one sack at a time.

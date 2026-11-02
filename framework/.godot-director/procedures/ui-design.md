@@ -76,7 +76,7 @@ A new project starts with `check_in_check=true` and `enforce=["*"]`. An upgrade 
    - `design/ui/<id>.md` (the template below), replacing superseded content.
    - `design/decisions.md`: one line per real decision, in its format, with `from: drawing director/ui/<id>.excalidraw`.
    - The GDD only when the drawing changed what the screen does (a new action, a removed feature); layout lives in the spec. A point left undecided becomes an open question (`Q<n>`, bump `Next`), and the spec's Open section names it.
-   - `TASKS.md`: one item per screen (split an `L`), with `UI: design/ui/<id>.md`, `Touches`, a tagged `Done when` and the `GDD:` line. The usual outcomes: every element in the spec exists under its unique name and the screen opens without errors `(test)` · the capture is lint-clean at every configured size and matches the spec within tolerance `(check)` · the screen reads as drawn and works by mouse, touch, keyboard and controller where the game supports them `(play)`.
+   - `TASKS.md`: one item per screen (split an `L`), with `UI: design/ui/<id>.md`, `Touches`, a tagged `Done when`, the `GDD:` line and, with user stories on, the `Stories:` line. The usual outcomes: every element in the spec exists under its unique name and the screen opens without errors `(test)` · the capture is lint-clean at every configured size and matches the spec within tolerance `(check)` · the screen reads as drawn and works by mouse, touch, keyboard and controller where the game supports them `(play)`.
 6. **Commit** as `docs: ui <id>` once the human approves, then suggest a fresh session before the next screen (`design.md` › Finish).
 
 ## verify

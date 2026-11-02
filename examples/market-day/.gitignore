@@ -14,6 +14,7 @@
 /tools/test_case.gd
 /tools/setup-clone.sh
 /tools/release.sh
+/tools/stories.sh
 /tools/ui_capture.sh
 /tools/ui_capture.gd
 /tools/ui_catalog.gd

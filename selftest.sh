@@ -485,6 +485,95 @@ for size in XS S M L XL; do
 done
 [ -z "$mismatch" ] && ok "ONBOARDING.md model IDs match refresh-model-sizing.md" \
   || bad "ONBOARDING.md model IDs don't match refresh-model-sizing.md (sizes:$mismatch)"
+# User stories, which onboarding turns on or off: the template (framework-owned, so a game with them
+# off never gets the file) and the example's own file have the header line, the sections and rows in
+# the story format; the item format carries Stories:; the check.cfg seed has the cadence; the rules,
+# the procedures, the settings and the docs name them, each step only with them on; and Market Day
+# uses them, with a Stories: line on every agent item. tools/stories.sh --due is tested under
+# "user stories", with them on, off and unanswered.
+stories_tpl="$src/framework/.godot-director/templates/user-stories.md"
+stories_ex="$src/examples/market-day/design/user-stories.md"
+ex_tasks="$src/examples/market-day/TASKS.md"
+wired=""
+[ -f "$stories_tpl" ] && [ -f "$src/framework/tools/stories.sh" ] && [ -f "$stories_ex" ] || wired="$wired files"
+[ -e "$src/project/design/user-stories.md" ] && wired="$wired project/design/user-stories.md(a seed would reach a game with them off)"
+grep -q '^<!-- Godot Director user stories template · framework-owned' "$stories_tpl" \
+  && [ "$(sed -n 2p "$stories_tpl")" = '# User stories: {{PROJECT_NAME}}' ] || wired="$wired template(header, title)"
+check_stories() { # check_stories <file> <label>: the header line, the sections, the rows, the IDs and the roles
+  local file="$1" label="$2" rows next ids role
+  grep -qE '^\*\*Next ID:\*\* US-[0-9]+ · \*\*Last validated:\*\* (never|[0-9]{4}-[0-9]{2}-[0-9]{2}( at `[0-9a-f]{7,40}`)?)$' "$file" \
+    || wired="$wired $label(Next ID and Last validated)"
+  grep -q '^## The value in one paragraph per role$' "$file" && grep -q '^## Roles$' "$file" || wired="$wired $label(sections)"
+  rows="$(grep -E '^\| US-' "$file")"
+  [ -n "$rows" ] && grep -q '^| ID | Story | Confirmed |$' "$file" || wired="$wired $label(tables)"
+  printf '%s\n' "$rows" | grep -vqE '^\| US-[0-9]+ \| As an? [^|]+ I [^|]+, so [^|]+\. \| ([0-9]{4}-[0-9]{2}-[0-9]{2}|unconfirmed) \|$' \
+    && wired="$wired $label(a row isn't | US-<n> | As a <role> I ..., so ... | <date> or unconfirmed |)"
+  next="$(sed -n 's/^\*\*Next ID:\*\* US-\([0-9]*\) .*/\1/p' "$file")"
+  ids="$(printf '%s\n' "$rows" | sed -n 's/^| US-\([0-9]*\) .*/\1/p')"
+  [ -n "$next" ] && [ -z "$(printf '%s\n' "$ids" | awk -v next_id="$next" '$1 + 0 >= next_id + 0 || seen[$1]++')" ] \
+    || wired="$wired $label(IDs unique and below Next ID)"
+  for role in $(printf '%s\n' "$rows" | sed -n 's/^| US-[0-9]* | As an\{0,1\} \([A-Za-z]*\) I .*/\1/p' | tr 'A-Z' 'a-z' | awk '!seen[$0]++'); do
+    sed -n '/^## Roles$/,/^## [^R]/p' "$file" | tr 'A-Z' 'a-z' | grep -q "^- \*\*$role:\*\*" || wired="$wired $label(role $role not in Roles)"
+  done
+}
+check_stories "$stories_tpl" template
+check_stories "$stories_ex" example
+grep -q '^- User stories: on$' "$src/examples/market-day/AGENTS.md" || wired="$wired example AGENTS.md(rule)"
+gdd_line='Why each feature is built, and for whom: `design/user-stories.md`.'
+grep -qxF "$gdd_line" "$src/examples/market-day/design/gdd.md" && grep -qF "$gdd_line" "$proc/procedures/design.md" || wired="$wired GDD link(example, design.md)"
+no_field="$(awk '/^### / { if (item != "" && !has) printf " %s", item; item = ($0 ~ / · agent( |$)/ && $2 !~ /^R/) ? $2 : ""; has = 0; next }
+  /^- Stories: / { has = 1 } END { if (item != "" && !has) printf " %s", item }' "$ex_tasks")"
+[ -z "$no_field" ] || wired="$wired example TASKS.md(no Stories: on$no_field)"
+for id in $(sed -n 's/^- Stories: //p' "$ex_tasks" | tr ',' '\n' | tr -d ' ' | grep '^US-'); do
+  grep -q "^| $id |" "$stories_ex" || wired="$wired example TASKS.md($id isn't a story)"
+done
+for id in $(grep -E '^\| US-' "$stories_ex" | sed -n 's/^| \(US-[0-9]*\) .*/\1/p'); do
+  grep -qE "^- Stories: (.*[ ,])?$id(,|$)" "$ex_tasks" || wired="$wired example($id served by no item)"
+done
+grep -q '^/tools/stories\.sh$' "$src/examples/market-day/.gitignore" || wired="$wired example .gitignore"
+grep -q '^- Stories: US-[0-9]' "$proc/tasks.md" && grep -q '^- \*\*`Stories:`\.\*\* Only in a game that uses user stories' "$proc/tasks.md" || wired="$wired tasks.md"
+grep -q '^- User stories: on$' "$src/project/AGENTS.md" || wired="$wired project/AGENTS.md(example rule)"
+sed -n '/^\[stories\]$/,/^\[/p' "$src/project/tools/check.cfg" | grep -q '^every=10$' || wired="$wired project/tools/check.cfg"
+grep -q '^| Whom the game is for, and why each feature is built (a game that uses user stories) | `design/user-stories\.md`' "$proc/rules.md" \
+  && grep -q '^- \*\*Why it.s built\.\*\* User stories are the game.s choice' "$proc/rules.md" \
+  && grep -q '`design/user-stories\.md` when a story was drafted for it' "$proc/rules.md" || wired="$wired rules.md"
+for heading in '## User stories' '### Turning them on' '### Validate the stories' '### Still right? in a playtest or function check'; do
+  grep -qxF "$heading" "$proc/procedures/design.md" || wired="$wired design.md($heading)"
+done
+grep -qF 'skip every step about stories in the procedures, and this section except Turning them on, which runs when the human asks for it' "$proc/procedures/design.md" \
+  && grep -q 'bash tools/stories\.sh --due' "$proc/procedures/design.md" && grep -q 'its `Stories:`' "$proc/procedures/design.md" \
+  && grep -qF '.godot-director/templates/user-stories.md' "$proc/procedures/design.md" \
+  && grep -qF -- '- [ ] Still right   - [ ] Needs a change' "$proc/procedures/design.md" || wired="$wired design.md"
+grep -q 'bash tools/stories\.sh --due' "$proc/procedures/next-task.md" && grep -q '\[stories\] every' "$proc/procedures/next-task.md" \
+  && grep -q 'not due: user stories are off' "$proc/procedures/next-task.md" \
+  && grep -q 'With user stories on, a feature item (not a research item) with no story gets one before it is built' "$proc/procedures/next-task.md" \
+  && grep -q 'with `design/user-stories\.md` when the claim drafted a story' "$proc/procedures/next-task.md" || wired="$wired next-task.md"
+grep -qF -- '- [ ] Still right   - [ ] Needs a change' "$proc/procedures/function-check.md" && grep -q '^4\. \*\*Stories\*\* (with user stories on)' "$proc/procedures/function-check.md" \
+  || wired="$wired function-check.md"
+grep -q '`## User stories` section' "$proc/procedures/playtest.md" && grep -q '^6\. \*\*Stories\*\* (with user stories on)' "$proc/procedures/playtest.md" || wired="$wired playtest.md"
+grep -q 'stories no item serves' "$proc/procedures/align.md" && grep -q 'feature items with no story' "$proc/procedures/align.md" \
+  && grep -q 'stories unconfirmed past the cadence' "$proc/procedures/align.md" && grep -q 'bugs with no story' "$proc/procedures/align.md" \
+  && grep -q 'skip it unless AGENTS.md › Project rules says `User stories: on`' "$proc/procedures/align.md" || wired="$wired align.md"
+for file in design align; do
+  grep -q 'were written from the code on <date>, before the game kept user stories\.' "$proc/procedures/$file.md" || wired="$wired $file.md(written from the code)"
+done
+grep -q 'design/user-stories\.md' "$proc/procedures/build.md" || wired="$wired build.md"
+for file in design next-task function-check playtest ui-design drift-reset; do
+  grep -q 'with user stories on\|With user stories on' "$proc/procedures/$file.md" || wired="$wired $file.md(only with them on)"
+done
+grep -qF '"Bash(bash tools/stories.sh --due)",' "$settings" && ! grep -qF '"Bash(bash tools/stories.sh*)"' "$settings" \
+  && ! grep -qF '"Bash(bash tools/stories.sh *)"' "$settings" || wired="$wired settings.json"
+grep -q '^### User stories (fresh start, existing game and migrate)$' "$src/ONBOARDING.md" \
+  && grep -qF '`- User stories: on` or `- User stories: off`' "$src/ONBOARDING.md" \
+  && grep -qF '`.godot-director/procedures/design.md` › User stories › Turning them on' "$src/ONBOARDING.md" \
+  && grep -q '^   5\. whether the game uses user stories' "$src/ONBOARDING.md" && grep -q '`\[stories\] every`' "$src/ONBOARDING.md" \
+  || wired="$wired ONBOARDING.md"
+grep -q 'design/user-stories\.md' "$src/README.md" && grep -q 'tools/stories\.sh' "$src/README.md" \
+  && grep -q 'In a game that uses user stories' "$src/framework/playtesting/README.md" && grep -q 'Still right' "$src/framework/playtesting/README.md" \
+  || wired="$wired README.md, playtesting/README.md"
+grep -q '^- \*\*User stories, if the game wants them\.\*\*' "$src/CHANGELOG.md" || wired="$wired CHANGELOG.md"
+[ -z "$wired" ] && ok "user stories: the template and the example's stories have their header, sections and rows, and Stories:, the cadence, the rules, the procedures (each only with them on), the settings and the docs name them" \
+  || bad "the user stories aren't wired into:$wired"
 
 # --- installer ----------------------------------------------------------------------------------
 echo "installer"
@@ -547,6 +636,12 @@ if [ -f tools/dev_menu_base.gd ] && cut -f2 .godot-director/manifest | grep -q '
   ok "installs the dev menu base and its .gitattributes line, keeping the game's own DevMenu"
 else
   bad "installs the dev menu base and its .gitattributes line, keeping the game's own DevMenu" "$out"
+fi
+if [ -x tools/stories.sh ] && [ -f .godot-director/templates/user-stories.md ] && cut -f2 .godot-director/manifest | grep -q '^tools/stories\.sh$' \
+    && cut -f2 .godot-director/manifest | grep -q '^\.godot-director/templates/user-stories\.md$' && cmp -s design/user-stories.md "$stories_ex"; then
+  ok "installs tools/stories.sh and the user stories template, keeping the game's own stories"
+else
+  bad "installs tools/stories.sh and the user stories template, keeping the game's own stories" "$out"
 fi
 grep -q "Market Day" AGENTS.md && ok "keeps the project's own files" || bad "keeps the project's own files"
 [ -z "$(git status --porcelain)" ] && ok "adds no duplicate .gitignore/.gitattributes lines" || bad "adds no duplicate lines" "$(git status --porcelain)"
@@ -738,6 +833,11 @@ if [ -f "$core_only/design/director-gdd.md" ] && grep -q '^# Game Design Documen
   ok "a new game gets the human-written GDD template, even with --tools none"
 else
   bad "a new game gets the human-written GDD template, even with --tools none" "$out"
+fi
+if [ -x "$core_only/tools/stories.sh" ] && [ -f "$core_only/.godot-director/templates/user-stories.md" ] && [ ! -e "$core_only/design/user-stories.md" ]; then
+  ok "a new game gets tools/stories.sh and the user stories template, and no design/user-stories.md until it turns them on"
+else
+  bad "a new game gets tools/stories.sh and the user stories template, and no design/user-stories.md until it turns them on" "$out"
 fi
 # Installing from a Godot Director folder that is itself a git clone, or sits inside the game.
 gdir_clone="$work/gdir-clone"; cp -R "$src" "$gdir_clone"; rm -rf "$gdir_clone/.git"
@@ -1096,6 +1196,95 @@ guard_write 0 "../director/x (outside the project root)" '../director/x'
 out="$(printf '%s' '{"tool_name":"Edit","tool_input":{"file_path":"director/x"}}' | env -u CLAUDE_PROJECT_DIR bash .claude/hooks/guard-protected.sh 2>&1)"
 got=$?
 if [ "$got" -eq 2 ]; then ok "blocks a relative path against the current directory when CLAUDE_PROJECT_DIR is unset"; else bad "guard-protected without CLAUDE_PROJECT_DIR exit $got, expected 2" "$out"; fi
+
+# --- user stories -------------------------------------------------------------------------------
+echo "user stories"
+# tools/stories.sh --due reads the project rule first: with the stories off, or the rule unanswered (the
+# seed's examples sit in a comment), they are never due. With them on, it counts built items from the
+# commit on the stories file's Last validated line (by its date when that commit isn't in the history),
+# and is due when the stories were never validated. The template stands in for a game's file.
+guard 0 'bash tools/stories.sh --due'
+out="$(bash tools/stories.sh --due 2>&1)"; status=$?
+expect_status "stories --due exits 0 in Market Day, which uses them" 0 "$status" "$out"
+expect_output "and counts by the date of its Last validated line, whose commit isn't in this history" \
+  "^stories: not due: built items since the last validation \(2026-09-28, by its date: its commit isn't in this history\): 0, \[stories\] every = 10; 5 stories, 0 unconfirmed$" "$out"
+_st="$work/stories"; new_repo "$_st"; mkdir -p "$_st/tools" "$_st/design"
+cp "$src/framework/tools/stories.sh" "$_st/tools/"; cp "$src/project/AGENTS.md" "$_st/AGENTS.md"
+cp "$stories_tpl" "$_st/design/user-stories.md"
+out="$(cd "$_st" && bash tools/stories.sh --due 2>&1)"; status=$?
+expect_status "stories --due exits 0 while the game hasn't answered" 0 "$status" "$out"
+expect_output "and says they are off, reading past the seed's commented example rule" \
+  "^stories: not due: user stories are off \(AGENTS\.md › Project rules has no User stories line\)$" "$out"
+_st_rule() { # <the User stories value>: AGENTS.md with only that rule
+  printf '# Game\n\n## Project rules\n- No git remote: never push.\n- User stories: %s\n' "$1" > "$_st/AGENTS.md"
+}
+_st_rule off
+out="$(cd "$_st" && bash tools/stories.sh --due 2>&1)"
+expect_output "stories --due: off is never due, even with a stories file never validated" \
+  "^stories: not due: user stories are off \(AGENTS\.md › Project rules: User stories: off\)$" "$out"
+_st_rule sometimes
+out="$(cd "$_st" && bash tools/stories.sh --due 2>&1)"
+expect_output "stories --due reads a value that isn't on or off as off, and names it" "^stories: not due: user stories are off \(.*User stories: sometimes, which isn't on or off\)$" "$out"
+printf '# Game\r\n\r\n## Project rules\r\n- User stories: on\r\n' > "$_st/AGENTS.md"
+rm -f "$_st/design/user-stories.md"
+out="$(cd "$_st" && bash tools/stories.sh --due 2>&1)"
+expect_output "stories --due: on (in a CRLF AGENTS.md), not due without a stories file" \
+  "^stories: not due: no stories yet \(no design/user-stories\.md\), \[stories\] every = 10$" "$out"
+printf -- '# Game\n\n<!-- a comment\n- User stories: off\n-->\n- **User stories:** on <!-- decided 2026-11-02 -->\n' > "$_st/AGENTS.md"
+out="$(cd "$_st" && bash tools/stories.sh --due 2>&1)"
+expect_output "stories --due reads a bold key with a comment after the value, past a commented-out rule, as on" \
+  "^stories: not due: no stories yet \(no design/user-stories\.md\)" "$out"
+_st_rule on
+printf '# User stories: x\n\n**Next ID:** US-1 · **Last validated:** never\n\n## Roles\n' > "$_st/design/user-stories.md"
+out="$(cd "$_st" && bash tools/stories.sh --due 2>&1)"
+expect_output "stories --due: not due while the file has no stories" "^stories: not due: no stories yet in design/user-stories\.md" "$out"
+cp "$stories_tpl" "$_st/design/user-stories.md"
+_st_total="$(grep -c '^| US-' "$stories_tpl")"; _st_unc="$(grep -c '| unconfirmed |$' "$stories_tpl")"
+out="$(cd "$_st" && bash tools/stories.sh --due 2>&1)"
+expect_output "stories --due: due when never validated, counting the stories and the unconfirmed ones" \
+  "^stories: due: never validated \(Last validated: never\), $_st_total stories, $_st_unc unconfirmed, \[stories\] every = 10$" "$out"
+(cd "$_st" && for i in 1 2 3; do git_q commit -q --allow-empty -m "feat: item (T$i)"; done && git_q commit -q --allow-empty -m "docs: note (R1)")
+printf '[stories]\n; how often\nevery=3 ; items\n' > "$_st/tools/check.cfg"
+_st_validated() { # <the Last validated value>
+  sed "s/\*\*Last validated:\*\* never/**Last validated:** $1/" "$stories_tpl" > "$_st/design/user-stories.md"
+}
+_st_validated "2026-01-01 at \`$(cd "$_st" && git rev-parse --short HEAD~2)\`"
+out="$(cd "$_st" && bash tools/stories.sh --due 2>&1)"
+expect_output "stories --due counts from the Last validated commit, research items left out" \
+  "^stories: not due: built items since the last validation \(2026-01-01, commit [0-9a-f]+\): 1, \[stories\] every = 3; $_st_total stories, $_st_unc unconfirmed$" "$out"
+(cd "$_st" && git_q commit -q --allow-empty -m "feat: squashed item (T4) (#12)" && git_q commit -q --allow-empty -m "fix: squashed bug (B2) (#13)")
+out="$(cd "$_st" && bash tools/stories.sh --due 2>&1)"
+expect_output "stories --due counts squash-merge subjects and is due at [stories] every=3" "^stories: due: built items since the last validation \(2026-01-01, commit [0-9a-f]+\): 3, \[stories\] every = 3" "$out"
+(cd "$_st" && git_q commit -q --allow-empty -m "fix: B5 is mentioned (B5) but not at the end")
+out="$(cd "$_st" && bash tools/stories.sh --due 2>&1)"
+expect_output "stories --due ignores an item ID that doesn't end the subject" ": 3, \[stories\] every = 3" "$out"
+_st_validated "2000-01-01 at \`0000000\`"
+out="$(cd "$_st" && bash tools/stories.sh --due 2>&1)"
+expect_output "stories --due counts by the date when the commit isn't in this history" \
+  "^stories: due: built items since the last validation \(2000-01-01, by its date: its commit isn't in this history\): 5, \[stories\] every = 3" "$out"
+_st_validated "2000-01-01"
+out="$(cd "$_st" && bash tools/stories.sh --due 2>&1)"
+expect_output "stories --due counts by the date when the line names no commit" \
+  "^stories: due: built items since the last validation \(2000-01-01, by its date: the line names no commit\): 5, \[stories\] every = 3" "$out"
+grep -v '^\*\*Next ID:\*\*' "$stories_tpl" > "$_st/design/user-stories.md"
+out="$(cd "$_st" && bash tools/stories.sh --due 2>&1)"
+expect_output "stories --due is due, and says why, when the file has no Last validated line" \
+  "^stories: due: never validated \(design/user-stories\.md has no Last validated line\), $_st_total stories" "$out"
+printf '[stories]\nevery="often"\n' > "$_st/tools/check.cfg"
+out="$(cd "$_st" && bash tools/stories.sh --due 2>&1)"
+expect_output "stories --due notes a setting that isn't a whole number and uses 10" "^stories: note: \[stories\] every = often isn't a whole number of 1 or more; using 10" "$out"
+out="$(cd "$_st" && bash tools/stories.sh 2>&1)"; status=$?
+expect_status "stories.sh without --due exits 3" 3 "$status" "$out"
+# Outside a git repository (git isn't allowed to look above $work for one) it can't count, and says so;
+# with the stories off it needs no repository.
+_st_nogit="$work/stories-nogit"; mkdir -p "$_st_nogit/tools" "$_st_nogit/design"
+cp "$src/framework/tools/stories.sh" "$_st_nogit/tools/"; cp "$stories_tpl" "$_st_nogit/design/user-stories.md"; cp "$_st/AGENTS.md" "$_st_nogit/"
+out="$(cd "$_st_nogit" && GIT_CEILING_DIRECTORIES="$work" bash tools/stories.sh --due 2>&1)"; status=$?
+expect_status "stories --due exits 3 outside a git repository" 3 "$status" "$out"
+expect_output "and says it couldn't count" "^stories: couldn't count: not a git repository$" "$out"
+printf -- '- User stories: off\n' > "$_st_nogit/AGENTS.md"
+out="$(cd "$_st_nogit" && GIT_CEILING_DIRECTORIES="$work" bash tools/stories.sh --due 2>&1)"; status=$?
+expect_status "with the stories off it exits 0 there, needing no repository" 0 "$status" "$out"
 
 if [ -z "$godot" ]; then
   echo "check and hooks: skipped (pass the path to Godot 4.5+ to test them)"

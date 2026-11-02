@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T37 · B6 · R1
+**Next IDs:** T38 · B6 · R1
 
 ## Queue
+
+### T37 · User stories, if onboarding turns them on · done · L · agent
+- Touches: framework/.godot-director/templates/user-stories.md (new), framework/tools/stories.sh (new), framework/.godot-director/tasks.md, framework/.godot-director/rules.md, framework/.godot-director/procedures/design.md, framework/.godot-director/procedures/next-task.md, framework/.godot-director/procedures/build.md, framework/.godot-director/procedures/playtest.md, framework/.godot-director/procedures/function-check.md, framework/.godot-director/procedures/align.md, framework/.godot-director/procedures/ui-design.md, framework/.godot-director/procedures/drift-reset.md, framework/.claude/skills/design/SKILL.md, framework/.claude/skills/align/SKILL.md, framework/.claude/settings.json, framework/playtesting/README.md, project/AGENTS.md, project/tools/check.cfg, examples/market-day/design/user-stories.md (new), examples/market-day/AGENTS.md, examples/market-day/design/gdd.md, examples/market-day/TASKS.md, examples/market-day/.gitignore, ONBOARDING.md, README.md, selftest.sh, CHANGELOG.md
+- Done when: onboarding asks once whether the game uses user stories, says what they are for, and records the answer in AGENTS.md › Project rules as `- User stories: on` or `off` (check) · with them on, `design/user-stories.md` comes from a framework-owned template with a worked example (a header with the next story ID and the date and commit the stories were last validated, the value in one paragraph per role, the roles, and a table per Design Pillar or system with the ID, the story "As a player I ..., so ..." and the date the director confirmed it, or `unconfirmed`), the GDD links it, the item format gains `Stories:`, the design procedure drafts the stories a design needs, a feature item with no story gets one drafted before it is built, the director validates on a cadence (`bash tools/stories.sh --due`, `[stories] every`, 10 by default) and in each playtest and function check ("still right?"), align lists stories no item serves, feature items with no story and stories unconfirmed past the cadence, and a game already underway gets its stories written from the code, unconfirmed (check) · with them off, no file is seeded, no item needs `Stories:`, `--due` says they are off and nothing asks; `selftest.sh` checks both settings and passes (check)
+- GDD: (none)
+- Source: Director-Driven-Development T263
 
 ### B3 · Log review dirties the committed signatures file on every run · done · S · agent · high
 - Touches: framework/tools/log_review.gd, framework/tools/log_review.sh, framework/.godot-director/procedures/autoplay.md, project/playtesting/signatures.tsv, examples/market-day/playtesting/signatures.tsv, README.md, selftest.sh, CHANGELOG.md

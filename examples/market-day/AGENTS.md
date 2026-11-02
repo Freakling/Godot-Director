@@ -46,3 +46,4 @@ One row per system: what it owns and where its boundary is. Screens depend on sy
 ## Project rules
 - No git remote: never push.
 - Dev menu: in game (F12, debug builds only)
+- User stories: on

@@ -17,6 +17,8 @@ Rules that can be tested automatically are proven by `bash tools/check.sh` on ev
 
 Each loop in the template has one fixed scored statement, so scores stay comparable across builds. If you reword a statement, it starts a new series.
 
+In a game that uses user stories (AGENTS.md › Project rules), both kinds of report also list the stories behind what was built since the last one: tick **Still right** or **Needs a change** for each, and say what should change in Notes. A story you tick Still right is dated as confirmed; one that needs a change is rewritten for you to confirm.
+
 ## Function check
 1. Say "prepare a function check" (in Claude Code also `/function-check`). This writes `playtesting/YYYY-MM-DD-function-check.md` with everything built since the last check that needs a human eye. Say "function check all" for a full regression round.
 2. For each item, tick **Works** or **Broken / missing**, and say what went wrong in Notes. Leave both boxes empty for anything you didn't check; it comes back next time.
@@ -27,4 +29,4 @@ The game writes a play log of every session. After you play, say "I just played,
 
 ## Files
 - `TEMPLATE.md`: the report template. It's yours, with one section per core gameplay loop.
-- `YYYY-MM-DD-playtest.md` and `YYYY-MM-DD-function-check.md`: one file per session. Once processed, a file gets a `Processed:` line listing the bugs, tasks and questions it produced.
+- `YYYY-MM-DD-playtest.md` and `YYYY-MM-DD-function-check.md`: one file per session. Once processed, a file gets a `Processed:` line listing the bugs, tasks and questions it produced, and the stories it corrected.

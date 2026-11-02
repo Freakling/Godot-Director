@@ -4,7 +4,7 @@ AGENTS.md › Project rules, and win over these defaults. -->
 
 These rules apply to any AI assistant working in this project. For each of these requests, follow the procedure in `.godot-director/procedures/`:
 - **next-task.md:** do the next task(s), or a named item (T12, B3, R2). The build itself is `build.md`.
-- **design.md:** brainstorm, open design questions, change the design.
+- **design.md:** brainstorm, open design questions, change the design; turn user stories on or off, and validate them in a game that uses them.
 - **research.md:** research a question in a fresh context and save a dated note in `design/research/`, for a design call or a decision about plugins, assets, export or stores. It informs; the human decides. Domain reference: `.godot-director/research-domain.md`.
 - **export.md:** export the game with Godot headless into `builds/` (`/export`), or set exports up: target platforms and where exports run. Setting up is a design session on the export open question.
 - **release.md:** release the game's builds (`/release`): run the human's own upload command per export preset to a platform's UAT branch, and promote to production only when asked; or set release up: the commands, and the CI secrets they need. Setting up is a design session on the release open question.
@@ -34,6 +34,7 @@ In Claude Code these are also slash commands, and builds, reviews and research r
 | Fact | Only in |
 |---|---|
 | What the game should be | `design/gdd.md`. List its sections with `grep -n "^#" design/gdd.md` and read only the ones you need. |
+| Whom the game is for, and why each feature is built (a game that uses user stories) | `design/user-stories.md`: the roles and their stories (`US-<n>`), each confirmed by the human or `unconfirmed` (`procedures/design.md` › User stories) |
 | What's undecided | GDD › Open Questions (`Q<n>`) |
 | Why a design decision was made | `design/decisions.md` (append-only) |
 | The evidence behind a design call | `design/research/`, one dated note per topic; the decision line links to it |
@@ -64,7 +65,8 @@ Update the owning place in the same change that makes it untrue. Replace superse
 
 ## Doing the work
 - **Where work comes from.** `TASKS.md`, or straight from the human. A direct request that won't be finished this session, or that turns up follow-up work, gets a TASKS.md item. Work you discover always becomes a new item; never do it silently as part of another.
-- **Read what the work needs:** the item's `Touches`, the Architecture rows, and the GDD sections it names. Read by heading or line range, not whole files. Quote only the relevant lines of logs; the full check logs are in `.godot/godot-director/`.
+- **Why it's built.** User stories are the game's choice, recorded in AGENTS.md › Project rules. With `User stories: on`, a feature item names the user stories it serves (`Stories:` in `.godot-director/tasks.md`), and one with no story gets one drafted first, as `design.md` › User stories says, for the human to confirm. With `User stories: off`, or no such line (any value but `on` is off), no item has `Stories:`, and the procedures skip every step about stories.
+- **Read what the work needs:** the item's `Touches`, the Architecture rows, and the GDD sections and stories it names. Read by heading or line range, not whole files. Quote only the relevant lines of logs; the full check logs are in `.godot/godot-director/`.
 - **Stay inside the item.** Prefer the smallest change, and delete dead code. Match existing patterns; a new pattern needs a reason in the commit message.
 - **Tests.** A rule that can be checked without a screen gets a test: `tests/**/test_*.gd`, `extends "res://tools/test_case.gd"`, synchronous methods `test_*()`. Each test sets up the autoload and `user://` state it reads: the check runs the test files in several processes at once, so a file can't rely on what another file left behind. The files run at the same time and share one `user://` and one `.godot/`, so two test files must not write the same `user://` file: use a unique name per test file. A fixed bug gets a regression test when it can have one; otherwise it goes into the next function check.
 - **Scenarios.** An item that touches the shell, a view, the turn loop or a save adds or updates a step in `tools/autoplay_scenarios.gd` that walks the change, and the builder plays the scenarios the item names, plus `smoke`, with `bash tools/autoplay.sh` before reporting (`procedures/autoplay.md`).
@@ -80,7 +82,7 @@ Update the owning place in the same change that makes it untrue. Replace superse
 - **Two failed attempts.** After two failed attempts at the same problem, stop and report instead of guessing further.
 
 ## Git
-- **One item, one commit.** The message is `<type>: <summary> (T12)`, with a body saying why; types are `feat fix refactor test docs data chore`. The item's paths are its code, tests, data, the `.uid` files Godot writes next to new scripts, and the records the item changed (TASKS.md, AGENTS.md, and the GDD and decisions for a decision made during the item). `git add` the new ones, then commit only those paths, `git commit -m "…" -- <paths>`, so another session's staged work stays out.
+- **One item, one commit.** The message is `<type>: <summary> (T12)`, with a body saying why; types are `feat fix refactor test docs data chore`. The item's paths are its code, tests, data, the `.uid` files Godot writes next to new scripts, and the records the item changed (TASKS.md, AGENTS.md, `design/user-stories.md` when a story was drafted for it, and the GDD and decisions for a decision made during the item). `git add` the new ones, then commit only those paths, `git commit -m "…" -- <paths>`, so another session's staged work stays out.
 - **Approval.** Commit only with the human's approval. An approval prompt from your tool counts; otherwise ask in the conversation, unless Project rules say otherwise. A run the human asked for (`next-task.md` › Several items) approves its commits in advance. Push only when asked. Never get around the hooks (`--no-verify`, `core.hooksPath`).
 - **Destructive commands.** Anything that discards uncommitted work or rewrites history needs the human. For a history cleanup they ask for, note the current tip first, and use non-interactive forms only.
 
