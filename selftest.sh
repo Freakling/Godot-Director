@@ -3424,7 +3424,7 @@ out="$(as_player bash tools/log_review.sh --player --check "$cart_sig" 2>&1)"; e
 expect_output "and says how often and where it first came" "check $cart_sig: PRESENT in .* build 0\.3\.2 .* \(1x, first at T1, line [0-9]+\)" "$out"
 out="$(as_player bash tools/log_review.sh --player --check sig-00000000 2>&1)"; expect_status "--check: a signature the file doesn't know is an error (exit 2)" 2 $? "$out"
 expect_output "and says to review first" "isn't in playtesting/signatures\.tsv" "$out"
-# A signatures file from before 4.8.0 has a fifth column, last_seen_build. It reads as before, a review
+# A signatures file from before 4.9.0 has a fifth column, last_seen_build. It reads as before, a review
 # that finds only known signatures leaves it as it is, and the first new signature rewrites it
 # without the column, its values moved to the sidecar.
 cp playtesting/signatures.tsv "$work/sigs-new-format"; cp "$last_seen" "$work/sigs-last-seen"
