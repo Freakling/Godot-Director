@@ -88,7 +88,7 @@ for doc in "$src"/framework/.godot-director/rules.md "$src"/framework/.godot-dir
   for ref in $(grep -o '[a-z-]*\.md' "$doc" | sort -u); do
     case "$ref" in
       rules.md|tasks.md|research-domain.md) [ -f "$src/framework/.godot-director/$ref" ] || missing="$missing $(basename "$doc")→$ref" ;;
-      next-task.md|build.md|design.md|research.md|playtest.md|function-check.md|align.md|drift-reset.md|prune.md|review.md|refresh-model-sizing.md|ui-design.md)
+      next-task.md|build.md|design.md|research.md|playtest.md|function-check.md|align.md|drift-reset.md|prune.md|review.md|refresh-model-sizing.md|ui-design.md|prototype.md)
         [ -f "$src/framework/.godot-director/procedures/$ref" ] || missing="$missing $(basename "$doc")→$ref" ;;
     esac
   done
@@ -575,6 +575,61 @@ grep -q '^- \*\*User stories, if the game wants them\.\*\*' "$src/CHANGELOG.md" 
 [ -z "$wired" ] && ok "user stories: the template and the example's stories have their header, sections and rows, and Stories:, the cadence, the rules, the procedures (each only with them on), the settings and the docs name them" \
   || bad "the user stories aren't wired into:$wired"
 
+# Prototypes: the procedure, the skill and tools/prototype.sh exist and are wired in. rules.md routes the
+# procedure and says a prototype session is outside the loop and reaches main only through the harvest, the
+# item format has Prototype:, the design procedure harvests one and files nothing without the human, the
+# settings allow the script, the hooks know proto/ branches, and the docs name it. The script and the hooks
+# run under "prototype".
+_pp="$proc/procedures/prototype.md"
+wired=""
+for file in framework/.godot-director/procedures/prototype.md framework/.claude/skills/prototype/SKILL.md framework/tools/prototype.sh framework/.githooks/pre-push; do
+  [ -f "$src/$file" ] || wired="$wired $file"
+done
+grep -q 'procedures/prototype\.md' "$src/framework/.claude/skills/prototype/SKILL.md" || wired="$wired SKILL.md"
+grep -q '^## Start$' "$_pp" && grep -q '^## In a prototype session$' "$_pp" && grep -q '^## Harvest$' "$_pp" \
+  && grep -qF 'bash tools/prototype.sh start <name>' "$_pp" && grep -qF 'bash tools/prototype.sh harvest <name>' "$_pp" \
+  && grep -qF 'bash tools/prototype.sh remove <name>' "$_pp" && grep -qF 'bash tools/prototype.sh list' "$_pp" \
+  && grep -qF 'git diff main...proto/<name>' "$_pp" && grep -qF 'Never push a `proto/` branch' "$_pp" \
+  && grep -qF 'git branch -D proto/<name>' "$_pp" && grep -qF 'Never force it' "$_pp" \
+  && grep -q 'Nothing is filed without the human.s answer' "$_pp" && grep -qF 'Commits need no approval' "$_pp" \
+  && grep -qF '`ui-design.md` › capture' "$_pp" && grep -q 'Run `design\.md` on them' "$_pp" \
+  && grep -qF 'git pull --ff-only' "$_pp" && grep -qF 'start <name> --as-is' "$_pp" \
+  && grep -q "ask the human to stop the prototype's game and close its session" "$_pp" && grep -qF 'import cache' "$_pp" \
+  || wired="$wired prototype.md"
+grep -qF '**The game can run.**' "$_pp" && grep -qF 'bash tools/autoplay.sh smoke' "$_pp" && grep -qF 'bash tools/log_review.sh --player' "$_pp" \
+  && grep -qF 'bash tools/check.sh --only tests/<file>.gd' "$_pp" && grep -qF '**A playtest:**' "$_pp" \
+  && grep -qF 'the GDD changes, decisions, user stories (with user stories on) and items' "$_pp" \
+  || wired="$wired prototype.md(the game can run, the harvest)"
+grep -qF "gitleaks is optional in every other commit" "$_pp" && grep -qF "it won't start, or commit, without one" "$_pp" \
+  && grep -qF 'tools/godot_bin.local' "$_pp" || wired="$wired prototype.md(gitleaks, Godot path)"
+grep -qF 'Unlike Record step 4, a drafted story the human doesn' "$proc/procedures/design.md" || wired="$wired design.md(unanswered story)"
+grep -qF '**prototype.md:**' "$proc/rules.md" && grep -q '^- \*\*Prototypes\.\*\*' "$proc/rules.md" \
+  && grep -q 'That session is outside the loop' "$proc/rules.md" && grep -q 'reaches main only through the harvest' "$proc/rules.md" \
+  && grep -qF 'The game can run there.' "$proc/rules.md" || wired="$wired rules.md"
+grep -q '^- \*\*`Prototype:`\*\* (optional)\. `proto/<name>`' "$proc/tasks.md" || wired="$wired tasks.md"
+grep -q '^## Harvest a prototype$' "$proc/procedures/design.md" && grep -q 'or harvest a prototype (Harvest a prototype, below)' "$proc/procedures/design.md" \
+  && grep -qF -- '- Prototype: proto/<name>' "$proc/procedures/design.md" && grep -qF '(prototype: proto/<name>)' "$proc/procedures/design.md" \
+  && grep -qF 'came from the prototype proto/<name>' "$proc/procedures/design.md" \
+  && grep -q 'Nothing is filed without the human.s answer' "$proc/procedures/design.md" || wired="$wired design.md"
+grep -qF '"Bash(bash tools/prototype.sh *)",' "$settings" || wired="$wired settings.json"
+grep -qF 'bash tools/prototype.sh here' "$src/framework/.githooks/pre-commit" && grep -qF 'bash tools/prototype.sh here' "$src/framework/.claude/hooks/stop-check.sh" \
+  && grep -qF 'refs/heads/proto/' "$src/framework/.githooks/pre-push" && grep -qF 'pre-commit pre-push' "$src/framework/tools/setup-clone.sh" || wired="$wired hooks"
+grep -qF '[ -f PROTOTYPE.md ] && [ -f tools/prototype.sh ] && bash tools/prototype.sh here' "$src/framework/.githooks/pre-commit" \
+  && grep -qF '[ -f PROTOTYPE.md ] && [ -f tools/prototype.sh ] && bash tools/prototype.sh here' "$src/framework/.claude/hooks/stop-check.sh" \
+  && grep -qF '[ -n "$gd" ] && [ -n "$gc" ] && [ "$gd" != "$gc" ]' "$src/framework/tools/prototype.sh" \
+  && grep -qF 'gitleaks:allow' "$src/framework/.githooks/pre-commit" && grep -qF 'if [[ -f $root/PROTOTYPE.md ]]; then' "$src/framework/.claude/hooks/guard-protected.sh" \
+  && grep -qF '**The gates are the human' "$_pp" && grep -qF 'a staged `gitleaks:allow` comment' "$_pp" \
+  && grep -qF 'refs="$(cat)"; printf' "$src/framework/tools/prototype.sh" && grep -qF 'refs="$(cat)"; printf' "$src/framework/tools/setup-clone.sh" \
+  && grep -qF 'refs="$(cat)"; printf' "$_pp" || wired="$wired hooks(prototype checks, gates, chaining)"
+grep -qF 'A session in a checkout that `bash tools/prototype.sh here` calls a prototype (a linked worktree on a `proto/` branch with `PROTOTYPE.md` at its root) is a prototype session: read `prototype.md` › In a prototype session before any work.' "$proc/rules.md" \
+  && grep -qF 'git diff main...proto/<name> -- <path>' "$proc/procedures/build.md" || wired="$wired rules.md(prototype session) build.md"
+grep -qF '`/prototype {name}`' "$src/README.md" && grep -qF 'tools/prototype.sh' "$src/README.md" && grep -qF '· prototype ·' "$src/README.md" || wired="$wired README.md"
+grep -qF '`/prototype`' "$src/ONBOARDING.md" && grep -qF '.githooks/pre-commit .githooks/pre-push' "$src/ONBOARDING.md" || wired="$wired ONBOARDING.md"
+grep -q '^/tools/prototype\.sh$' "$src/examples/market-day/.gitignore" || wired="$wired example .gitignore"
+grep -q '^- \*\*A prototype tries a change before it.s built against the design\.\*\*' "$src/CHANGELOG.md" || wired="$wired CHANGELOG.md"
+[ -z "$wired" ] && ok "prototypes: the procedure, the skill and tools/prototype.sh exist, and the rules, the item format, the design procedure, the settings, the hooks and the docs name them" \
+  || bad "prototypes aren't wired into:$wired"
+
 # --- installer ----------------------------------------------------------------------------------
 echo "installer"
 game="$work/market-day"
@@ -642,6 +697,12 @@ if [ -x tools/stories.sh ] && [ -f .godot-director/templates/user-stories.md ] &
   ok "installs tools/stories.sh and the user stories template, keeping the game's own stories"
 else
   bad "installs tools/stories.sh and the user stories template, keeping the game's own stories" "$out"
+fi
+if [ -f .godot-director/procedures/prototype.md ] && [ -f .claude/skills/prototype/SKILL.md ] && [ -x tools/prototype.sh ] && [ -x .githooks/pre-push ] \
+    && cut -f2 .godot-director/manifest | grep -q '^tools/prototype\.sh$' && cut -f2 .godot-director/manifest | grep -q '^\.githooks/pre-push$'; then
+  ok "installs prototypes: the procedure, the skill, tools/prototype.sh and the pre-push hook"
+else
+  bad "installs prototypes: the procedure, the skill, tools/prototype.sh and the pre-push hook" "$out"
 fi
 grep -q "Market Day" AGENTS.md && ok "keeps the project's own files" || bad "keeps the project's own files"
 [ -z "$(git status --porcelain)" ] && ok "adds no duplicate .gitignore/.gitattributes lines" || bad "adds no duplicate lines" "$(git status --porcelain)"
@@ -963,6 +1024,7 @@ guard() { # guard <expected exit> <command>
   local escaped="${2//\\/\\\\}"
   escaped="${escaped//\"/\\\"}"
   escaped="${escaped//$'\n'/\\n}"
+  escaped="${escaped//$'\t'/\\t}"; escaped="${escaped//$'\r'/\\r}"   # as JSON carries a tab and a carriage return
   printf '{"session_id":"s","tool_name":"Bash","tool_input":{"command":"%s","description":"run"}}' "$escaped" \
     | bash .claude/hooks/guard-git.sh >/dev/null 2>&1
   local got=$?
@@ -975,6 +1037,85 @@ for cmd in 'git commit -m x --no-verify' 'git commit -nm "x"' 'git push origin m
     'git -c core.hookspath=/dev/null commit -m x' 'git commit --no-veri -m x' 'git clean --force -d' \
     'git checkout -f main' 'git switch --discard-changes main'; do
   guard 2 "$cmd"
+done
+# A git command on a later line is read whatever indents it: spaces, a tab (JSON carries it as \t), a
+# carriage return, and a flag at the end of a line or a tab between the words is as much a flag as one before a space.
+for cmd in $'cd x\n\tgit log --output=/tmp/probe.txt' $'cd x\n\t\tgit push --force origin main' $'cd x\n \tgit commit -nm x' \
+    $'cd x\r\n\tgit branch -D topic' $'cd x\n  \t  git reset --hard' $'cd x\n\tgit\tworktree remove --force y' \
+    $'git\tpush\t--force' $'git\tlog\t--output=/tmp/probe.txt' $'git push origin main --force\necho done' \
+    $'git push origin main --force\r\necho done' $'git push origin main --force\n\tgit status' $'git clean -fd\necho done'; do
+  guard 2 "$cmd"
+done
+for cmd in $'cd x\n\tgit log --oneline -3' $'cd x\n\t\tgit commit -m "fix a --force bug" -- a.gd' $'git\tlog\t--oneline' \
+    $'git status\n\techo done' $'git push origin feature\necho done'; do
+  guard 0 "$cmd"
+done
+# -n and --no-verify skip the hooks, and a spelling that quotes or splits the flag is the flag: the quoted
+# word, the quote inside it, an empty quote between its letters, a short flag inside a cluster, the long flag
+# abbreviated, a backslash and a line break inside it, and the words of a later line. After -- come paths.
+for cmd in "git commit '-n' -m x" 'git commit "-n" -m x' 'git commit -""n -m x' "git commit -a''n -m x" 'git commit -n"" -m x' \
+    "git commit --no-ve''rify -m x" 'git commit "--no-verify" -m x' 'git commit --no-v -m x' 'git commit --no-verif -m x' \
+    $'git commit --no-ver\\\nify -m x' $'git commit -\\\nn -m x' "git commit -m x '-n'" 'git commit -m x "--no-verify"' \
+    $'cd x\n\tgit commit "-n" -m x' $'cd x\n\tgit commit -m x --no-ve\'\'rify' 'git commit -am x "-n"' "git commit -m x --amend '--no-verify'"; do
+  guard 2 "$cmd"
+done
+for cmd in 'git commit -m x -- -nx.gd' 'git commit -m "a -n b" -- a.gd' 'git commit --amend --no-edit' 'git commit --no-post-rewrite -m x' \
+    "git commit -m 'fix the n handling' -- a.gd" 'git commit -a -m x' 'git commit -F - --no-status'; do
+  guard 0 "$cmd"
+done
+# A prototype's worktree is removed with `git worktree remove` and its branch deleted by the human
+# (prototype.md), so the ways to discard a worktree's changes or a branch's commits stay with the human in
+# every spelling: forced removal, forced or unmerged deletion, overwrites, an unquoted brace expansion or
+# $IFS, past git's global options.
+for cmd in \
+    'git branch -D proto/quick-add' \
+    'git worktree remove --force ../market-day-proto-quick-add' \
+    'git worktree remove --forc ../x' \
+    'git worktree remove --f ../x' \
+    "git worktree remove '--force' ../x" \
+    'git worktree remove ../market-day-proto-quick-add -f' \
+    'git worktree remove -ff ../x' \
+    'git -C ../market-day worktree remove --fo ../x' \
+    'git branch -d -f proto/quick-add' \
+    'git branch --delete --force proto/quick-add' \
+    'git branch --del --forc proto/quick-add' \
+    'git branch -df proto/quick-add' \
+    'git branch -qD proto/quick-add' \
+    'git worktree remove --{force,} x' \
+    'git worktree remove -{f,f} x' \
+    'git worktree remove x$IFS--force' \
+    'git worktree remove x${IFS}--force' \
+    'git branch -{D,} x' \
+    'git branch -{d..f} x' \
+    'git --git-dir .git worktree remove --forc x' \
+    'git --work-tree . branch -df x' \
+    'git --config-env x=Y worktree remove -f x' \
+    'git branch -M a b' \
+    'git branch -C a b' \
+    'git branch -m -f a b' \
+    'git branch --move --force a b' \
+    'git branch -cf a b' \
+    'git worktree add -B proto/x ../x main' \
+    'git worktree add -f ../x proto/x' \
+    'git worktree add --forc ../x proto/x'; do
+  guard 2 "$cmd"
+done
+for cmd in \
+    'git worktree add --no-track -b proto/quick-add ../market-day-proto-quick-add main' \
+    'git worktree remove ../market-day-proto-quick-add' \
+    'git branch -d proto/quick-add' \
+    'git branch -f topic main' \
+    'git branch -uorigin/feature-dev' \
+    'git commit -m "git branch -d -f x"' \
+    'git log HEAD@{1}' \
+    'git log --oneline @{u}..HEAD' \
+    'git diff stash@{0}' \
+    'git branch -m old new' \
+    'git branch -c old new' \
+    'git commit -m "a {b,c} message"' \
+    'bash tools/prototype.sh start quick-add' \
+    'bash tools/prototype.sh remove quick-add'; do
+  guard 0 "$cmd"
 done
 # settings.json no longer asks before `git restore` and `git checkout --`, so the guard keeps every
 # whole-tree form with the human: the pathspecs of the whole tree, quoted or not, --pathspec-from-file,
@@ -1982,6 +2123,424 @@ if [ "$_gl_ok" -eq 1 ]; then
 else
   echo "  skip  the real-gitleaks cases (gitleaks isn't installed, or is below 8.18.0, or is 8.19.0, which can't scan)"
 fi
+cd "$game" || exit 1
+
+# --- prototypes -----------------------------------------------------------------------------------
+echo "prototype"
+# tools/prototype.sh on a throwaway repository with an origin: start stops while origin/main is ahead, creates the
+# worktree beside the game, the branch from main with no upstream, the saved Godot path and the committed
+# PROTOTYPE.md, and refuses an existing name or an invalid one. Only a prototype (a linked worktree on a proto/
+# branch with PROTOTYPE.md at its root) skips the check: the pre-commit hook still blocks a staged secret there
+# and a commit without gitleaks (which is optional everywhere else), and runs the check everywhere else, the Stop
+# hook likewise, and the pre-push hook refuses a proto/ branch. harvest prints what the harvest reads and changes
+# nothing; remove never forces and keeps the branch. The stub check always fails, so a commit that goes through
+# shows the check was skipped; the stand-in Godot only prints a version. A token is assembled at run time, never
+# kept in a tracked file.
+_pg="$work/godot-proto"; printf '#!/usr/bin/env bash\necho 4.7.2.stable.official.abcdef\n' > "$_pg"; chmod +x "$_pg"
+_pp_path="$_fake_gl:$PATH"   # gitleaks on PATH: the stand-in, which scans clean
+_pn_ok="$_no_gl_ok"; PATH="$_no_gl_path" command -v dirname >/dev/null 2>&1 || _pn_ok=0
+_proto_repo() { # _proto_repo <folder> <origin>: a game with the prototype tools, a failing stub check and an origin
+  new_repo "$1" >/dev/null 2>&1
+  mkdir -p "$1/tools" "$1/.githooks"
+  cp "$src/framework/tools/prototype.sh" "$src/framework/tools/setup-clone.sh" "$1/tools/"
+  cp "$src/framework/.githooks/pre-commit" "$src/framework/.githooks/pre-push" "$1/.githooks/"
+  printf '#!/usr/bin/env bash\necho "stub check: fails"\nexit 1\n' > "$1/tools/check.sh"
+  printf 'config_version=5\n' > "$1/project.godot"
+  printf '# Tasks\n\n**Next IDs:** T1 · B1 · R1\n' > "$1/TASKS.md"
+  printf '.godot/\n/tools/godot_bin.local\n' > "$1/.gitignore"
+  printf '%s\n' "$_pg" > "$1/tools/godot_bin.local"
+  git init -q --bare "$2"
+  (cd "$1" && git config user.name selftest && git config user.email selftest@localhost && git branch -M main \
+    && git config branch.autoSetupMerge always \
+    && git add -A && git commit -qm "tools and a stub check" && git remote add origin "$2" \
+    && git push -q origin main && PATH="$_pp_path" bash tools/setup-clone.sh) >/dev/null 2>&1
+}
+_pa="$work/proto-app"; _pw="$work/proto-app-proto-quick-add"; _po="$work/proto-origin.git"
+_proto_repo "$_pa" "$_po"
+proto() { (cd "$_pa" && PATH="$_pp_path" bash tools/prototype.sh "$@" 2>&1); }
+commit_in() { (cd "$1" && PATH="$2" git commit -qm "$3" 2>&1); }   # commit_in <folder> <PATH> <message>
+_pa_none() { [ ! -e "$_pw" ] && [ -z "$(git -C "$_pa" for-each-ref refs/heads/proto/)" ]; }   # no prototype yet
+
+# setup-clone installs both hooks, also when it finds no Godot (exit 3): they fail closed. An existing hook that
+# isn't Godot Director's is left alone (exit 4) and the other one is installed.
+_ng="$work/nogodot-clone"; new_repo "$_ng" >/dev/null 2>&1 && mkdir -p "$_ng/tools" "$_ng/.githooks" \
+  && cp "$src/framework/tools/setup-clone.sh" "$_ng/tools/" && cp "$src/framework/.githooks/pre-commit" "$src/framework/.githooks/pre-push" "$_ng/.githooks/"
+out="$(cd "$_ng" && bash tools/setup-clone.sh "$work/no-such-godot" 2>&1)"; status=$?
+expect_status "setup-clone exits 3 when it finds no Godot" 3 "$status" "$out"
+grep -qs "Godot Director" "$_ng/.git/hooks/pre-commit" && grep -qs "Godot Director" "$_ng/.git/hooks/pre-push" \
+  && ok "and still installs the pre-commit and pre-push hooks, which fail closed" || bad "setup-clone without Godot installs no hooks" "$out"
+grep -qs '\.githooks/pre-push' "$_ng/.git/hooks/pre-push" && ok "the pre-push shim runs the committed hook" || bad "the pre-push shim runs the committed hook"
+out="$(cd "$_ng" && bash tools/setup-clone.sh --skip-hook "$work/no-such-godot" 2>&1)"; status=$?
+expect_status "setup-clone --skip-hook with no Godot still exits 3" 3 "$status" "$out"
+_nh="$work/foreign-hook-clone"; new_repo "$_nh" >/dev/null 2>&1 && mkdir -p "$_nh/tools" "$_nh/.githooks" \
+  && cp "$src/framework/tools/setup-clone.sh" "$_nh/tools/" && cp "$src/framework/.githooks/pre-commit" "$src/framework/.githooks/pre-push" "$_nh/.githooks/"
+printf '#!/bin/sh\n# somebody else'"'"'s hook\nexit 0\n' > "$_nh/.git/hooks/pre-push"
+# What to add to a pre-push hook that is somebody else's: Git LFS's reads the pushed refs on stdin, and only one
+# hook can, so ours is given a copy.
+_snip=$'refs="$(cat)"; printf \'%s\\n\' "$refs" | bash .githooks/pre-push "$@" || exit 1'
+out="$(cd "$_nh" && bash tools/setup-clone.sh "$_pg" 2>&1)"; status=$?
+expect_status "setup-clone exits 4 when a pre-push hook that doesn't run ours exists" 4 "$status" "$out"
+expect_output "and says it doesn't run .githooks/pre-push" "pre-push already exists and doesn't run \.githooks/pre-push" "$out"
+printf '%s' "$out" | grep -qF -- "Add this to it: $_snip" && ok "and gives the stdin-safe line to add" || bad "setup-clone doesn't give the stdin-safe pre-push line" "$out"
+grep -q "somebody else" "$_nh/.git/hooks/pre-push" && grep -qs "Godot Director" "$_nh/.git/hooks/pre-commit" \
+  && ok "and leaves that hook as it was, installing the pre-commit hook" || bad "setup-clone changed a pre-push hook that isn't Godot Director's, or didn't install the pre-commit hook"
+# A hook that already chains ours (found by its .githooks/ path, not by who wrote it) is left alone, and exit 0.
+cat > "$_nh/.git/hooks/pre-push" <<'HOOK'
+#!/bin/sh
+# somebody else's hook, which runs ours
+refs="$(cat)"; printf '%s\n' "$refs" | bash .githooks/pre-push "$@" || exit 1
+printf '%s\n' "$refs" | cat >/dev/null
+exit 0
+HOOK
+out="$(cd "$_nh" && bash tools/setup-clone.sh "$_pg" 2>&1)"; status=$?
+expect_status "setup-clone exits 0 when a pre-push hook of somebody else's already runs ours" 0 "$status" "$out"
+expect_output "and says it left that hook as it is" "pre-push already runs \.githooks/pre-push; left as it is" "$out"
+grep -q "somebody else's hook, which runs ours" "$_nh/.git/hooks/pre-push" && ok "and that hook is as it was" || bad "setup-clone changed a hook that already runs ours"
+
+out="$(proto list)"
+expect_output "list says so when there are no prototypes" "^prototype: no prototypes \(no proto/ branches\)$" "$out"
+
+# A prototype's only gates are its hooks and gitleaks, so start refuses, creating nothing, without them.
+_pa_hooks="$(git -C "$_pa" rev-parse --git-path hooks)"
+[ "${_pa_hooks#/}" = "$_pa_hooks" ] && [ "${_pa_hooks#?:}" = "$_pa_hooks" ] && _pa_hooks="$_pa/$_pa_hooks"
+mv "$_pa_hooks/pre-push" "$work/pre-push.saved"
+out="$(proto start quick-add)"; status=$?
+{ [ "$status" -eq 1 ] && printf '%s' "$out" | grep -q "pre-push is missing: run bash tools/setup-clone.sh here, which installs it" && _pa_none; } \
+  && ok "start refuses, creating nothing, while this clone has no pre-push hook" || bad "start refuses while this clone has no pre-push hook (exit $status)" "$out"
+mv "$work/pre-push.saved" "$_pa_hooks/pre-push"
+# A hook that is somebody else's must run ours, whoever wrote it, found by the .githooks/ path in it: one that doesn't
+# is refused with the line to add (the stdin-safe one for pre-push), one that chains ours passes and does its job.
+_pf="$work/proto-foreign"; _proto_repo "$_pf" "$work/proto-foreign-origin.git"
+foreign() { (cd "$_pf" && PATH="$_pp_path" bash tools/prototype.sh start "$1" 2>&1); }
+printf '#!/bin/sh\n# somebody else'"'"'s hook\nexit 0\n' > "$_pf/.git/hooks/pre-push"
+out="$(foreign chained)"; status=$?
+{ [ "$status" -eq 1 ] && printf '%s' "$out" | grep -q "pre-push doesn't run \.githooks/pre-push: add this to it: " && printf '%s' "$out" | grep -qF -- "$_snip" \
+  && [ ! -e "$work/proto-foreign-proto-chained" ]; } \
+  && ok "start refuses, creating nothing, when the pre-push hook is somebody else's and doesn't run ours, and says what to add" \
+  || bad "start refuses a foreign pre-push hook that doesn't run ours (exit $status)" "$out"
+cat > "$_pf/.git/hooks/pre-push" <<'HOOK'
+#!/bin/sh
+# somebody else's hook, which runs ours
+refs="$(cat)"; printf '%s\n' "$refs" | bash .githooks/pre-push "$@" || exit 1
+printf '%s\n' "$refs" | cat >/dev/null
+exit 0
+HOOK
+chmod +x "$_pf/.git/hooks/pre-push"
+out="$(foreign chained)"; status=$?
+expect_status "start accepts a pre-push hook of somebody else's that runs ours" 0 "$status" "$out"
+expect_output "and setup-clone leaves that hook as it is" "pre-push already runs \.githooks/pre-push; left as it is" "$out"
+out="$(cd "$_pf" && PATH="$_pp_path" git push -q origin proto/chained 2>&1)"; status=$?
+{ [ "$status" -ne 0 ] && printf '%s' "$out" | grep -q "a prototype is never pushed; push blocked"; } \
+  && ok "and the push of the prototype is refused through that hook, which passes the refs on" || bad "the chained pre-push hook doesn't refuse a proto/ push (exit $status)" "$out"
+# core.hooksPath on another hook manager's folder, relative to the repository top: its hooks have to run ours too.
+_ph="$work/proto-hookspath"; _proto_repo "$_ph" "$work/proto-hookspath-origin.git"
+mkdir -p "$_ph/hooks-x"; printf '#!/bin/sh\nexit 0\n' > "$_ph/hooks-x/pre-commit"; printf '#!/bin/sh\nexit 0\n' > "$_ph/hooks-x/pre-push"
+chmod +x "$_ph/hooks-x/pre-commit" "$_ph/hooks-x/pre-push"
+git -C "$_ph" config core.hooksPath hooks-x
+out="$(cd "$_ph" && PATH="$_pp_path" bash tools/prototype.sh start other 2>&1)"; status=$?
+{ [ "$status" -eq 1 ] && printf '%s' "$out" | grep -q "core.hooksPath=hooks-x" && printf '%s' "$out" | grep -qF "hooks-x/pre-commit doesn't run .githooks/pre-commit: add this to it (create the file if it is missing): bash .githooks/pre-commit || exit 1" \
+  && printf '%s' "$out" | grep -qF -- "$_snip" && [ ! -e "$work/proto-hookspath-proto-other" ]; } \
+  && ok "start refuses, creating nothing, when the hooks in core.hooksPath don't run ours, and says what to add to each" \
+  || bad "start refuses hooks in core.hooksPath that don't run ours (exit $status)" "$out"
+out="$(cd "$_ph" && PATH="$_pp_path" bash tools/setup-clone.sh "$_pg" 2>&1)"; status=$?
+expect_status "setup-clone exits 4 for them, and says the same" 4 "$status" "$out"
+expect_output "naming the hook folder and the hooks that don't" "core\.hooksPath=hooks-x \(e\.g\. husky\), and these hooks there don't run Godot Director's \.githooks/ ones: pre-commit pre-push" "$out"
+printf '%s' "$out" | grep -qF -- "Add this to hooks-x/pre-push (create the file if it is missing): $_snip" && ok "and the stdin-safe line for its pre-push" || bad "setup-clone doesn't give the stdin-safe line for a core.hooksPath pre-push" "$out"
+printf '#!/bin/sh\nbash .githooks/pre-commit || exit 1\n' > "$_ph/hooks-x/pre-commit"
+cat > "$_ph/hooks-x/pre-push" <<'HOOK'
+#!/bin/sh
+refs="$(cat)"; printf '%s\n' "$refs" | bash .githooks/pre-push "$@" || exit 1
+exit 0
+HOOK
+(cd "$_ph" && git add hooks-x && PATH="$_pp_path" git commit -qm "hooks of the other manager") >/dev/null 2>&1
+out="$(cd "$_ph" && PATH="$_pp_path" bash tools/setup-clone.sh "$_pg" 2>&1)"; status=$?
+expect_status "setup-clone exits 0 once core.hooksPath's hooks run ours" 0 "$status" "$out"
+out="$(cd "$_ph" && PATH="$_pp_path" bash tools/prototype.sh start other 2>&1)"; status=$?
+expect_status "start accepts them, and the worktree commits its notes through them" 0 "$status" "$out"
+[ "$(git -C "$_ph" rev-list --count main..proto/other 2>/dev/null)" = 1 ] && ok "the notes are committed there" || bad "the notes aren't committed in the core.hooksPath prototype" "$out"
+git -C "$_ph" config --unset core.hooksPath
+if [ "$_pn_ok" -eq 1 ]; then
+  out="$(cd "$_pa" && PATH="$_no_gl_path" bash tools/prototype.sh start quick-add 2>&1)"; status=$?
+  { [ "$status" -eq 1 ] && printf '%s' "$out" | grep -q "gitleaks isn't on PATH, and a prototype's commits have no other secrets gate (elsewhere it is optional)" && _pa_none; } \
+    && ok "start refuses, creating nothing, without gitleaks, which is optional everywhere else" || bad "start refuses without gitleaks (exit $status)" "$out"
+else
+  echo "  skip  start without gitleaks (git, bash or dirname shares a folder with gitleaks on this machine)"
+fi
+_pm="$work/proto-old-main"; _proto_repo "$_pm" "$work/proto-old-origin.git"
+(cd "$_pm" && git rm -q .githooks/pre-push && PATH="$_pp_path" git commit -qm "a main from before the pre-push hook") >/dev/null 2>&1
+out="$(cd "$_pm" && PATH="$_pp_path" bash tools/prototype.sh start quick-add 2>&1)"; status=$?
+{ [ "$status" -eq 1 ] && printf '%s' "$out" | grep -q "main has no committed .githooks/pre-push" && [ ! -e "$work/proto-old-main-proto-quick-add" ]; } \
+  && ok "start refuses, creating nothing, when main has no committed pre-push hook" || bad "start refuses when main has no committed pre-push hook (exit $status)" "$out"
+
+# origin/main ahead of main (as last fetched): start creates nothing and says how to go on.
+_pa_ahead="$(cd "$_pa" && git commit-tree -p main -m "a commit only origin has" "main^{tree}")"
+git -C "$_pa" update-ref refs/remotes/origin/main "$_pa_ahead"
+out="$(proto start quick-add)"; status=$?
+expect_status "start stops when origin/main is ahead of main (exit 5)" 5 "$status" "$out"
+expect_output "and offers to bring main up to date or to start as it is" "git pull --ff-only.*start quick-add --as-is" "$out"
+[ ! -e "$_pw" ] && ! git -C "$_pa" show-ref --verify --quiet refs/heads/proto/quick-add \
+  && ok "and creates no branch and no worktree" || bad "start created a prototype while origin/main was ahead"
+out="$(proto start quick-add --as-is)"; status=$?
+git -C "$_pa" update-ref refs/remotes/origin/main main
+expect_status "start --as-is creates a prototype from main as it is" 0 "$status" "$out"
+[ -d "$_pw" ] && [ "$(git -C "$_pw" symbolic-ref --short HEAD 2>/dev/null)" = "proto/quick-add" ] \
+  && ok "start creates the worktree beside the game, named after it, on the new branch proto/quick-add" \
+  || bad "start creates the worktree beside the game, named after it, on the new branch proto/quick-add" "$out"
+[ "$(git -C "$_pa" merge-base main proto/quick-add 2>/dev/null)" = "$(git -C "$_pa" rev-parse main)" ] \
+  && ok "the prototype's branch starts from local main" || bad "the prototype's branch starts from local main"
+[ -z "$(git -C "$_pa" config --get branch.proto/quick-add.merge)" ] \
+  && ok "the prototype's branch has no upstream, even with branch.autoSetupMerge = always" \
+  || bad "the prototype's branch has an upstream: $(git -C "$_pa" config --get branch.proto/quick-add.merge)"
+[ "$(head -n 1 "$_pw/tools/godot_bin.local" 2>/dev/null)" = "$_pg" ] \
+  && ok "start copies this clone's saved Godot path to the worktree, which gitignores it" || bad "start copies the saved Godot path to the worktree" "$out"
+expect_output "start runs setup-clone in the worktree, which finds Godot from it" "^setup: Godot 4\.7" "$out"
+expect_output "and installs the pre-commit hook" "^setup: pre-commit hook installed" "$out"
+expect_output "and the pre-push hook" "^setup: pre-push hook installed" "$out"
+grep -q "^## What we're trying$" "$_pw/PROTOTYPE.md" && grep -q '^## How it felt$' "$_pw/PROTOTYPE.md" \
+  && grep -q '^## What to keep$' "$_pw/PROTOTYPE.md" \
+  && grep -qF 'A session in a checkout that `bash tools/prototype.sh here` calls a prototype (a linked worktree on a `proto/` branch with this file at its root) is a prototype session: read `.godot-director/procedures/prototype.md` › In a prototype session before any work.' "$_pw/PROTOTYPE.md" \
+  && [ -z "$(git -C "$_pw" status --porcelain)" ] && [ "$(git -C "$_pa" rev-list --count main..proto/quick-add)" = 1 ] \
+  && ok "start writes PROTOTYPE.md from its template (what we're trying, how it felt, what to keep) and commits it" \
+  || bad "start writes PROTOTYPE.md from its template and commits it" "$(cat "$_pw/PROTOTYPE.md" 2>&1)"
+
+out="$(proto start quick-add)"; status=$?
+expect_status "start refuses a name whose branch exists" 1 "$status" "$out"
+expect_output "and says the branch exists" "the branch proto/quick-add already exists" "$out"
+mkdir -p "$work/proto-app-proto-taken"
+out="$(proto start taken)"; status=$?
+expect_status "start refuses a name whose folder exists" 1 "$status" "$out"
+expect_output "and says the folder exists" "the folder .*proto-app-proto-taken already exists" "$out"
+_proto_bad=""
+for _pn in Quick quick_add -x x- a/b .. 'two words' list harvest remove here ''; do
+  out="$(proto start "$_pn")"; status=$?
+  { [ "$status" -eq 1 ] && printf '%s' "$out" | grep -q "isn't a prototype name"; } || _proto_bad="$_proto_bad '$_pn'"
+done
+[ -z "$_proto_bad" ] && ok "start refuses an invalid name: capitals, an underscore, a dash at either end, a slash, dots, a space, a command word, none" \
+  || bad "start doesn't refuse these names:$_proto_bad"
+[ "$(git -C "$_pa" for-each-ref refs/heads/proto/ | wc -l | tr -d ' ')" = 1 ] && [ "$(git -C "$_pa" worktree list | wc -l | tr -d ' ')" = 2 ] \
+  && ok "a refused start creates no branch and no worktree" || bad "a refused start creates no branch and no worktree" "$(git -C "$_pa" worktree list)"
+out="$(cd "$_pw" && PATH="$_pp_path" bash tools/prototype.sh start other 2>&1)"; status=$?
+expect_status "start refuses to run in a prototype session" 1 "$status" "$out"
+out="$(cd "$_pw" && bash tools/prototype.sh here 2>&1)"; status=$?
+expect_status "here: the worktree is a prototype" 0 "$status" "$out"
+out="$(cd "$_pa" && bash tools/prototype.sh here 2>&1)"; status=$?
+expect_status "here: the main checkout isn't" 1 "$status" "$out"
+out="$(proto list)"
+expect_output "list shows the prototype, its worktree and its commits since main" "^proto/quick-add · .*proto-app-proto-quick-add · 1 commit\(s\) since main$" "$out"
+
+# The pre-commit hook in the prototype: no check, but the staged secrets scan, which needs gitleaks there.
+(cd "$_pw" && printf 'extends Node\nvar tried: int = 1\n' > tried.gd && git add tried.gd)
+out="$(commit_in "$_pw" "$_pp_path" "proto: try it")"; status=$?
+expect_status "pre-commit lets a source commit through in a prototype while the check fails" 0 "$status" "$out"
+expect_output "and says the check is skipped in a prototype" "this checkout is a prototype, so the project check is skipped" "$out"
+expect_no_output "and doesn't run the check there" "running the project check|stub check" "$out"
+(cd "$_pw" && printf 'var more: int = 2\n' >> tried.gd && git add tried.gd)
+out="$(cd "$_pw" && PATH="$_pp_path" FAKE_GL_FINDING=tried.gd git commit -qm "proto: a secret" 2>&1)"; status=$?
+expect_status "pre-commit still blocks a staged secret in a prototype (stand-in)" 1 "$status" "$out"
+expect_output "and names the finding in the prototype (stand-in)" "found in: tried\.gd:7 \(selftest-rule\)" "$out"
+expect_output "and tells the agent to ask the human in the main session about a false positive" "ask the human in the main session: allowlisting is theirs to decide" "$out"
+expect_no_output "and not to add a fingerprint to .gitleaksignore" "Fingerprint to \.gitleaksignore" "$out"
+(cd "$_pa" && printf 'a line\n' >> README.md && git add README.md)
+out="$(cd "$_pa" && PATH="$_pp_path" FAKE_GL_FINDING=README.md git commit -qm "docs: a secret" 2>&1)"; status=$?
+expect_status "pre-commit blocks a staged secret outside a prototype too (stand-in)" 1 "$status" "$out"
+expect_output "and there the message keeps the fingerprint route for the human to approve" "Fingerprint to \.gitleaksignore, record why in design/decisions\.md, and have the human approve" "$out"
+(cd "$_pa" && git reset -q -- README.md && git checkout -q -- README.md)
+if [ "$_pn_ok" -eq 1 ]; then
+  out="$(commit_in "$_pw" "$_no_gl_path" "proto: no gitleaks")"; status=$?
+  expect_status "pre-commit blocks a commit in a prototype when gitleaks is missing" 1 "$status" "$out"
+  expect_output "and says the scan is the only gate there" "in a prototype the secrets scan is the only gate, so the" "$out"
+else
+  echo "  skip  a prototype commit without gitleaks (git, bash or dirname shares a folder with gitleaks on this machine)"
+fi
+(cd "$_pw" && git reset -q -- tried.gd && git checkout -q -- tried.gd)
+# In a prototype, .gitleaksignore and .gitleaks.toml must be main's, on disk and staged: allowlisting needs the human.
+(cd "$_pw" && printf 'var ok: int = 3\n' >> tried.gd && git add tried.gd && printf 'tried.gd:generic-api-key:1\n' > .gitleaksignore)
+out="$(commit_in "$_pw" "$_pp_path" "proto: an allowlist on disk")"; status=$?
+expect_status "pre-commit blocks a prototype commit while a .gitleaksignore on disk differs from main's" 1 "$status" "$out"
+expect_output "and says allowlisting needs the human" "\.gitleaksignore differs from main's in this prototype; commit blocked" "$out"
+(cd "$_pw" && git add .gitleaksignore)
+out="$(commit_in "$_pw" "$_pp_path" "proto: an allowlist staged")"; status=$?
+expect_status "pre-commit blocks a prototype commit that stages a .gitleaksignore" 1 "$status" "$out"
+(cd "$_pw" && git rm -q --cached .gitleaksignore && rm -f .gitleaksignore && printf '[extend]\nuseDefault = true\n' > .gitleaks.toml)
+out="$(commit_in "$_pw" "$_pp_path" "proto: rules on disk")"; status=$?
+expect_status "pre-commit blocks a prototype commit while a .gitleaks.toml on disk differs from main's" 1 "$status" "$out"
+rm -f "$_pw/.gitleaks.toml"
+(cd "$_pw" && git reset -q -- tried.gd && git checkout -q -- tried.gd)
+# An inline allow (a gitleaks:allow comment) on a staged line hides it from the scan, which is allowlisting too:
+# blocked in a prototype, where the scan is the only gate, and fine in any other commit. A removed line doesn't count.
+gen_token
+(cd "$_pw" && printf 'extends Node\nconst TOKEN: String = "%s" # gitleaks:allow\n' "$_tok" > allowed.gd && git add allowed.gd)
+out="$(commit_in "$_pw" "$_pp_path" "proto: an inline allow")"; status=$?
+expect_status "pre-commit blocks a staged gitleaks:allow comment in a prototype" 1 "$status" "$out"
+expect_output "and says which line it is" "a staged line has a gitleaks:allow comment; commit blocked" "$out"
+expect_output "and that an inline allow needs the human, in the main session" "so it needs the human, in the main$" "$out"
+expect_no_output "and doesn't print the token" "$_tok" "$out"
+(cd "$_pw" && git reset -q -- allowed.gd && rm -f allowed.gd)
+(cd "$_pf" && printf 'a note # gitleaks:allow\n' > allow.md && git add allow.md)
+out="$(commit_in "$_pf" "$_pp_path" "docs: an inline allow outside a prototype")"; status=$?
+expect_status "an inline gitleaks:allow comment is not blocked outside a prototype" 0 "$status" "$out"
+(cd "$_pf" && printf 'a note\n' > allow.md && git add allow.md && PATH="$_pp_path" git commit -qm "docs: take the allow out") >/dev/null 2>&1
+if [ "$_gl_ok" -eq 1 ]; then
+  gen_token
+  (cd "$_pw" && printf 'extends Node\nconst TOKEN: String = "%s"\n' "$_tok" > leak.gd && git add leak.gd)
+  _pt_commits="$(git -C "$_pw" rev-list --count HEAD)"
+  out="$(commit_in "$_pw" "$PATH" "proto: a token")"; status=$?
+  expect_status "pre-commit blocks a token staged in a prototype (real gitleaks)" 1 "$status" "$out"
+  expect_output "and names the file in the prototype (real gitleaks)" "found in: leak\.gd" "$out"
+  expect_no_output "and doesn't print the token" "$_tok" "$out"
+  [ "$(git -C "$_pw" rev-list --count HEAD)" = "$_pt_commits" ] && ok "the blocked commit in the prototype is not made" \
+    || bad "the blocked commit in the prototype is not made"
+  (cd "$_pw" && git reset -q -- leak.gd && rm -f leak.gd)
+else
+  echo "  skip  real gitleaks staged-secret test in a prototype (gitleaks not found, below 8.18.0, or 8.19.0)"
+fi
+
+# Everywhere else the check runs, and gitleaks stays optional: the prototype's worktree without PROTOTYPE.md or on a
+# detached HEAD, a proto/ branch in the main checkout (with or without PROTOTYPE.md: it isn't a linked worktree),
+# main, and protoish.
+_proto_runs() { # _proto_runs <what> <folder>: a staged source file's commit there runs the failing check
+  (cd "$2" && printf 'extends Node\n' > runs.gd && git add runs.gd)
+  out="$(commit_in "$2" "$_pp_path" "feat: runs")"; status=$?
+  { [ "$status" -eq 1 ] && printf '%s' "$out" | grep -q "running the project check"; } \
+    && ok "pre-commit runs the check $1" || bad "pre-commit runs the check $1 (exit $status)" "$out"
+  (cd "$2" && git reset -q -- runs.gd && rm -f runs.gd)
+}
+mv "$_pw/PROTOTYPE.md" "$work/PROTOTYPE.md.saved"
+_proto_runs "in a worktree on a proto/ branch without PROTOTYPE.md" "$_pw"
+mv "$work/PROTOTYPE.md.saved" "$_pw/PROTOTYPE.md"
+git -C "$_pw" checkout -q --detach
+_proto_runs "on a detached HEAD, in the prototype's worktree" "$_pw"
+git -C "$_pw" switch -q proto/quick-add
+git -C "$_pa" switch -q -c proto/fake
+_proto_runs "on a proto/ branch in the main checkout" "$_pa"
+printf '# Prototype: fake\n' > "$_pa/PROTOTYPE.md"
+_proto_runs "on a proto/ branch in the main checkout, with a PROTOTYPE.md (not a linked worktree)" "$_pa"
+rm -f "$_pa/PROTOTYPE.md"
+git -C "$_pa" switch -q main && git -C "$_pa" branch -q -d proto/fake
+_proto_runs "on main" "$_pa"
+git -C "$_pa" switch -q -c protoish
+_proto_runs "on a branch whose name only starts like one (protoish)" "$_pa"
+git -C "$_pa" switch -q main
+if [ "$_pn_ok" -eq 1 ]; then
+  (cd "$_pa" && printf '# notes\n' > notes.md && git add notes.md)
+  out="$(commit_in "$_pa" "$_no_gl_path" "docs: a note")"; status=$?
+  expect_status "outside a prototype a missing gitleaks stays a note: the commit goes through" 0 "$status" "$out"
+  expect_output "and the note names the install" "pre-commit: note: gitleaks isn't installed, so this commit isn't scanned for secrets; install it from https://github.com/gitleaks/gitleaks#installing" "$out"
+fi
+
+# The Stop hook runs the check when game files differ from the last commit, but not in a prototype.
+_stop_in() { printf '{}' | CLAUDE_PROJECT_DIR="$1" bash "$src/framework/.claude/hooks/stop-check.sh" 2>&1; }
+printf 'extends Node\n' > "$_pw/wip.gd"
+out="$(_stop_in "$_pw")"; expect_status "the Stop hook doesn't run the check in a prototype" 0 $? "$out"
+printf 'extends Node\n' > "$_pa/wip.gd"
+out="$(_stop_in "$_pa")"; expect_status "the Stop hook runs the check on main, and blocks on a failure" 2 $? "$out"
+rm -f "$_pa/wip.gd"
+
+# The pre-push hook refuses a proto/ branch, from the prototype or to the remote, and any push that carries a
+# prototype's commits under another name, and lets main through.
+_push_refused() { # _push_refused <what> <folder> <refspec> <reason pattern>
+  out="$(cd "$2" && PATH="$_pp_path" git push -q origin "$3" 2>&1)"; status=$?
+  { [ "$status" -ne 0 ] && printf '%s' "$out" | grep -q "a prototype is never pushed; push blocked" && printf '%s' "$out" | grep -q "$4"; } \
+    && ok "pre-push refuses $1" || bad "pre-push refuses $1 (exit $status)" "$out"
+}
+_push_refused "a proto/ branch" "$_pw" proto/quick-add "(a proto/ branch)"
+_push_refused "a push to a proto/ branch on the remote" "$_pa" main:refs/heads/proto/sneak "(a proto/ branch)"
+_push_refused "HEAD under another name, from the prototype" "$_pw" HEAD:refs/heads/x "carries a prototype's commits"
+_push_refused "a prototype's commit by its hash" "$_pa" "$(git -C "$_pa" rev-parse proto/quick-add):refs/heads/y" "carries a prototype's commits"
+_push_refused "proto/quick-add~0 under another name" "$_pa" "proto/quick-add~0:refs/heads/z" "carries a prototype's commits"
+git -C "$_pa" branch from-proto proto/quick-add >/dev/null 2>&1
+_push_refused "a branch made from a prototype's commit" "$_pa" from-proto "carries a prototype's commits"
+(cd "$_pa" && printf '# game\n\nA note.\n' > README.md && git add README.md && PATH="$_pp_path" git commit -qm "docs: a note") >/dev/null 2>&1
+out="$(cd "$_pa" && PATH="$_pp_path" git push -q origin main 2>&1)"
+expect_status "pre-push lets main through" 0 $? "$out"
+[ "$(git --git-dir="$_po" for-each-ref --format='%(refname)')" = "refs/heads/main" ] \
+  && ok "the origin has main and nothing else" || bad "a refused push reached the origin" "$(git --git-dir="$_po" for-each-ref)"
+
+# The files that gate a prototype's commits and pushes can't be written from a prototype session: the Edit and Write
+# guard refuses them when PROTOTYPE.md is at the project root, in every spelling of the path, and lets the same paths
+# through in a checkout that isn't one.
+guard_write 2 "a prototype: .githooks/pre-commit" '.githooks/pre-commit' "$_pw"
+guard_write 2 "a prototype: a new hook in .githooks/, absolute" "$_pw/.githooks/post-commit" "$_pw"
+guard_write 2 "a prototype: ./.githooks/pre-push" './.githooks/pre-push' "$_pw"
+guard_write 2 "a prototype: x/../.githooks/pre-commit" 'x/../.githooks/pre-commit' "$_pw"
+guard_write 2 "a prototype: .claude/settings.json" '.claude/settings.json' "$_pw"
+guard_write 2 "a prototype: .claude/hooks/guard-git.sh, absolute" "$_pw/.claude/hooks/guard-git.sh" "$_pw"
+guard_write 2 "a prototype: .claude/settings.local.json" '.claude/settings.local.json' "$_pw"
+guard_write 2 "a prototype: tools/prototype.sh" 'tools/prototype.sh' "$_pw"
+guard_write 2 "a prototype: tools/setup-clone.sh" 'tools/setup-clone.sh' "$_pw"
+guard_write 2 "a prototype: .gitleaksignore" '.gitleaksignore' "$_pw"
+guard_write 2 "a prototype: .gitleaks.toml" '.gitleaks.toml' "$_pw"
+guard_write 2 "a prototype: director/x is still the human's" 'director/x' "$_pw"
+guard_write 0 "a prototype: scripts/x.gd" 'scripts/x.gd' "$_pw"
+guard_write 0 "a prototype: tools/check.sh" 'tools/check.sh' "$_pw"
+guard_write 0 "a prototype: PROTOTYPE.md, its notes" 'PROTOTYPE.md' "$_pw"
+guard_write 0 "a prototype: .githooks-notes.md, a name that only starts like it" '.githooks-notes.md' "$_pw"
+guard_write 0 "the main checkout: .githooks/pre-commit" '.githooks/pre-commit' "$_pa"
+guard_write 0 "the main checkout: .claude/settings.json" '.claude/settings.json' "$_pa"
+guard_write 0 "the main checkout: tools/prototype.sh" 'tools/prototype.sh' "$_pa"
+guard_write 0 "the main checkout: .gitleaksignore" '.gitleaksignore' "$_pa"
+
+# list and harvest name the gate files a prototype changed (committed or not), and say nothing when none differs.
+out="$(proto list)"
+expect_no_output "list names no gate file while none differs from main's" "gate files" "$out"
+printf '# tried\n' >> "$_pw/.githooks/pre-push"
+out="$(proto list)"
+expect_output "list names a gate file with an uncommitted change in the prototype" "^  gate files that differ from main's: \.githooks/pre-push$" "$out"
+expect_output "and still lists the prototype first" "^proto/quick-add · .*proto-app-proto-quick-add · 2 commit\(s\) since main$" "$out"
+
+# harvest prints the prototype's commits, files, the diff command, uncommitted changes and notes, and writes nothing.
+_pa_state() { git -C "$_pa" status --porcelain; git -C "$_pa" rev-parse HEAD proto/quick-add; git -C "$_pa" for-each-ref; cksum < "$_pa/TASKS.md" 2>/dev/null; }
+_pa_before="$(_pa_state)"
+out="$(proto harvest quick-add)"; status=$?
+expect_status "harvest prints what the harvest reads" 0 "$status" "$out"
+expect_output "harvest lists the prototype's commits since main" "proto: try it" "$out"
+expect_output "harvest lists the files the prototype changed, with the diff command" "read the diff with: git diff main\.\.\.proto/quick-add$" "$out"
+expect_output "harvest lists a changed file" "tried\.gd" "$out"
+expect_output "harvest names the worktree's uncommitted changes, which the diff leaves out" "^\?\? wip\.gd$" "$out"
+expect_output "harvest shows the prototype's notes" "^## How it felt$" "$out"
+expect_output "harvest names the gate files that differ from main's, which only the human changes" "^--- gate files that differ from main's: .*only the human changes them" "$out"
+expect_output "and lists the one the prototype changed" "^\.githooks/pre-push$" "$out"
+[ "$(_pa_state)" = "$_pa_before" ] && ok "harvest writes no item, record, commit or branch without the human" \
+  || bad "harvest changed the main checkout or the branches" "$(_pa_state)"
+git -C "$_pw" checkout -q -- .githooks/pre-push
+out="$(proto harvest nothing-here)"; expect_status "harvest refuses a prototype that doesn't exist" 1 $? "$out"
+
+# remove: never forced, and the branch stays for the human to delete.
+out="$(proto remove quick-add)"; status=$?
+expect_status "remove fails on a worktree with uncommitted changes" 1 "$status" "$out"
+[ -f "$_pw/wip.gd" ] && ok "and leaves the worktree and its changes in place" || bad "remove deleted a worktree with uncommitted changes"
+expect_output "and says why, without forcing it" "git worktree remove failed \(above\); uncommitted changes are the usual cause.*never force it" "$out"
+rm -f "$_pw/wip.gd"
+out="$(proto remove quick-add)"; status=$?
+expect_status "remove removes a clean worktree" 0 "$status" "$out"
+[ ! -e "$_pw" ] && git -C "$_pa" show-ref --verify --quiet refs/heads/proto/quick-add \
+  && ok "remove deletes the worktree's folder and keeps the branch with its commits" \
+  || bad "remove deletes the worktree's folder and keeps the branch with its commits" "$out"
+expect_output "remove asks the human to delete the branch, with the command" "the human runs that.*: git branch -D proto/quick-add$" "$out"
+out="$(proto list)"
+expect_output "list shows a prototype whose worktree is gone" "^proto/quick-add · no worktree · 2 commit\(s\) since main$" "$out"
+[ -z "$(git --git-dir="$_po" for-each-ref refs/heads/proto/)" ] && [ -n "$(git --git-dir="$_po" for-each-ref refs/heads/main)" ] \
+  && ok "nothing pushes a proto/ branch" || bad "a proto/ branch reached the origin" "$(git --git-dir="$_po" for-each-ref)"
+
+# A game folder whose name has a space.
+_ps="$work/proto space game"; _psw="$work/proto space game-proto-try"
+_proto_repo "$_ps" "$work/proto-space-origin.git"
+out="$(cd "$_ps" && PATH="$_pp_path" bash tools/prototype.sh start try 2>&1)"; status=$?
+expect_status "start works in a game folder whose name has a space" 0 "$status" "$out"
+out="$(cd "$_psw" && bash tools/prototype.sh here 2>&1)"
+expect_status "the worktree beside it, named after it, is a prototype" 0 $? "$out"
+out="$(cd "$_ps" && bash tools/prototype.sh list 2>&1)"
+expect_output "list names its folder, space and all" "^proto/try · .*proto space game-proto-try · 1 commit\(s\) since main$" "$out"
+out="$(cd "$_ps" && bash tools/prototype.sh harvest try 2>&1)"
+expect_status "harvest works there" 0 $? "$out"
+expect_no_output "and names no gate file while none differs" "gate files" "$out"
+(cd "$_psw" && printf '# tried\n' >> .githooks/pre-commit && git add .githooks/pre-commit && PATH="$_pp_path" git commit -qm "proto: touch a hook") >/dev/null 2>&1
+out="$(cd "$_ps" && bash tools/prototype.sh harvest try 2>&1)"
+expect_output "harvest names a gate file the prototype committed" "^\.githooks/pre-commit$" "$out"
+out="$(cd "$_ps" && bash tools/prototype.sh list 2>&1)"
+expect_output "and so does list" "^  gate files that differ from main's: \.githooks/pre-commit$" "$out"
+out="$(cd "$_ps" && bash tools/prototype.sh remove try 2>&1)"; status=$?
+[ "$status" -eq 0 ] && [ ! -e "$_psw" ] && ok "remove works there" || bad "remove works in a folder whose name has a space (exit $status)" "$out"
 cd "$game" || exit 1
 
 # --- screen capture (/ui-design) ----------------------------------------------------------------

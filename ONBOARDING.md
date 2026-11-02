@@ -54,9 +54,9 @@ Run `bash "$GDIR/install.sh" --tools <claude|none> .` for a first install. For a
 ## 3. Godot for this clone
 Run `bash tools/setup-clone.sh --skip-hook`, adding the Godot path if the human gave one. It finds Godot 4.5+ and saves the path in `tools/godot_bin.local`, which is gitignored and never committed. If it exits 3, ask the human where Godot is and rerun it with the path. On Windows, prefer the `*_console.exe` build.
 
-gitleaks is optional and recommended: with it on the PATH, the check and the pre-commit hook scan for secrets, and without it they print a note and go on. If `command -v gitleaks` finds nothing, tell the human it's worth installing (`winget install gitleaks`, `brew install gitleaks`, or https://github.com/gitleaks/gitleaks#installing) and carry on; never stop for it.
+gitleaks is optional and recommended: with it on the PATH, the check and the pre-commit hook scan for secrets, and without it they print a note and go on. If `command -v gitleaks` finds nothing, tell the human it's worth installing (`winget install gitleaks`, `brew install gitleaks`, or https://github.com/gitleaks/gitleaks#installing) and carry on; never stop for it. (A prototype is the one place that needs it, since its commits skip the check and the scan is their only gate: `/prototype` says so when it is missing.)
 
-Then run `bash tools/check.sh` once and keep the result. An existing game often fails at first; that's information, not a blocker. The pre-commit hook is installed at the very end (step 9), so the install commit isn't blocked.
+Then run `bash tools/check.sh` once and keep the result. An existing game often fails at first; that's information, not a blocker. The pre-commit and pre-push hooks are installed at the very end (step 9), so the install commit isn't blocked.
 
 ## 4. Scan the project (read only)
 - `project.godot`: name, `config/features` (the Godot version), autoloads, main scene, renderer, and window/stretch settings.
@@ -148,7 +148,7 @@ Rewrite the old files into the new format (`$GDIR/project/` shows the target sha
 | `playtesting/TEMPLATE.md` | Keep its loops and scored statements, worded exactly the same so scores stay comparable, in the new layout. |
 | A copy of the framework inside the game (`Claude4Godot/` in 1.x) | Delete it after asking. |
 | Files under `.claude/` that aren't in `.godot-director/manifest` (1.x agents, skills or commands) | List them for the human. Delete the 1.x ones after asking; keep the project's own. |
-| `core.hooksPath` set to `.githooks` | `tools/setup-clone.sh` explains it. The human runs `git config --unset core.hooksPath` (the guard hook blocks you from doing it), then setup-clone installs the hook the 2.x way. |
+| `core.hooksPath` set to `.githooks` | `tools/setup-clone.sh` explains it. The human runs `git config --unset core.hooksPath` (the guard hook blocks you from doing it), then setup-clone installs the hooks the 2.x way. |
 
 Finally, search the documents for leftovers and fix them. Use `git grep -n -e … -- '*.md'`, which skips an excluded Godot Director folder. Search for `§`, `SYSTEMS.md`, `SETUP.md`, `FUNCTION_CHECK`, `Cowork`, `needs-validation`, `in-progress:`, `persona`, `dev-small`, `.promptx`, `**Version:**`, `--headless --path . --quit` and `{{GODOT_BIN}}`.
 
@@ -233,17 +233,17 @@ If the loops aren't decided yet, leave the placeholders, and add an agent item "
 4. List every file created, changed or deleted (`git status`). That includes the `.uid` files Godot 4.4+ creates next to scripts, among them `tools/check.gd.uid`.
 5. **Commit it all in one commit, after the human approves.**
    - Stage everything: `git add -A -- <those files>`.
-   - Mark the scripts executable, listing only files that exist (`.claude/hooks` is there with the Claude adapter only): `git add --chmod=+x -- tools/*.sh .githooks/pre-commit`, plus `.claude/hooks/*.sh`.
+   - Mark the scripts executable, listing only files that exist (`.claude/hooks` is there with the Claude adapter only): `git add --chmod=+x -- tools/*.sh .githooks/pre-commit .githooks/pre-push`, plus `.claude/hooks/*.sh`.
    - Use the message `chore: install Godot Director <version>` (or `migrate to` / `upgrade to`). The body names the mode and anything you inferred.
-6. **The pre-commit hook.**
-   - If the check passes, run `bash tools/setup-clone.sh`, which installs it.
-   - If the check fails, leave the hook off and add an item: "Install the pre-commit hook once the check passes (`bash tools/setup-clone.sh`)".
+6. **The pre-commit and pre-push hooks.**
+   - If the check passes, run `bash tools/setup-clone.sh`, which installs both.
+   - If the check fails, leave the hooks off and add an item: "Install the pre-commit and pre-push hooks once the check passes (`bash tools/setup-clone.sh`)".
    - If setup-clone exits 4, tell the human what it printed (an existing hook or `core.hooksPath` needs a manual line).
 7. **Manual install:** offer to delete the Godot Director folder from the game. Deleting it is recommended, since upgrades come from a fresh download or the plugin. If the human keeps it, leave it in `.git/info/exclude`.
 8. **Offer a "Development" section for the game's README:** clone, then `bash tools/setup-clone.sh`, then the commands.
 9. **Tell the human:**
    - what needs their confirmation;
-   - how to use it: "do the next task", "let's brainstorm…", "validate the user stories" (in a game that uses them), "process my playtest", "prepare a function check", "check the docs are aligned", "research how other games handle…", "export the game", "capture the screens", and, when a pillar has been built two ways, "reset the design drift" (in Claude Code also `/next-task`, `/design`, `/research`, `/export`, `/ui-design`, `/playtest`, `/function-check`, `/align`, `/drift-reset`, `/prune`). Align often, reset when you have to;
+   - how to use it: "do the next task", "let's brainstorm…", "validate the user stories" (in a game that uses them), "let me try … in a prototype", "process my playtest", "prepare a function check", "check the docs are aligned", "research how other games handle…", "export the game", "capture the screens", and, when a pillar has been built two ways, "reset the design drift" (in Claude Code also `/next-task`, `/design`, `/prototype`, `/research`, `/export`, `/ui-design`, `/playtest`, `/function-check`, `/align`, `/drift-reset`, `/prune`). Align often, reset when you have to;
    - with the Claude adapter: to restart Claude Code, because skills, hooks and permissions load when a session starts;
    - to open the project in the Godot editor once, and commit the `.uid` and `.import` files it creates;
    - that every new clone needs `bash tools/setup-clone.sh`.

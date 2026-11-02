@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Godot Director protected-space guard · Claude Code PreToolUse hook on Edit and Write.
-# Blocks any write to director/ (the human's personal workspace), whether Claude Code sends a
+# Blocks any write to director/ (the human's personal workspace), and, in a prototype (PROTOTYPE.md at the
+# project root), to the files that gate its commits and pushes, whether Claude Code sends a
 # relative path or an absolute one. Relative paths resolve against the project root
 # ($CLAUDE_PROJECT_DIR, else the current directory); paths outside the root pass.
 # It starts no other processes.
@@ -60,4 +61,17 @@ case "$resolved" in
     exit 2
     ;;
 esac
+
+# In a prototype (PROTOTYPE.md at the project root; a builtin test, so no process starts) the commit hooks,
+# the guard and the settings, tools/prototype.sh, tools/setup-clone.sh and the gitleaks allowlist and rules
+# are the only gates on its commits, so a session there can't edit them: that is the human's, in the main
+# session (.godot-director/procedures/prototype.md). prototype.sh harvest and list name any that differ from main's.
+if [[ -f $root/PROTOTYPE.md ]]; then
+  case "$resolved" in
+    "$root/.githooks"|"$root/.githooks/"*|"$root/.claude"|"$root/.claude/"*|"$root/tools/prototype.sh"|"$root/tools/setup-clone.sh"|"$root/.gitleaksignore"|"$root/.gitleaks.toml")
+      echo "Godot Director: blocked: in a prototype the hooks (.githooks/), the guard and settings (.claude/), tools/prototype.sh, tools/setup-clone.sh, .gitleaksignore and .gitleaks.toml are its only gates, so only the human changes them, in the main session." >&2
+      exit 2
+      ;;
+  esac
+fi
 exit 0

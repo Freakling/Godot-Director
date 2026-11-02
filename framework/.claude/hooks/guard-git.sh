@@ -22,6 +22,12 @@
 # configured command (--output, --no-index, --ext-diff, commit -F and --file), because the allow
 # rules in settings.json let `git diff *`, `git log *`, `git show *` and `git commit *` run with
 # any flag. See the section "git: flags that write a file" at the end.
+#
+# That section also reads git branch and git worktree per command, so the ways to discard a branch's
+# commits or a worktree's uncommitted changes stay with the human in every spelling (branch -D, -d with
+# a force, -M, -C; worktree remove --force; worktree add -B), and it blocks an unquoted brace expansion
+# or $IFS in a git command, which could spell a flag past the parsing. A prototype's worktree is removed
+# with `git worktree remove` and its branch deleted by the human (.godot-director/procedures/prototype.md).
 
 IFS= read -r -d '' input || true
 re='"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
@@ -130,6 +136,10 @@ heredoc_free() { # heredoc_free <raw text>: sets hd_out to it with the heredoc b
 }
 code="$raw"
 if [[ $raw == *'<<'* ]]; then heredoc_free "$raw"; code="$hd_out"; fi
+# The JSON escapes \n, \t and \r are whitespace in the command: a flag at the end of a line (git push --force
+# and then a newline), a tab between words and a tab-indented later line are as much git as a space is.
+# An escaped backslash (\\) is kept apart, so \\t stays a backslash and a t.
+code="${code//\\\\/$'\x01'}"; code="${code//\\[ntr]/ }"; code="${code//$'\x01'/\\\\}"
 # A pathspec of the whole tree in quotes ('*', ":/") is still that pathspec: it is unquoted here,
 # before the quoted strings are blanked, so the checkout and restore tests below see it.
 for wt in '.' './' '.*' ':/' ':/*' ':/:' '*' ':(top)'; do
@@ -170,8 +180,9 @@ git_print_re='(^|[^[:alnum:]_./-])git[[:space:]]+([^;&|]*[[:space:]])?credential
 [[ $code =~ $gh_print_re ]] && block "gh auth token and gh auth status -t print the gh CLI's stored token"
 [[ $code =~ $git_print_re ]] && block "git credential fill and get print a credential from git's credential store"
 
-# A command on a later line follows the two characters \n in $raw.
-[[ $raw =~ (^|[^[:alnum:]_./-]|\\n)git([[:space:]]|\\n|$) ]] || exit 0
+# A command on a later line follows the two characters \n in $raw, and a tab, indent or carriage return
+# before it is \t, \r or spaces: any of the escapes may stand right before or after the word git.
+[[ $raw =~ (^|[^[:alnum:]_./-]|\\[nrt])git([[:space:]]|\\[nrt]|$) ]] || exit 0
 
 seg='[^;&|]*'   # stays within one command of a compound command line
 
@@ -256,13 +267,26 @@ outre='^(/|~|[A-Za-z]:|\$[A-Za-z_{])|(^|/)\.\.(/|$)'
 brackets='[(){}`]'
 IFS=';&|' read -r -d '' -a gsegs <<<"$gcode" || true
 for gs in "${gsegs[@]}"; do
+  # In a git command, an unquoted brace expansion ({a,b} or {a..b}) or $IFS spells a word the parsing
+  # below never sees (--{force,}, -{D,}, x$IFS--force). git's own @{...} (HEAD@{1}, @{u}..HEAD) is no
+  # expansion that can make a flag: each word it makes keeps the @ in front.
+  if [[ $gs =~ (^|[^[:alnum:]_./-])git([[:space:]]|$) ]]; then
+    gb="${gs//@\{/ }"
+    [[ $gb =~ \{[^{}[:space:]]*(,|\.\.)[^{}[:space:]]*\} ]] && block "a brace expansion in a git command can spell a flag past this check"
+    [[ $gs =~ \$\{?IFS ]] && block "\$IFS in a git command can split a word into a flag past this check"
+  fi
   gs="${gs//$brackets/ }"
   read -ra w <<<"$gs"
   n=${#w[@]}; k=0
   while ((k < n)) && [[ ${w[k]} != git ]]; do ((k++)); done
   ((k++))
+  # git's global options: the ones that take a value as the next word skip it too.
   while ((k < n)); do
-    case ${w[k]} in -C|-c) ((k += 2)) ;; -*) ((k++)) ;; *) break ;; esac
+    case ${w[k]} in
+      -C|-c|--git-dir|--work-tree|--namespace|--config-env|--attr-source) ((k += 2)) ;;
+      -*) ((k++)) ;;
+      *) break ;;
+    esac
   done
   case ${w[k]:-} in
     restore|checkout)
@@ -285,8 +309,19 @@ for gs in "${gsegs[@]}"; do
       done
       [[ $sub == restore && $paths -eq 0 ]] && block "git restore needs the files to restore; name them (git restore <file>, git restore --staged <file>)" ;;
     commit)
+      # -n and --no-verify skip the hooks. The tests on the command text near the top miss a spelling that
+      # quotes or splits the flag ('-n', "-n", -""n, --no-ve''rify, a backslash-newline inside the word); gcode
+      # has put those words together, so they are tested here as git sees them: a short-flag cluster with an
+      # n in it, and --no-verify from its sixth character (--no-v is the shortest unambiguous abbreviation).
+      # After -- come paths only.
       for ((k++; k < n; k++)); do
         a="${w[k]}"
+        [[ $a == -- ]] && break
+        [[ $a =~ ^-[a-mo-zA-Z]*n[a-zA-Z]*$ ]] && block "git commit -n skips the project check"
+        if [[ $a == --* ]]; then
+          name="${a%%=*}"
+          ((${#name} >= 6)) && [[ --no-verify == "$name"* ]] && block "--no-verify skips the project check"
+        fi
         if [[ $a =~ ^-[aeinopqsvz]*F(.*)$ ]]; then v="${BASH_REMATCH[1]:-${w[k+1]:-}}"
         elif [[ $a =~ ^--fil(e?)(=(.*))?$ ]]; then
           if [[ -n ${BASH_REMATCH[2]} ]]; then v="${BASH_REMATCH[3]}"; else v="${w[k+1]:-}"; fi
@@ -298,6 +333,80 @@ for gs in "${gsegs[@]}"; do
         [[ ${w[k]} == -* ]] && continue
         [[ ${w[k]} =~ $outre ]] && block "git diff of a path outside the repository reads any file on the machine"
       done ;;
+    branch)
+      # A forced delete discards a branch's unmerged commits, and a forced move or copy overwrites the branch
+      # it lands on: -D, -M or -C anywhere in a cluster, or a delete (-d, --delete), move (-m, --move) or copy
+      # (-c, --copy) with a force (-f, --force); a long option counts from its first three characters.
+      # -u takes the rest of its word as the upstream, so a cluster stops there. -f alone moves a branch
+      # to a commit (git branch -f topic main) and stays allowed.
+      del=0; move=0; copy=0; force=0
+      for ((k++; k < n; k++)); do
+        a="${w[k]}"
+        [[ $a == -- ]] && break
+        if [[ $a == --* ]]; then
+          name="${a%%=*}"
+          if ((${#name} >= 3)); then
+            [[ --delete == "$name"* ]] && del=1
+            [[ --move == "$name"* ]] && move=1
+            [[ --copy == "$name"* ]] && copy=1
+            [[ --force == "$name"* ]] && force=1
+          fi
+        elif [[ $a == -* ]]; then
+          cl="${a#-}"
+          while [[ -n $cl ]]; do
+            c="${cl:0:1}"; cl="${cl:1}"
+            case $c in
+              D) block "git branch -D deletes unmerged work" ;;
+              M|C) block "git branch -$c overwrites the branch it moves or copies onto" ;;
+              d) del=1 ;;
+              m) move=1 ;;
+              c) copy=1 ;;
+              f) force=1 ;;
+              u) break ;;
+            esac
+          done
+        fi
+      done
+      ((del && force)) && block "git branch -d with --force deletes unmerged work, as -D does"
+      ((force && (move || copy))) && block "git branch -m or -c with --force overwrites the branch it lands on"
+      ;;
+    worktree)
+      # git worktree remove --force (-f, a cluster with f, or --force from its first three characters)
+      # deletes the worktree's uncommitted changes, and git worktree add -B resets a branch that may hold
+      # commits, as -f or --force does to a branch checked out elsewhere. -b takes the rest of its word.
+      ((k++))
+      case ${w[k]:-} in
+        remove)
+          for ((k++; k < n; k++)); do
+            a="${w[k]}"
+            [[ $a == -- ]] && break
+            if [[ $a == --* ]]; then
+              name="${a%%=*}"
+              ((${#name} >= 3)) && [[ --force == "$name"* ]] && block "git worktree remove --force deletes the worktree's uncommitted changes"
+            elif [[ $a == -* && $a == *f* ]]; then
+              block "git worktree remove -f deletes the worktree's uncommitted changes"
+            fi
+          done ;;
+        add)
+          for ((k++; k < n; k++)); do
+            a="${w[k]}"
+            [[ $a == -- ]] && break
+            if [[ $a == --* ]]; then
+              name="${a%%=*}"
+              ((${#name} >= 3)) && [[ --force == "$name"* ]] && block "git worktree add --force checks out a branch another worktree has"
+            elif [[ $a == -* ]]; then
+              cl="${a#-}"
+              while [[ -n $cl ]]; do
+                c="${cl:0:1}"; cl="${cl:1}"
+                case $c in
+                  B) block "git worktree add -B resets a branch that may hold commits" ;;
+                  f) block "git worktree add -f checks out a branch another worktree has" ;;
+                  b) break ;;
+                esac
+              done
+            fi
+          done ;;
+      esac ;;
   esac
 done
 

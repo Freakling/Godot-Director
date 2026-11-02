@@ -19,6 +19,7 @@
       "Bash(bash tools/log_review.sh *)",
       "Bash(bash tools/log_review.sh)",
       "Bash(bash tools/stories.sh --due)",
+      "Bash(bash tools/prototype.sh *)",
       "Bash(git status)",
       "Bash(git add *)",
       "Bash(git commit *)",

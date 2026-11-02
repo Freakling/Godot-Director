@@ -4,10 +4,14 @@
 #
 # When a commit includes code, scenes or data:
 #   1. Runs the project check (working tree) with --if-changed caching. It checks the working
-#      tree, so commit what you checked (partially staged files aren't checked separately).
+#      tree, so commit what you checked (partially staged files aren't checked separately). Not in a
+#      prototype (a linked worktree on a proto/ branch with PROTOTYPE.md at its root, `bash tools/prototype.sh
+#      here`; .godot-director/procedures/prototype.md), which is tried outside the loop.
 # On every commit, whatever is staged:
 #   2. Runs gitleaks protect --staged --redact to catch secrets entering history, and names the
-#      files. gitleaks is optional: without it the hook prints a note and goes on.
+#      files. gitleaks is optional: without it the hook prints a note and goes on. In a prototype,
+#      where the scan is the only gate, a missing gitleaks blocks the commit, and so does a
+#      .gitleaksignore or .gitleaks.toml that differs from main's and a staged gitleaks:allow comment.
 # Both steps block the commit on failure.
 
 # ls-files also lists a nested repository in an ignored folder (such as a clone) as a
@@ -19,19 +23,72 @@ if [ -n "$pending" ]; then
   exit 1
 fi
 
+# A prototype is tried outside the loop: its commits skip the check, and the secrets scan below is
+# their only gate. tools/prototype.sh is the one place that says what a prototype is.
+prototype=0
+[ -f PROTOTYPE.md ] && [ -f tools/prototype.sh ] && bash tools/prototype.sh here >/dev/null 2>&1 && prototype=1
+
 # No Godot project yet (or no check): nothing to check, but the staged scan below still runs.
 if [ -f project.godot ] && [ -f tools/check.sh ] \
     && git -c core.quotePath=false diff --cached --name-only -z --diff-filter=ACMRD | tr '\0' '\n' \
     | grep -qE '\.(gd|tscn|scn|tres|res|gdshader|gdshaderinc)$|^project\.godot$|^tools/check\.(cfg|sh|local\.sh)$'; then
-  echo "pre-commit: running the project check"
-  bash tools/check.sh --if-changed
-  status=$?
-  if [ "$status" -eq 3 ]; then
-    echo "pre-commit: the check couldn't run. Run 'bash tools/setup-clone.sh', or, if you accept an"
-    echo "unverified commit, commit with --no-verify yourself."
+  if [ "$prototype" -eq 1 ]; then
+    echo "pre-commit: this checkout is a prototype, so the project check is skipped (the secrets scan still runs)"
+  else
+    echo "pre-commit: running the project check"
+    bash tools/check.sh --if-changed
+    status=$?
+    if [ "$status" -eq 3 ]; then
+      echo "pre-commit: the check couldn't run. Run 'bash tools/setup-clone.sh', or, if you accept an"
+      echo "unverified commit, commit with --no-verify yourself."
+      exit 1
+    elif [ "$status" -ne 0 ]; then
+      echo "pre-commit: the check fails; commit blocked."
+      exit 1
+    fi
+  fi
+fi
+
+# The scan needs gitleaks on every commit of a prototype, where it is the only gate. Elsewhere gitleaks
+# is optional: the hook says so and goes on.
+if ! command -v gitleaks >/dev/null 2>&1; then
+  if [ "$prototype" -eq 1 ]; then
+    echo "pre-commit: gitleaks isn't installed, and in a prototype the secrets scan is the only gate, so the"
+    echo "            commit is blocked. Install it from https://github.com/gitleaks/gitleaks#installing"
+    echo "            (winget install gitleaks, brew install gitleaks), then commit again."
     exit 1
-  elif [ "$status" -ne 0 ]; then
-    echo "pre-commit: the check fails; commit blocked."
+  fi
+  echo "pre-commit: note: gitleaks isn't installed, so this commit isn't scanned for secrets; install it from https://github.com/gitleaks/gitleaks#installing"
+  exit 0
+fi
+
+# In a prototype, the allowlist and the rules gitleaks reads from disk (.gitleaksignore, .gitleaks.toml)
+# must be main's, staged and on disk: allowlisting needs the human, and a prototype has no review to
+# catch it.
+differs_from_main() { # <file>
+  local in_main=0
+  git cat-file -e "main:$1" 2>/dev/null && in_main=1
+  if [ -e "$1" ]; then
+    [ "$in_main" -eq 1 ] && [ "$(git hash-object -- "$1")" = "$(git rev-parse "main:$1")" ] || return 0
+  elif [ "$in_main" -eq 1 ]; then
+    return 0
+  fi
+  ! git diff --cached --quiet main -- "$1" 2>/dev/null
+}
+if [ "$prototype" -eq 1 ]; then
+  for f in .gitleaksignore .gitleaks.toml; do
+    if differs_from_main "$f"; then
+      echo "pre-commit: $f differs from main's in this prototype; commit blocked. Allowlisting a secret, or"
+      echo "            changing the scan's rules, needs the human, in the main session."
+      exit 1
+    fi
+  done
+  # An inline allow on a staged line (a gitleaks:allow comment) hides that line from the scan: the same
+  # allowlisting, so it needs the human too. Only added lines count.
+  if git diff --cached --no-color -U0 2>/dev/null | grep -E '^\+' | grep -v '^+++' | grep -q 'gitleaks:allow'; then
+    echo "pre-commit: a staged line has a gitleaks:allow comment; commit blocked. An inline allow hides a line from"
+    echo "            the secrets scan, which is the only gate in a prototype, so it needs the human, in the main"
+    echo "            session. Take the comment out."
     exit 1
   fi
 fi
@@ -40,36 +97,37 @@ fi
 # scan was cached or didn't run. protect is the staged scan that works on the gitleaks releases checked
 # from 8.18.0 to 8.30.1, all but 8.19.0, which can't scan at all. The report names the files and lines;
 # only those are printed, and the values stay redacted. It runs on every commit, whatever is staged.
-if command -v gitleaks >/dev/null 2>&1; then
-  echo "pre-commit: scanning staged changes for secrets"
-  staged_report=".godot/godot-director/gitleaks-staged.json"
-  mkdir -p .godot/godot-director && rm -f "$staged_report"
-  scan_out="$(gitleaks protect --staged --redact --report-path="$staged_report" 2>&1)"
-  if [ $? -ne 0 ]; then
-    # Each finding is named as file:line (rule). A failure with no finding in the report means the
-    # scan couldn't run.
-    found="$(tr -d '\r' < "$staged_report" 2>/dev/null | awk '
-      /"RuleID"[ \t]*:/ { rule = $0; sub(/.*"RuleID"[ \t]*:[ \t]*"/, "", rule); sub(/".*/, "", rule) }
-      /"StartLine"[ \t]*:/ { line = $0; sub(/.*"StartLine"[ \t]*:[ \t]*/, "", line); sub(/[^0-9].*/, "", line) }
-      /"File"[ \t]*:/ { file = $0; sub(/.*"File"[ \t]*:[ \t]*"/, "", file); sub(/",?[ \t]*$/, "", file); gsub(/\\\\/, "/", file) }
-      /^[ \t]*\},?[ \t]*$/ { if (file != "") print file ":" line " (" rule ")"; file = ""; line = ""; rule = "" }
-    ')"
-    if [ -n "$found" ]; then
-      echo "pre-commit: gitleaks found a possible secret in the staged changes; commit blocked."
-      printf '%s\n' "$found" | head -n 20 | sed 's/^/            found in: /'
-      echo "            Report (values redacted): $staged_report"
+echo "pre-commit: scanning staged changes for secrets"
+staged_report=".godot/godot-director/gitleaks-staged.json"
+mkdir -p .godot/godot-director && rm -f "$staged_report"
+scan_out="$(gitleaks protect --staged --redact --report-path="$staged_report" 2>&1)"
+if [ $? -ne 0 ]; then
+  # Each finding is named as file:line (rule). A failure with no finding in the report means the
+  # scan couldn't run.
+  found="$(tr -d '\r' < "$staged_report" 2>/dev/null | awk '
+    /"RuleID"[ \t]*:/ { rule = $0; sub(/.*"RuleID"[ \t]*:[ \t]*"/, "", rule); sub(/".*/, "", rule) }
+    /"StartLine"[ \t]*:/ { line = $0; sub(/.*"StartLine"[ \t]*:[ \t]*/, "", line); sub(/[^0-9].*/, "", line) }
+    /"File"[ \t]*:/ { file = $0; sub(/.*"File"[ \t]*:[ \t]*"/, "", file); sub(/",?[ \t]*$/, "", file); gsub(/\\\\/, "/", file) }
+    /^[ \t]*\},?[ \t]*$/ { if (file != "") print file ":" line " (" rule ")"; file = ""; line = ""; rule = "" }
+  ')"
+  if [ -n "$found" ]; then
+    echo "pre-commit: gitleaks found a possible secret in the staged changes; commit blocked."
+    printf '%s\n' "$found" | head -n 20 | sed 's/^/            found in: /'
+    echo "            Report (values redacted): $staged_report"
+    if [ "$prototype" -eq 1 ]; then
+      echo "            Take the credential out of the file and unstage it. If you think it is a false positive,"
+      echo "            ask the human in the main session: allowlisting is theirs to decide, not yours here."
+    else
       echo "            Take the credential out of the file and unstage it. A false positive: add its"
       echo "            Fingerprint to .gitleaksignore, record why in design/decisions.md, and have the human approve."
-    else
-      echo "pre-commit: gitleaks couldn't scan the staged changes; commit blocked."
-      last_line="$(printf '%s\n' "$scan_out" | tr -d '\r' | tail -n 1)"
-      [ -n "$last_line" ] && echo "            gitleaks: $last_line"
-      echo "            Check 'gitleaks version': 8.19.0 can't scan, so use 8.19.1 or later."
     fi
-    exit 1
+  else
+    echo "pre-commit: gitleaks couldn't scan the staged changes; commit blocked."
+    last_line="$(printf '%s\n' "$scan_out" | tr -d '\r' | tail -n 1)"
+    [ -n "$last_line" ] && echo "            gitleaks: $last_line"
+    echo "            Check 'gitleaks version': 8.19.0 can't scan, so use 8.19.1 or later."
   fi
-  rm -f "$staged_report"
-else
-  echo "pre-commit: note: gitleaks isn't installed, so this commit isn't scanned for secrets; install it from https://github.com/gitleaks/gitleaks#installing"
+  exit 1
 fi
+rm -f "$staged_report"
 exit 0
