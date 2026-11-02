@@ -1,7 +1,7 @@
 <!-- Godot Director · framework-owned: replaced on upgrade. -->
 # Design session
 
-Brainstorm a topic, rank and answer open design questions, or change how part of the game works. Also turn user stories on or off, and validate them in a game that uses them (User stories, below). Write down only what the human decides. Your job is to make the human's decisions fast and well informed, never to make them.
+Brainstorm a topic, rank and answer open design questions, or change how part of the game works. Also turn user stories on or off, and validate them in a game that uses them (User stories, below), or harvest a prototype (Harvest a prototype, below). Write down only what the human decides. Your job is to make the human's decisions fast and well informed, never to make them.
 
 ## Prepare
 - Read GDD › Design Pillars, GDD › Open Questions, the GDD sections the topic touches, and the related lines in `design/decisions.md`. Don't re-propose something decided against there without saying what has changed since.
@@ -93,3 +93,9 @@ A playtest (`playtest.md`) and a function check (`function-check.md`) put the st
 - **Not ticked:** leave it as it is.
 
 List the corrected stories in the report's `Processed:` line, and commit `design/user-stories.md` with the report.
+
+## Harvest a prototype
+`prototype.md` › Harvest brings a prototype here: its notes (`PROTOTYPE.md`: what was tried, how it felt, what to keep) and its diff against main. It shows how a change feels; it decides nothing, and its code is never merged or cherry-picked.
+1. **Context.** Show the notes in the human's words, then what the prototype changes as a player would feel it, area by area from the diff rather than the code, with the GDD sections, Design Pillars, stories (with user stories on) and decisions it touches, as Prepare says. Name what it skipped that a real build needs: tests, the rule classes and tunables in `rules.md` › Architecture defaults, the play log lines, drivable actions and autoplay scenarios.
+2. **Options,** as For each question says. They are usually to build it as tried, a variant the notes point to, or to leave it, and each says what it would take to build from main and which pillar it serves or strains.
+3. **Record** what the human chooses, as Record each decision in one change says, naming the prototype in each: the decision's `why` ends with `(prototype: proto/<name>)`; the GDD changes are written as the current design; with user stories on, a story it adds or changes gets the line `US-<n> came from the prototype proto/<name> on <date>.` under its section's table; and each item gets `- Prototype: proto/<name>` (`.godot-director/tasks.md`). A number the prototype tuned stays a placeholder in the items (Record step 6): say how it felt, and the human tunes it in the `.tres`. The items are built from main like any other, with the check, autoplay and reviews. Nothing is filed without the human's answer: a part they don't answer stays out, and leaving the prototype files nothing. Unlike Record step 4, a drafted story the human doesn't answer stays out too. Commit as Finish says, as `docs: harvest the <name> prototype`.

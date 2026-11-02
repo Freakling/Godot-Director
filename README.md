@@ -31,11 +31,11 @@ AI writes game code fast. Without structure, that speed goes wrong in familiar w
 
 ### Start here: write your design document
 
-Before you install, write your game design document in your own words. The [template](https://raw.githubusercontent.com/Freakling/Godot-Director/v4.8.0/project/design/director-gdd.md) shows what to cover; fill in what you know and leave the rest blank. Then install Godot Director below: onboarding reads your document and asks only about what you left open.
+Before you install, write your game design document in your own words. The [template](https://raw.githubusercontent.com/Freakling/Godot-Director/v4.9.0/project/design/director-gdd.md) shows what to cover; fill in what you know and leave the rest blank. Then install Godot Director below: onboarding reads your document and asks only about what you left open.
 
 ### Install
 
-Your game needs git (`git init` if it has none) and no uncommitted changes. You also need Godot 4.5 or newer, and bash (on Windows it comes with Git for Windows). [gitleaks](https://github.com/gitleaks/gitleaks#installing) is optional and recommended: with it installed, the check and the pre-commit hook scan for secrets (`winget install gitleaks`, `brew install gitleaks`); without it they print a note and go on.
+Your game needs git (`git init` if it has none) and no uncommitted changes. You also need Godot 4.5 or newer, and bash (on Windows it comes with Git for Windows). [gitleaks](https://github.com/gitleaks/gitleaks#installing) is optional and recommended: with it installed, the check and the pre-commit hook scan for secrets (`winget install gitleaks`, `brew install gitleaks`); without it they print a note and go on (a prototype, below, needs it: its commits skip the check, so the scan is their only gate).
 
 **Option 1: the skill.** In your game's folder, run:
 
@@ -66,7 +66,7 @@ Either way, onboarding works out whether this is a new game, an existing game, a
 
 Afterwards, restart Claude Code so the new commands load. Each new clone of the game later needs one command: `bash tools/setup-clone.sh`.
 
-**With another AI assistant:** tell onboarding, and it installs the tool-neutral core only (`--tools none`); you can also keep the Claude adapter alongside. Your assistant reads `AGENTS.md`, which points it to `.godot-director/rules.md` and the procedures. The core is tool-neutral: rules, procedures, the check and the git pre-commit hook work the same everywhere. Fresh-context builds, the reviewer, model sizing and the hooks that block risky commands depend on your assistant supporting subagents and hooks.
+**With another AI assistant:** tell onboarding, and it installs the tool-neutral core only (`--tools none`); you can also keep the Claude adapter alongside. Your assistant reads `AGENTS.md`, which points it to `.godot-director/rules.md` and the procedures. The core is tool-neutral: rules, procedures, the check and the git hooks work the same everywhere. Fresh-context builds, the reviewer, model sizing and the hooks that block risky commands depend on your assistant supporting subagents and hooks.
 
 ### Upgrade
 - **Skill:** run `npx skills add Freakling/Godot-Director` again to get the skill of the latest release, then ask for it (`/godot-director` in Claude Code).
@@ -84,6 +84,7 @@ Only Godot Director's own files are replaced, and your edits to them are kept. W
 | "Which open questions block development?" (`/design questions`) | Ranks the open design questions by what they unblock, with options and a recommendation for each. |
 | "Let's brainstorm {topic}" (`/design {topic}`) | A design session. Your decisions become GDD text, decision-log lines, user stories (if the game uses them) and task items. |
 | "Validate the user stories" (`/design validate the stories`) | In a game that uses user stories: you confirm, correct or drop each story the recently built items served, and each one still unconfirmed. `/next-task` proposes it every 10 built items (`tools/check.cfg` › `[stories] every`); you can decline. Each playtest and function check also asks whether the stories behind what it covers are still right. |
+| "Prototype {idea}", "Let me try {change} quickly" (`/prototype {name}`, then `/prototype harvest {name}`) | Tries a change fast, before it's built against the design: a new git worktree beside your game on a `proto/{name}` branch, where you open a second session that is outside the loop (no items, records, reviews or check on its commits; the guard and the secrets scan stay on, and nothing is pushed or merged: a pre-push hook refuses a `proto/` branch). The game runs there: play it yourself, or let autoplay play it, and keep notes on what you tried and how it felt in its `PROTOTYPE.md`; with screens, `/ui-design` captures before and after let you compare. The harvest, back in your main session, is a design session on the prototype's diff and your notes: you decide what becomes GDD changes, decisions, user stories (if the game uses them) and items, which are built from main with the check and reviews, and the prototype's code is never merged. Then it offers to remove the worktree; deleting the branch is yours to run (`git branch -D`). A prototype needs gitleaks installed, since the secrets scan is the only gate on its commits. `/prototype list` shows the prototypes. |
 | "Research how other games handle {topic}", "What licence does this plugin use?" (`/research {question}`) | A read-only researcher looks into one question in a fresh context and saves a dated note in `design/research/`: the conclusion, the options, the sources with a confidence, and a recommendation. It informs; you decide. A design session asks it for facts it doesn't have, and you can queue a research item (`R1`, `R2`, ...) for later. |
 | "Export the game", "Make a Web build" (`/export`) | Exports every export preset headless with the Godot your clone already knows, after checking the export templates are installed, into the gitignored `builds/` folder, and reports what it produced. Onboarding asks which platforms you ship to and where exports run (this machine, a build container, or a hosted service such as GitHub Actions); skip it and the GDD gets an open question, so `/design Q{n}` sets it up later. |
 | "Release the game", "Push a build to UAT", "Promote to production" (`/release`) | Exports the presets, then runs the upload command you supplied for each preset to its UAT branch or channel (`release.cfg` names the commands and the CI secrets they read; Godot Director knows no store). It goes to production only when you ask, with the check passing. `.godot-director/templates/release-workflow.yml` is a GitHub Actions workflow that exports on every change, uploads to UAT from `main`, and runs production behind a protected Environment you approve. Onboarding asks for the commands and secret names, or you skip it and the GDD gets an open question. |
@@ -150,7 +151,7 @@ your-game/
 │  Godot Director's, tool-neutral: updated on upgrade
 ├── .godot-director/rules.md      the workflow rules, loaded through AGENTS.md
 ├── .godot-director/tasks.md      the TASKS.md item format, read when items are written
-├── .godot-director/procedures/   next-task · build · design · research · export · release · ui-design · autoplay · playtest · function-check · align · drift-reset · prune · review
+├── .godot-director/procedures/   next-task · build · design · prototype · research · export · release · ui-design · autoplay · playtest · function-check · align · drift-reset · prune · review
 ├── .godot-director/research-domain.md  what the researcher adds for Godot: the docs and engine version, plugin and asset licences, export and store requirements
 ├── tools/check.sh, check.gd    the check;  tools/test_case.gd: base for tests in tests/
 ├── tools/ui_capture.sh, ui_*.gd  screen capture, element map, layout lint, drawing reader, compare and verify
@@ -158,11 +159,13 @@ your-game/
 ├── tools/autoplay.sh, autoplay*.gd  autoplay: plays the real game through the adapter, checks invariants, writes repros
 ├── tools/log_review.sh, .gd    log review: a play log into review.md and findings.json, with signatures
 ├── tools/dev_menu_base.gd      the dev menu: a tab per system with its actions and hidden values, and the play log's tail
-├── tools/setup-clone.sh        per clone: finds Godot, installs the pre-commit hook
+├── tools/setup-clone.sh        per clone: finds Godot, installs the pre-commit and pre-push hooks
+├── tools/prototype.sh          a prototype's git steps: its worktree, branch and notes; list, harvest, remove
 ├── tools/release.sh            runs the upload commands release.cfg names, per export preset
 ├── tools/stories.sh            whether the user stories are due for validation (says so when the game doesn't use them)
 ├── .godot-director/templates/  the release workflow, and the user stories file a game gets when it turns them on
-├── .githooks/pre-commit        runs the check before commits that touch code, scenes or data, and scans every commit for secrets (with gitleaks)
+├── .githooks/pre-commit        runs the check before commits that touch code, scenes or data (not in a prototype), and scans every commit for secrets (with gitleaks; a prototype's commits need it)
+├── .githooks/pre-push          refuses to push a prototype's proto/ branch, or its commits under another name
 ├── playtesting/README.md       how playtests and function checks work
 │
 │  Godot Director's, Claude Code adapter: updated on upgrade

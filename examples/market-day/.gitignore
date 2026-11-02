@@ -15,6 +15,7 @@
 /tools/setup-clone.sh
 /tools/release.sh
 /tools/stories.sh
+/tools/prototype.sh
 /tools/ui_capture.sh
 /tools/ui_capture.gd
 /tools/ui_catalog.gd

@@ -36,7 +36,7 @@ extends SceneTree
 ## finds only known signatures leaves it, and the working tree, as they were. The build each
 ## signature was last seen in changes on every run, so it lives beside it in the gitignored
 ## .godot/godot-director/signatures-last-seen.tsv (id and build, tab separated) of this clone. A file
-## from before 4.8.0 has a fifth column, last_seen_build: it still reads, and is rewritten without it
+## from before 4.9.0 has a fifth column, last_seen_build: it still reads, and is rewritten without it
 ## (its values moved to the sidecar) the next time a new signature is added. A backend can import
 ## either. `--check sig-xxxxxxxx` reviews the log and reports whether that signature appears in it:
 ## exit 0 absent (a fix confirmed for this run), 1 present, 2 not a signature in the file.

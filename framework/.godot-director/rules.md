@@ -17,6 +17,7 @@ These rules apply to any AI assistant working in this project. For each of these
 - **prune.md:** prune the task list.
 - **review.md:** review a finished change.
 - **refresh-model-sizing.md:** scan available models and update the per-size model mapping in Project rules.
+- **prototype.md:** try a change fast in a prototype (`/prototype <name>`), in its own session and git worktree on a `proto/<name>` branch, outside the loop; list the prototypes; harvest one into GDD changes, decisions, user stories (in a game that uses them) and items (`/prototype harvest <name>`), and remove it.
 
 In Claude Code these are also slash commands, and builds, reviews and research run as the `builder`, `reviewer` and `researcher` subagents.
 
@@ -87,8 +88,9 @@ Update the owning place in the same change that makes it untrue. Replace superse
 - **Destructive commands.** Anything that discards uncommitted work or rewrites history needs the human. For a history cleanup they ask for, note the current tip first, and use non-interactive forms only.
 
 ## Sessions, clones and context
-- **New clone or machine.** Run `bash tools/setup-clone.sh`. It finds Godot, writes `tools/godot_bin.local` (machine-local, never committed) and installs the pre-commit hook.
+- **New clone or machine.** Run `bash tools/setup-clone.sh`. It finds Godot, writes `tools/godot_bin.local` (machine-local, never committed) and installs the pre-commit and pre-push hooks.
 - **Two sessions at once** (say design and coding, or two building sessions): give each its own worktree (`git worktree add ../game-design`) and run `bash tools/setup-clone.sh` there, so they don't share `.godot/`, the check's lock or each other's half-written files. A claim in TASKS.md protects only its own working tree. So only one session per project picks items; the others name the item they work on.
+- **Prototypes.** A prototype (`procedures/prototype.md`) tries a change in its own session, in a git worktree on a `proto/<name>` branch. A session in a checkout that `bash tools/prototype.sh here` calls a prototype (a linked worktree on a `proto/` branch with `PROTOTYPE.md` at its root) is a prototype session: read `prototype.md` › In a prototype session before any work. That session is outside the loop: there the rules on items, records, the builder, reviews and commit approval give way to that section, while the guard, the secrets scan and Protected space still apply, and nothing on a `proto/` branch is pushed or merged. The game can run there. Its work reaches main only through the harvest, which turns it into GDD changes, decisions, user stories and items built from main like any other.
 - **The records are the hand-off.** TASKS.md (what's done and what's next), commit messages (why), AGENTS.md and the GDD carry everything between sessions. Once an item is committed, a fresh session, or `/clear` in Claude Code, loses nothing.
 
 ## Reviews and model size
