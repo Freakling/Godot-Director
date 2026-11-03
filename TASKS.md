@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T41 · B6 · R1
+**Next IDs:** T42 · B6 · R1
 
 ## Queue
+
+### T41 · The docs call it the guard, since it reads PowerShell too · done · XS · agent
+- Touches: framework/.godot-director/rules.md, framework/.claude/agents/builder.md, README.md, selftest.sh, CHANGELOG.md
+- Done when: `rules.md`, the builder agent and README.md say "the guard" where they said "the Bash guard", since the guard reads the PowerShell tool's commands as well (check) · the comment on the one-file run in `selftest.sh` says the same (check) · `selftest.sh` passes (check)
+- GDD: (none)
+- Source: Director-Driven-Development T287
 
 ### T40 · Record only after the director approves a summary · done · M · agent
 - Touches: framework/.godot-director/rules.md, framework/.godot-director/procedures/design.md, framework/.godot-director/procedures/research.md, framework/.godot-director/procedures/next-task.md, framework/.godot-director/procedures/drift-reset.md, framework/.godot-director/procedures/ui-design.md, framework/.godot-director/procedures/playtest.md, framework/.godot-director/procedures/function-check.md, framework/.godot-director/procedures/export.md, framework/.godot-director/procedures/release.md, framework/.godot-director/procedures/align.md, ONBOARDING.md, README.md, framework/playtesting/README.md, framework/.claude/skills/design/SKILL.md, examples/scenarios.md, selftest.sh, CHANGELOG.md

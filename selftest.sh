@@ -3629,7 +3629,7 @@ rm -f tests/test_selftest_meta.gd tests/test_selftest_meta.gd.uid
 
 out="$(bash tools/check.sh 2>&1)"; expect_status "passes again after the faults are removed" 0 $? "$out"
 
-# --only: one test file, the supported way to run it (the Bash guard refuses a direct Godot run past
+# --only: one test file, the supported way to run it (the guard refuses a direct Godot run past
 # 280 s, and builders wrote runner scripts). It never records a result for --if-changed.
 echo "one test file (--only)"
 last_pass_before="$(cat .godot/godot-director/last-pass 2>/dev/null)"

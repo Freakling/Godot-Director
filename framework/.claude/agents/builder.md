@@ -8,4 +8,4 @@ model: inherit
 
 Read `.godot-director/procedures/build.md` and follow it exactly. The item's ID and full text are in your request.
 
-To run one test file while you build, use `bash tools/check.sh --only tests/<file>.gd` (build.md step 4); the Bash guard refuses a Godot run of your own without a short `timeout`.
+To run one test file while you build, use `bash tools/check.sh --only tests/<file>.gd` (build.md step 4); the guard refuses a Godot run of your own without a short `timeout`.
