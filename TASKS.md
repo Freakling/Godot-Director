@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T40 · B6 · R1
+**Next IDs:** T41 · B6 · R1
 
 ## Queue
+
+### T40 · Record only after the director approves a summary · done · M · agent
+- Touches: framework/.godot-director/rules.md, framework/.godot-director/procedures/design.md, framework/.godot-director/procedures/research.md, framework/.godot-director/procedures/next-task.md, framework/.godot-director/procedures/drift-reset.md, framework/.godot-director/procedures/ui-design.md, framework/.godot-director/procedures/playtest.md, framework/.godot-director/procedures/function-check.md, framework/.godot-director/procedures/export.md, framework/.godot-director/procedures/release.md, framework/.godot-director/procedures/align.md, ONBOARDING.md, README.md, framework/playtesting/README.md, framework/.claude/skills/design/SKILL.md, examples/scenarios.md, selftest.sh, CHANGELOG.md
+- Done when: `rules.md` › The human decides has the rule that nothing is written without the director's explicit approval, right after the design-call bullet (check) · `design.md` holds each answer in the conversation instead of recording a part, has a Summary and approval section between For each question and Record each decision in one change, and Finish writes and commits what the approved summary lists; the research note and its `R<n>` item, the stories validation, the prototype harvest and turning user stories on or off (the switch, the stories file, the GDD link and the items' `Stories:` lines) wait for the summary (check) · `research.md` (a standalone `/research` too), `next-task.md` › Report `blocked`, `drift-reset.md` (one summary with the decisions, the GDD diff and the rebuild plan, then one commit; the postmortem's checks and items get their own), `ui-design.md`, `playtest.md` (bugs no longer filed straight away), `function-check.md`, `align.md` (the mechanical fixes are part of the summary) and `ONBOARDING.md` (the interview's records are drafts until a Summary and approval subsection) carry the pointer to it (check) · `export.md` › Set up exports and `release.md` › Set up release put a summary and its approval between the last round and "Write it down", with the open question and the item a skipped step leaves (check) · the design skill's description names the approval, and the README, `playtesting/README.md` and `examples/scenarios.md` describe the new behaviour (check) · `selftest.sh` checks the rule, the section and each pointer, and passes (check)
+- GDD: (none)
+- Source: Director-Driven-Development T282
 
 ### T39 · The guard and the deny rules reach the PowerShell tool, and a continuation, a tab or a PowerShell read can't hide from it · done · L · agent
 - Touches: framework/.claude/settings.json, framework/.claude/hooks/guard-git.sh, selftest.sh, CHANGELOG.md

@@ -630,6 +630,78 @@ grep -q '^- \*\*A prototype tries a change before it.s built against the design\
 [ -z "$wired" ] && ok "prototypes: the procedure, the skill and tools/prototype.sh exist, and the rules, the item format, the design procedure, the settings, the hooks and the docs name them" \
   || bad "prototypes aren't wired into:$wired"
 
+# Nothing is written without the human's approval of a summary (Director-Driven-Development T282): rules.md has the
+# bullet right after the design-call bullet; design.md holds the answers in the conversation, has Summary and approval
+# between For each question and Record each decision in one change, and Finish writes what the summary lists; every
+# procedure that records from a conversation carries the pointer (design.md's stories switch, validation and
+# harvest, research.md, next-task.md, drift-reset.md, ui-design.md, playtest.md, function-check.md, export.md,
+# release.md, align.md and ONBOARDING.md); export.md and release.md show their summary between the last round and
+# "Write it down"; align's fixes and the stories' on and off switch are part of a summary.
+wired=""
+_ap_ptr='Write nothing until the human approves a summary of all of it (`design.md` › Summary and approval); a chat message or an "Other" answer before then re-opens the options.'
+_ap_rules="$proc/rules.md"
+_ap_dm="$proc/procedures/design.md"
+_ap_bullet='- **Nothing is written without the human'"'"'s explicit approval.** While a session runs, the answers stay in the conversation. A chat message or an "Other" answer during a session is a scope change or a modification, not an answer to record: it re-opens the options it touches, and the session reassesses, then restarts or continues. Once everything is chosen, show a summary of every file, line, item and story to be written (`design.md` › Summary and approval), and write and commit all of it in one change only after the human approves the summary.'
+_ap_call="$(grep -n '^- A design call is a mechanic' "$_ap_rules" | cut -d: -f1)"
+_ap_rule="$(grep -nxF -- "$_ap_bullet" "$_ap_rules" | cut -d: -f1)"
+[ -n "$_ap_call" ] && [ -n "$_ap_rule" ] && [ "$_ap_rule" -eq $((_ap_call + 1)) ] \
+  || wired="$wired rules.md(the approval bullet right after the design-call bullet)"
+_ap_each="$(grep -n '^## For each question$' "$_ap_dm" | cut -d: -f1)"
+_ap_sum="$(grep -n '^## Summary and approval$' "$_ap_dm" | cut -d: -f1)"
+_ap_rec="$(grep -n '^## Record each decision in one change$' "$_ap_dm" | cut -d: -f1)"
+[ -n "$_ap_each" ] && [ -n "$_ap_sum" ] && [ -n "$_ap_rec" ] && [ "$_ap_each" -lt "$_ap_sum" ] && [ "$_ap_sum" -lt "$_ap_rec" ] \
+  || wired="$wired design.md(Summary and approval between For each question and Record)"
+grep -qF 'Hold the answer in the conversation: nothing is recorded yet, and an answered part is not recorded by itself.' "$_ap_dm" \
+  && ! grep -qF 'record only that part' "$_ap_dm" || wired="$wired design.md(the wait holds the answers)"
+grep -qF 'Nothing is written before the human approves it.' "$_ap_dm" && grep -qF 'Approve this summary, or tell me what to change?' "$_ap_dm" \
+  && grep -qF 'Only a yes to the summary as shown approves it.' "$_ap_dm" && grep -qF 'the research notes and `R<n>` items.' "$_ap_dm" \
+  || wired="$wired design.md(the summary and its list)"
+grep -qF 'Write everything the approved summary lists and commit it as one change, `docs: <summary>`' "$_ap_dm" \
+  && grep -qF 'The approval of the summary is the approval to commit (`rules.md` › Git).' "$_ap_dm" || wired="$wired design.md(Finish)"
+[ "$(grep -cF -- "$_ap_ptr" "$_ap_dm")" -ge 4 ] || wired="$wired design.md(pointers: turning user stories on and off, the validation, the harvest)"
+grep -qF 'The switch is set only after the approval' "$_ap_dm" && grep -qF 'and with it the stories file, the GDD link and the items' "$_ap_dm" \
+  && grep -qF 'The summary lists the `User stories: off` line' "$_ap_dm" || wired="$wired design.md(the stories switch is in the summary)"
+grep -qF "the procedure's summary lists them" "$_ap_dm" || wired="$wired design.md(the Still right? ticks go into a summary)"
+for _ap_f in research next-task ui-design playtest function-check align export release; do
+  grep -qF -- "$_ap_ptr" "$proc/procedures/$_ap_f.md" || wired="$wired $_ap_f.md(pointer)"
+done
+[ "$(grep -cF -- "$_ap_ptr" "$proc/procedures/drift-reset.md")" -ge 2 ] || wired="$wired drift-reset.md(pointers in the reset and the postmortem)"
+grep -qF -- "$_ap_ptr" "$src/ONBOARDING.md" && grep -q '^### Summary and approval$' "$src/ONBOARDING.md" \
+  && grep -qF 'the records below are drafts, until the human approves the summary at the end of this section' "$src/ONBOARDING.md" \
+  && grep -qF 'List the mechanical fixes it finds, and write them after the human approves them' "$src/ONBOARDING.md" \
+  || wired="$wired ONBOARDING.md(pointer, Summary and approval, the align fixes)"
+grep -qF 'Hold the note and the item in the conversation.' "$proc/procedures/research.md" \
+  && grep -qF 'outside a design session shows its own summary of the note and the item' "$proc/procedures/research.md" \
+  && grep -qF '› Research items step 2 describes' "$proc/procedures/research.md" || wired="$wired research.md(holds the note and the item)"
+grep -qF 'the summary lists its records, as `design.md` lists them' "$proc/procedures/next-task.md" || wired="$wired next-task.md(blocked)"
+grep -qF 'the decision lines word for word, the Open Questions removed or added, the design diff' "$proc/procedures/drift-reset.md" \
+  && grep -qF 'each TASKS.md item in full' "$proc/procedures/drift-reset.md" \
+  && grep -qF 'what the postmortem will write: `postmortem.md` as it will read' "$proc/procedures/drift-reset.md" \
+  && grep -qF 'are written as the analysis runs.' "$proc/procedures/drift-reset.md" || wired="$wired drift-reset.md(the summaries)"
+grep -qF 'The summary lists the spec, the decision lines, the open questions and the item' "$proc/procedures/ui-design.md" || wired="$wired ui-design.md(the summary's list)"
+for _ap_f in playtest function-check; do
+  grep -qF 'The summary lists the `B` items, the story rewrites and ticks' "$proc/procedures/$_ap_f.md" || wired="$wired $_ap_f.md(the summary's list)"
+done
+grep -qF 'straight away' "$proc/procedures/playtest.md" "$src/framework/playtesting/README.md" "$src/examples/scenarios.md" && wired="$wired playtest.md(bugs are no longer filed straight away)"
+grep -qF 'during onboarding they are approved where onboarding approves the install commit' "$proc/procedures/align.md" \
+  && grep -qF 'Inside a session the fixes join its summary' "$proc/procedures/align.md" \
+  && grep -qF 'rerunning the installer is a fix: it runs once the human approves the summary' "$proc/procedures/align.md" || wired="$wired align.md(the fixes are part of the summary)"
+for _ap_f in export release; do
+  _ap_p="$proc/procedures/$_ap_f.md"
+  _ap_s="$(grep -n '^3\. \*\*Summary and approval\.\*\*' "$_ap_p" | cut -d: -f1)"
+  _ap_w="$(grep -n '^4\. \*\*Write it down\.\*\*' "$_ap_p" | cut -d: -f1)"
+  _ap_t="$(grep -n '^5\. \*\*Try it\.\*\*' "$_ap_p" | cut -d: -f1)"
+  [ -n "$_ap_s" ] && [ -n "$_ap_w" ] && [ -n "$_ap_t" ] && [ "$_ap_s" -lt "$_ap_w" ] && [ "$_ap_w" -lt "$_ap_t" ] \
+    && grep -qF 'show a summary of everything "Write it down" will write' "$_ap_p" \
+    && grep -qF '"Write it down" starts after the approval, and "Try it" runs on what it wrote.' "$_ap_p" \
+    && grep -qF 'go into the summary (step 3)' "$_ap_p" || wired="$wired $_ap_f.md(a summary between the last round and Write it down)"
+done
+grep -q 'once the human approves a summary of them' "$src/framework/.claude/skills/design/SKILL.md" || wired="$wired skills/design/SKILL.md(description)"
+grep -qF '**Nothing is written until you approve a summary of it.**' "$src/README.md" || wired="$wired README.md"
+grep -q '^- \*\*Nothing is written until the director approves a summary of it\.\*\*' "$src/CHANGELOG.md" || wired="$wired CHANGELOG.md"
+[ -z "$wired" ] && ok "nothing is written until the human approves a summary: the rule, design.md's Summary and approval, and the pointer in each procedure that records from a conversation" \
+  || bad "the approval of a summary isn't wired into:$wired"
+
 # --- installer ----------------------------------------------------------------------------------
 echo "installer"
 game="$work/market-day"

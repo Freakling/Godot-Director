@@ -41,7 +41,8 @@ Every subagent launch sets its model explicitly, from the mapping in AGENTS.md �
 - **Autoplay.** The builder plays the scenarios the item names, such as the one behind an `(autoplay)` outcome, plus `smoke`, before it reports (`build.md` step 6), and the report's `Autoplay:` line carries the review's delta line.
 - **A rebuild** (after a failure, a blocked report or review findings) gets the previous report, anything the human said about the item, and word that the earlier attempt's edits are still in the tree to continue from.
 - **Report `blocked`:** the report brings the question with options and a recommendation. Put it to the human.
-  - If the answer is a design decision, record it following `design.md` › Record each decision before rebuilding. It's committed with the item.
+  - If the answer is a design decision, the summary lists its records, as `design.md` lists them. Write nothing until the human approves a summary of all of it (`design.md` › Summary and approval); a chat message or an "Other" answer before then re-opens the options.
+  - Once it is approved, record it following `design.md` › Record each decision before rebuilding. It's committed with the item.
   - Then rebuild, including the answer.
 - **Report `failed`:**
   - An item built on a smaller-tier model gets one rebuild on the next-size model, set on the launch as section 3 says, and its size is annotated `S (escalated from XS)` or similar. An `XL` failure (already on the largest model) stops: give the human the check output without retrying.

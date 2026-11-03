@@ -11,10 +11,11 @@ The request can be:
 
 ## Ground rules
 - **A branch of its own.** Before step 1, recommend running the reset on its own branch (`git switch -c reset-YYYY-MM-DD`) and wait for the human's answer. The rebuild items can be built on the same branch.
-- **The reset folder** is `design/resets/YYYY-MM-DD/` (add `-2` for a second reset on the same day). Everything the reset writes goes there, except the GDD and `design/decisions.md` (step 3) and TASKS.md (steps 4 and 5). Never delete or rewrite a file in a reset folder; a correction is a new section in it.
+- **The reset folder** is `design/resets/YYYY-MM-DD/` (add `-2` for a second reset on the same day). Everything the reset writes goes there, except the GDD and `design/decisions.md` (step 4) and TASKS.md (steps 4 and 5). Never delete or rewrite a file in a reset folder; a correction is a new section in it.
 - **No application code.** Nothing in this procedure changes code, scenes or data. The rebuild goes through `next-task.md`.
+- **Nothing is written before the summary.** The analysis files (`as-built.md`, `interpretations.md`) are written as the analysis runs. Everything else waits for the human's approval of one summary (step 4; for the postmortem, step 5).
 - **Human-owned areas** (the rows AGENTS.md › Ownership gives to the human, such as art, audio and tunable values) are never rewritten. A tunable value that is part of the drift becomes a design call, and the human edits the `.tres`.
-- **Git.** No destructive commands (`rules.md` › Git). Commit each step's files after the human approves, as `docs: drift reset <step> (YYYY-MM-DD)`.
+- **Git.** No destructive commands (`rules.md` › Git). Commit the analysis (steps 1 and 2) after the human approves it, as `docs: drift reset <step> (YYYY-MM-DD)`. The design and the plan are one commit, written after the human approves the summary in step 4; the postmortem commits after the approval of its own summary. The approval of a summary is the approval to commit.
 
 ## 1. Analyse as built
 Describe how the game actually behaves today, not how the GDD says it should. This step only writes `as-built.md`.
@@ -36,22 +37,19 @@ This step only writes `interpretations.md`. For each pillar in GDD › Design Pi
    - **contradictory:** readings that can't both hold.
 4. Write `interpretations.md`: one section per pillar with its readings, evidence and class. Then list conflicts that span several pillars, and GDD rules that serve no pillar.
 
-Present the summary to the human: one line per pillar with its class, then the divergent and contradictory ones in detail. Commit steps 1 and 2 together.
+Present the findings to the human: one line per pillar with its class, then the divergent and contradictory ones in detail. Commit steps 1 and 2 together.
 
 ## 3. Rewrite the design
-1. Copy `design/gdd.md` to `gdd-before.md` in the reset folder.
-2. For every divergent or contradictory pillar, and every cross-pillar conflict, raise a design call following `design.md` › For each question. Each of the 2-4 options names which current reading it keeps and what would have to be rebuilt. Recommend one, and invite the human's own answer. The pillar itself may be what changes; ask which gives way.
-3. Record each answer following `design.md` › Record each decision, steps 1-3, with `from: drift reset YYYY-MM-DD`. Only what the human chose goes into `design/decisions.md`. TASKS.md waits for step 4.
-4. Once every call is answered, reread the revised GDD as a whole for text that still carries a rejected reading, and fix it. Show the human the diff against `gdd-before.md`.
-5. If a hook or the tool blocks writing the GDD, write the draft to `gdd-proposed.md` in the reset folder and ask the human to apply it. Never get around the hook.
-
-Commit after the human approves the revised GDD.
+1. For every divergent or contradictory pillar, and every cross-pillar conflict, raise a design call following `design.md` › For each question. Each of the 2-4 options names which current reading it keeps and what would have to be rebuilt. Recommend one, and invite the human's own answer. The pillar itself may be what changed; ask which gives way. Hold each answer in the conversation, as that step says: nothing is recorded yet.
+2. Draft what the human chose in the conversation, not in a file, following `design.md` › Record each decision, steps 1-3: one line per decision for `design/decisions.md`, with `from: drift reset YYYY-MM-DD`; the revised GDD, with each decision written into its section as the current design, replacing the text it supersedes; and the follow-up questions as `Q<n>`. Only what the human chose goes in. TASKS.md waits for step 4.
+3. Once every call is answered, reread the drafted GDD as a whole for text that still carries a rejected reading, and fix it.
 
 ## 4. Plan the rebuild
-1. Compare the approved GDD with `as-built.md`. Each difference is work: code that follows a rejected reading, a missing rule, a rule in the wrong place.
-2. Turn the work into TASKS.md items in the format in `.godot-director/tasks.md`, planned in stages as `design.md` › Record each decision describes. Each item's `Touches` names every file it may change, its `GDD:` names the revised heading and, with user stories on, its `Stories:` the stories it serves. A rule the check wouldn't catch (step 1) gets a `(test)` outcome where it can have one.
-3. Write `plan.md`: the item IDs in build order, each with the difference from `as-built.md` it removes.
-4. Commit TASKS.md and `plan.md`, then hand over: the rebuild runs through `next-task.md` as usual.
+1. Compare the drafted GDD with `as-built.md`. Each difference is work: code that follows a rejected reading, a missing rule, a rule in the wrong place.
+2. Draft the work as TASKS.md items in the format in `.godot-director/tasks.md`, planned in stages as `design.md` › Record each decision describes. Each item's `Touches` names every file it may change, its `GDD:` names the revised heading and, with user stories on, its `Stories:` the stories it serves. A rule the check wouldn't catch (step 1) gets a `(test)` outcome where it can have one.
+3. Draft `plan.md`: the item IDs in build order, each with the difference from `as-built.md` it removes.
+4. **Summary and approval.** Show one summary of everything the reset will write: the decision lines word for word, the Open Questions removed or added, the design diff (each changed GDD section as it will read, and `gdd-before.md`, the copy of the current GDD), and the rebuild plan (each TASKS.md item in full, and `plan.md`). Write nothing until the human approves a summary of all of it (`design.md` › Summary and approval); a chat message or an "Other" answer before then re-opens the options. The reset then restarts from the first affected pillar or continues, and shows a new summary.
+5. **Write it** once the human approves. Copy `design/gdd.md` to `gdd-before.md` in the reset folder, then write the revised GDD, the lines in `design/decisions.md`, the Open Questions, the items in TASKS.md (bumping `Next IDs`) and `plan.md`. If a hook or the tool blocks writing the GDD, write the draft to `gdd-proposed.md` in the reset folder and ask the human to apply it; never get around the hook. Commit them with the reset folder as one change, `docs: drift reset design and plan (YYYY-MM-DD)`; the approval of the summary is the approval to commit. Then hand over: the rebuild runs through `next-task.md` as usual.
 
 ## 5. Postmortem
 Run with `postmortem`, for the latest reset folder without a `postmortem.md`. Every item in its `plan.md` must be `done` (in TASKS.md or `TASKS-archive.md`); if one isn't, list those and stop.
@@ -60,6 +58,6 @@ Run with `postmortem`, for the latest reset folder without a `postmortem.md`. Ev
    - a test in `tests/` that pins the rule;
    - a regular expression in `tools/check.cfg` › `[screens] forbidden` that screens must not contain.
 
-   Propose each one as a design call: what it catches, the exact test or pattern, and the false positives it might cause. Directing scales by turning repeated judgment into checks. Approved ones become TASKS.md items. A check neither form can express is written down as a request for Godot Director.
-3. Write `postmortem.md`: the state of each drift, the checks approved and the items created, and what still needs the human.
-4. Commit after the human approves. Merging the reset branch is the human's call.
+   Propose each one as a design call: what it catches, the exact test or pattern, and the false positives it might cause. Hold the answers in the conversation. Directing scales by turning repeated judgment into checks. Approved ones become TASKS.md items. A check neither form can express is written down as a request for Godot Director.
+3. **Summary and approval.** Show one summary of what the postmortem will write: `postmortem.md` as it will read (the state of each drift, the checks approved and the items created, and what still needs the human) and each approved check's TASKS.md item in full. Write nothing until the human approves a summary of all of it (`design.md` › Summary and approval); a chat message or an "Other" answer before then re-opens the options.
+4. Write `postmortem.md` and the items (bumping `Next IDs`) once the human approves, and commit them as one change, `docs: drift reset postmortem (YYYY-MM-DD)`; the approval of the summary is the approval to commit. Merging the reset branch is the human's call.
