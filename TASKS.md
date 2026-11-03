@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T39 · B6 · R1
+**Next IDs:** T40 · B6 · R1
 
 ## Queue
+
+### T39 · The guard and the deny rules reach the PowerShell tool, and a continuation, a tab or a PowerShell read can't hide from it · done · L · agent
+- Touches: framework/.claude/settings.json, framework/.claude/hooks/guard-git.sh, selftest.sh, CHANGELOG.md
+- Done when: `framework/.claude/settings.json` runs `guard-git.sh` for a `PowerShell` matcher next to the `Bash` and `Monitor` ones, and every Bash deny and ask rule has a `PowerShell(...)` twin, with no PowerShell allow rule; the guard closes the gaps Director-Driven-Development closed in its B25, B27 to B40, B42 to B52, B55 and B60 (a line continuation, a tab, PowerShell's readers and backtick, comments, command substitutions, variables, shell wrappers, wait loops, heredoc bodies, git configuration and program flags, git push --mirror and --delete, a quoted or capitalised name, Invoke-Expression), with the read fixes in its credential-store check, including the readings of a continued command (as written, as joined, and joined from each line after a comment), and reads Godot Director's own rules (the whole-tree restore and checkout, branch and worktree rules, and a direct Godot run without a time limit) the same way; Godot Director's existing guard cases still pass, and every new case is in the selftest, run in parallel batches; the hook uses no bash 4 form (case conversion, a negative substring offset, a quoted replacement string) and starts no other process; the selftest passes (check)
+- GDD: (none)
+- Source: Director-Driven-Development T278
 
 ### T38 · A prototype routine, apart from real building · done · M · agent
 - Touches: framework/.godot-director/procedures/prototype.md (new), framework/.claude/skills/prototype/SKILL.md (new), framework/tools/prototype.sh (new), framework/.githooks/pre-push (new), framework/.godot-director/rules.md, framework/.godot-director/tasks.md, framework/.godot-director/procedures/design.md, framework/.godot-director/procedures/build.md, framework/.githooks/pre-commit, framework/tools/setup-clone.sh, framework/.claude/hooks/stop-check.sh, framework/.claude/hooks/guard-git.sh, framework/.claude/hooks/guard-protected.sh, framework/.claude/settings.json, examples/market-day/.gitignore, README.md, ONBOARDING.md, selftest.sh, CHANGELOG.md

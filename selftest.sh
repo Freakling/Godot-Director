@@ -1020,15 +1020,60 @@ cd "$game" || exit 1
 
 # --- git guard (Claude Code PreToolUse hook) ----------------------------------------------------
 echo "git guard"
-guard() { # guard <expected exit> <command>
-  local escaped="${2//\\/\\\\}"
-  escaped="${escaped//\"/\\\"}"
-  escaped="${escaped//$'\n'/\\n}"
-  escaped="${escaped//$'\t'/\\t}"; escaped="${escaped//$'\r'/\\r}"   # as JSON carries a tab and a carriage return
-  printf '{"session_id":"s","tool_name":"Bash","tool_input":{"command":"%s","description":"run"}}' "$escaped" \
-    | bash .claude/hooks/guard-git.sh >/dev/null 2>&1
-  local got=$?
-  if [ "$got" -eq "$1" ]; then ok "$([ "$1" -eq 2 ] && echo blocks || echo allows): $2"; else bad "guard exit $got, expected $1: $2"; fi
+guard_dir="$work/guard-cases"; mkdir -p "$guard_dir"
+git_fail=""
+guard_report() { # guard_report <failed cases> <what is wrong> <what holds>: one line for a block of cases, and the failed ones under it
+  if [ -n "$1" ]; then
+    bad "$2"
+    printf '%s\n' "${1#$'\n'}" | sed 's/^/          /'
+  else ok "$3"; fi
+  git_fail=""
+}
+# json_str <text>: sets JSON_STR to the text as the inside of a JSON string, with \, ", a line break, a tab and a return escaped.
+json_str() {
+  local s="$1" out="" i c
+  for ((i = 0; i < ${#s}; i++)); do
+    c="${s:i:1}"
+    case $c in
+      '\') out+='\\' ;;
+      '"') out+='\"' ;;
+      $'\n') out+='\n' ;;
+      $'\t') out+='\t' ;;
+      $'\r') out+='\r' ;;
+      *) out+="$c" ;;
+    esac
+  done
+  JSON_STR="$out"
+}
+# The guard cases (Director-Driven-Development B41). guard queues a case: its JSON payload goes to a file, and its expected
+# exit code, tool and text are kept. guard_run runs the queued cases, guard_jobs at a time, each as its own run of the hook
+# with its own payload, then checks every exit code against that case's expected one, in the order the cases were queued,
+# so a failure names its case and why. Each block of cases ends with guard_run and guard_report.
+guard_jobs=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); [ "$guard_jobs" -le 8 ] || guard_jobs=8
+guard_cmds=(); guard_exps=(); guard_tools=()
+guard() { # guard <expected exit> <command> [tool name: Bash by default, or PowerShell]
+  local n=${#guard_cmds[@]} tool="${3:-Bash}"
+  json_str "$2"
+  printf '{"session_id":"s","tool_name":"%s","tool_input":{"command":"%s","description":"run"}}' "$tool" "$JSON_STR" > "$guard_dir/$n.json"
+  guard_cmds+=("$2"); guard_exps+=("$1"); guard_tools+=("$tool")
+}
+guard_run() {
+  local n=${#guard_cmds[@]} first i k
+  local -a pid=() rc=()
+  for ((first = 0; first < n; first += guard_jobs)); do
+    for ((k = 0; k < guard_jobs && first + k < n; k++)); do
+      bash .claude/hooks/guard-git.sh < "$guard_dir/$((first + k)).json" >/dev/null 2>&1 &
+      pid[k]=$!
+    done
+    for ((k = 0; k < guard_jobs && first + k < n; k++)); do
+      wait "${pid[k]}"; rc[first + k]=$?
+    done
+  done
+  for ((i = 0; i < n; i++)); do
+    [ "${rc[i]}" -eq "${guard_exps[i]}" ] || git_fail="$git_fail"$'\n'"  guard exited ${rc[i]}, expected ${guard_exps[i]} (${guard_tools[i]}): ${guard_cmds[i]//$'\n'/ NL }"
+  done
+  guard_cmds=(); guard_exps=(); guard_tools=()
+  rm -f "$guard_dir"/*.json
 }
 for cmd in 'git commit -m x --no-verify' 'git commit -nm "x"' 'git push origin main --force' \
     'git push --force-with-lease=main origin' 'git push origin +main' 'git reset HEAD --hard' \
@@ -1050,6 +1095,8 @@ for cmd in $'cd x\n\tgit log --oneline -3' $'cd x\n\t\tgit commit -m "fix a --fo
     $'git status\n\techo done' $'git push origin feature\necho done'; do
   guard 0 "$cmd"
 done
+guard_run
+guard_report "$git_fail" "the guard hook doesn't block every destructive git command, on a later line, after a tab or before a line break, or it blocks a plain form" "the guard hook blocks the destructive git commands, on a later line, after a tab and before a line break, and passes the plain forms"
 # -n and --no-verify skip the hooks, and a spelling that quotes or splits the flag is the flag: the quoted
 # word, the quote inside it, an empty quote between its letters, a short flag inside a cluster, the long flag
 # abbreviated, a backslash and a line break inside it, and the words of a later line. After -- come paths.
@@ -1063,6 +1110,8 @@ for cmd in 'git commit -m x -- -nx.gd' 'git commit -m "a -n b" -- a.gd' 'git com
     "git commit -m 'fix the n handling' -- a.gd" 'git commit -a -m x' 'git commit -F - --no-status'; do
   guard 0 "$cmd"
 done
+guard_run
+guard_report "$git_fail" "the guard hook doesn't block every quoted, split or abbreviated -n and --no-verify, or it blocks a path after --" "the guard hook blocks -n and --no-verify however they are quoted, split or abbreviated, and passes a path after --"
 # A prototype's worktree is removed with `git worktree remove` and its branch deleted by the human
 # (prototype.md), so the ways to discard a worktree's changes or a branch's commits stay with the human in
 # every spelling: forced removal, forced or unmerged deletion, overwrites, an unquoted brace expansion or
@@ -1117,6 +1166,26 @@ for cmd in \
     'bash tools/prototype.sh remove quick-add'; do
   guard 0 "$cmd"
 done
+# The same rules in the PowerShell tool, in a substitution, in a wrapper's script and on a continued line, with
+# --pathspec-from-file beside them.
+for cmd in 'git branch -D x' 'git worktree remove --force x' 'git worktree add -B x ../x' 'git restore --pathspec-from-file=x'; do
+  guard 2 "$cmd" PowerShell
+  guard 2 "Write-Output \$($cmd)" PowerShell
+  guard 2 "echo \$($cmd)"
+  guard 2 "bash -c '$cmd'"
+done
+for cmd in $'git branch `\n-D x' $'git worktree remove `\n--force x' $'git worktree add `\n-B x ../x' $'git restore `\n--pathspec-from-file=x'; do
+  guard 2 "$cmd" PowerShell
+done
+for cmd in $'git branch \\\n-D x' $'git worktree remove \\\n--force x' $'git worktree add \\\n-B x ../x' $'git restore \\\n--pathspec-from-file=x' \
+    $'# note\\\ngit branch -D x'; do
+  guard 2 "$cmd"
+done
+for cmd in 'git branch -d x' 'git worktree remove ../x' 'git worktree add -b x ../x main' 'git restore a.gd'; do
+  guard 0 "$cmd" PowerShell
+done
+guard_run
+guard_report "$git_fail" "the guard hook doesn't block every forced worktree removal, branch deletion or overwrite, in Bash and PowerShell, or it blocks a plain form" "the guard hook blocks forced worktree removal, branch deletion and overwrites in every spelling, in Bash and PowerShell, in a substitution, a wrapper and on a continued line, and passes the plain forms"
 # settings.json no longer asks before `git restore` and `git checkout --`, so the guard keeps every
 # whole-tree form with the human: the pathspecs of the whole tree, quoted or not, --pathspec-from-file,
 # a git restore that names no file, and git on a later line of the command.
@@ -1145,6 +1214,23 @@ for cmd in 'git restore a.gd' 'git checkout -- scripts/systems/market.gd' 'git r
     $'git commit -q -F - <<\'EOF\'\nfix: handle -n in the parser\nEOF'; do
   guard 0 "$cmd"
 done
+for cmd in 'git restore ":(top)"' "git checkout -- '*'" 'git restore .' 'git restore'; do
+  guard 2 "$cmd" PowerShell
+done
+guard 0 'git restore README.md' PowerShell
+# Git for Windows reads a backslash in a pathspec as a slash, so .\ is the top folder, as ./ is; ./. and ./* are the whole tree too.
+for cmd in "git restore '.\\'" "git checkout -- '.\\'" 'git restore .\' 'git restore ./.' "git restore './.'" 'git checkout -- ./.' \
+    "git restore '.\\.'" 'git restore "./*"'; do
+  guard 2 "$cmd" PowerShell
+done
+for cmd in "git restore '.\\'" "git checkout -- '.\\'" 'git restore ./.' 'git checkout -- "./."' 'git restore "./*"'; do
+  guard 2 "$cmd"
+done
+for cmd in 'git restore ./a.gd' "git restore '.\\a.gd'" 'git checkout -- ./scripts/x.gd'; do
+  guard 0 "$cmd"; guard 0 "$cmd" PowerShell
+done
+guard_run
+guard_report "$git_fail" "the guard hook doesn't block every whole-tree restore or checkout, or it blocks a single-file form or a heredoc body that is data" "the guard hook blocks the whole-tree restore and checkout forms, quoted or not, and passes the single-file forms and heredoc bodies that are data"
 asks="$(sed -n '/"ask": \[/,/\]/p' .claude/settings.json)"
 if printf '%s' "$asks" | grep -q 'git restore' || printf '%s' "$asks" | grep -q 'git checkout'; then
   bad "settings.json no longer asks before git restore and git checkout --" "$asks"
@@ -1205,6 +1291,8 @@ for cmd in \
     'git worktree list'; do
   guard 0 "$cmd"
 done
+guard_run
+guard_report "$git_fail" "the guard hook doesn't block every git flag that writes a file, reads outside the repository or runs a configured command, or it blocks a plain form" "the guard hook blocks the git flags that write a file, read outside the repository or run a configured command, and passes the plain forms"
 # The settings template has to deny those flags next to its wildcard git rules, since the deny rules
 # are the harness's own layer under the hook. Tested on planted settings, so a change that stops the
 # check flagging a missing rule fails here.
@@ -1266,6 +1354,127 @@ for cmd in $'python3 - <<\'EOF\'\nprint("hi")\nEOF' 'python3 --version 2>/dev/nu
     'git commit -m "docs: until loops with sleep 600 need a timeout; godot --headless too" -- a.md'; do
   guard 0 "$cmd"
 done
+# A Godot run is read in every reading of the command (Director-Driven-Development T278): behind a quoted path, on a continued
+# line, in a wrapper's script, a substitution or a heredoc body a shell runs, and in the PowerShell tool. A message or a file
+# body that names one is text, and a timeout of 280 seconds or less before the run, or above its wrapper, bounds it. The Godot
+# path that tools/setup-clone.sh saves, G=$(cat tools/godot_bin.local), is read as $GODOT_BIN is (B45 reads any other
+# variable as a command's name), so a git subcommand or a destructive flag after it is still blocked.
+for cmd in \
+    'G=$(cat tools/godot_bin.local); $G push --force' \
+    'G=$(cat tools/godot_bin.local); "$G" --force' \
+    'G=$(cat tools/godot_bin.local); timeout 60 "$G" commit -m x' \
+    'G=$(cat x.txt); timeout 120 "$G" --headless --import' \
+    'G=$(cat tools/godot_bin.local); G=$(cat x); timeout 60 "$G" --headless --import' \
+    'G=$(cat tools/godot_bin.local; cat x); timeout 60 "$G" --headless --import' \
+    'G=$(cat tools/godot_bin.local) && "$G" --headless --script x.gd' \
+    'bash -c "G=\$(cat tools/godot_bin.local); timeout 60 \$G --headless --import"' \
+    'timeout 300 godot --headless --import' \
+    'godot --import' \
+    'Godot_v4.7.2-stable_win64_console.exe --headless --script x.gd' \
+    'bash -c "godot --headless --script x.gd"' \
+    'timeout 600 bash -c "godot --headless --script x.gd"' \
+    'eval "godot --headless --import"' \
+    'echo $(godot --headless --script x.gd)' \
+    'timeout 60 echo "$(godot --headless --script x.gd)"' \
+    $'bash <<\'EOF\'\ngodot --headless --import\nEOF' \
+    '"C:/Program Files/Godot/godot.exe" --headless --import' \
+    $'godot \\\n--headless --import' \
+    'cd x && GODOT_BIN=/x/godot "$GODOT_BIN" --headless --import' \
+    'git commit -m x && sleep 600' \
+    'git commit -m "godot --headless" && godot --headless --import'; do
+  guard 2 "$cmd"
+done
+for cmd in \
+    '& "C:\Tools\Godot_v4.7.2-stable_win64_console.exe" --headless --import' \
+    '& $env:GODOT_BIN --headless --script x.gd' \
+    $'godot `\n--headless --import'; do
+  guard 2 "$cmd" PowerShell
+done
+for cmd in \
+    'G="$(cat tools/godot_bin.local)"; timeout 60 "$G" --headless --import' \
+    'G=$(head -n 1 tools/godot_bin.local); timeout 60 "$G" --headless --import' \
+    'G=$(cat tools/godot_bin.local); timeout 2m "$G" --version' \
+    'timeout 240 bash -c "godot --headless --script x.gd"' \
+    'timeout 120 "C:/Program Files/Godot/godot.exe" --headless --import' \
+    'git commit -m "run godot --headless under timeout" -- a.md' \
+    $'git commit -q -F - <<\'EOF\'\nfix: godot --headless --script x.gd needs a timeout\nEOF' \
+    $'cat > notes.md <<\'EOF\'\ngodot --headless --import\nEOF' \
+    'echo "godot --headless --import"' \
+    'grep -n -- --headless README.md' \
+    'bash tools/check.sh --only tests/test_market.gd'; do
+  guard 0 "$cmd"
+done
+guard 0 'Write-Output "godot --headless"' PowerShell
+# Godot's name in any case and as the downloads and packages spell it: Godot, godot.EXE, godot4, the Windows, Linux and macOS
+# builds, the Flatpak, and $GODOT_BIN or $env:godot_bin in any case.
+for cmd in \
+    'Godot --headless --import' \
+    'godot.EXE --headless --import' \
+    'GODOT --headless --script x.gd' \
+    '/Applications/Godot.app/Contents/MacOS/Godot --headless --import' \
+    './Godot_v4.6-stable_linux.x86_64 --headless --import' \
+    'Godot_v4.7.2-stable_win64.exe --headless --script x.gd' \
+    'godot4 --headless --import' \
+    'flatpak run org.godotengine.Godot --headless --import' \
+    '"$godot_bin" --headless --script x.gd'; do
+  guard 2 "$cmd"
+done
+for cmd in \
+    '& $env:godot_bin --headless --script x.gd' \
+    '& $env:GODOT_BIN --headless --script x.gd' \
+    'Godot --headless --import' \
+    '& "C:\Godot\Godot_v4.6-stable_win64_console.exe" --headless --import'; do
+  guard 2 "$cmd" PowerShell
+done
+for cmd in \
+    'timeout 120 /Applications/Godot.app/Contents/MacOS/Godot --headless --import' \
+    'timeout 60 ./Godot_v4.6-stable_linux.x86_64 --headless --import' \
+    'cd framework/.godot-director && grep -n -- --script rules.md' \
+    'git commit -m "Godot --headless needs a timeout"'; do
+  guard 0 "$cmd"
+done
+# A wait loop with a loop nested in it runs to its own done (the do and done of each inner loop are counted), and a sleep
+# count with a fraction is read to the millisecond.
+for cmd in \
+    'while true; do for f in a b; do :; done; sleep 5; done' \
+    'while true; do while read l; do :; done < f; sleep 5; done' \
+    $'until false\ndo\n  for f in a; do echo $f; done\n  sleep 5\ndone' \
+    'while true; do for f in a; do :; done;sleep 9;done' \
+    'for ((;;)); do until true; do :; done; sleep 1; done' \
+    'sleep 600.5' 'sleep 280.5' 'sleep 4.7m' 'echo x; sleep 300.0'; do
+  guard 2 "$cmd"
+done
+for cmd in \
+    'while read l; do for f in a; do :; done; done < x; sleep 5' \
+    'for f in a b; do while read l; do :; done < f; done' \
+    'timeout 240 bash -c "while true; do for f in a; do :; done; sleep 5; done"' \
+    'sleep 0.5' 'sleep 280.0' 'sleep 4.5m' 'sleep 1.'; do
+  guard 0 "$cmd"
+done
+for cmd in 'Start-Sleep -Seconds 600.5' 'Start-Sleep 280.5' 'Start-Sleep -Milliseconds 280000.5'; do guard 2 "$cmd" PowerShell; done
+for cmd in 'Start-Sleep -Seconds 0.5' 'Start-Sleep -Milliseconds 280000.0'; do guard 0 "$cmd" PowerShell; done
+# A loop that polls a background command's tasks/<id>.output waits for its end marker under any timeout and any wrapper:
+# bash with options before -c, and PowerShell's while and do { } while.
+for cmd in \
+    "timeout 240 bash -e -c 'until grep -q x tasks/b1.output; do sleep 5; done'" \
+    "timeout 240 bash --norc -c 'until grep -q x tasks/b1.output; do sleep 5; done'" \
+    "timeout 240 bash -c 'until grep -q x tasks/b1.output; do sleep 5; done'" \
+    'timeout 240 bash -c "until grep -q x \"/tmp/t/tasks/b1.output\"; do sleep 5; done"'; do
+  guard 2 "$cmd"
+done
+for cmd in \
+    'timeout 240 pwsh -c "while (-not (Select-String -Quiet x tasks/b1.output)) { Start-Sleep 5 }"' \
+    'do { Start-Sleep 5 } while (-not (Select-String -Quiet x tasks/b1.output))'; do
+  guard 2 "$cmd" PowerShell
+done
+for cmd in \
+    "timeout 240 bash -c 'until grep -q \"exited with code\" tasks/b1.output; do sleep 5; done'" \
+    'git commit -m "poll tasks/b1.output while you wait" -- a.md' \
+    'cat tasks/b1.output'; do
+  guard 0 "$cmd"
+done
+guard_run
+guard_report "$git_fail" "the guard hook doesn't block every hang (an empty Python heredoc, an unbounded wait, a Godot run without a time limit, a long sleep), or it blocks a bounded form" "the guard hook blocks an empty Python heredoc, an unbounded wait, a Godot run without a time limit and a long sleep, in every reading of the command, and passes the bounded forms"
 
 # The credential stores: shell reads of ~/.ssh, git's credentials files and the gh CLI's config folders,
 # and the commands that print a stored credential. A command that names a store without reading it, or
@@ -1283,6 +1492,24 @@ for cmd in 'cat README.md' 'cat framework/.godot-director/rules.md' 'cat notes/x
     $'cat README.md\necho ~/.ssh'; do
   guard 0 "$cmd"
 done
+# A commit's or gh message, and a cat body nothing runs, may name the commands that print a credential; a body a shell runs, an
+# unquoted message's substitution and a command after a message are read.
+for cmd in \
+    $'git commit -q -F - <<\'EOF\'\nfix: gh auth token is blocked\nEOF' \
+    $'git commit -q -F - <<\'EOF\'\ndocs: git credential fill prints a token\nEOF' \
+    $'gh pr edit 5 --body-file - <<\'EOF\'\nThe guard blocks gh auth token and git credential get.\nEOF' \
+    $'cat > notes.md <<\'EOF\'\ngh auth token\nEOF'; do
+  guard 0 "$cmd"
+done
+for cmd in \
+    $'bash <<\'EOF\'\ngh auth token\nEOF' \
+    $'git commit -q -F - <<EOF\n$(gh auth token)\nEOF' \
+    $'git commit -q -F - <<\'EOF\'\nmsg\nEOF\ngh auth token' \
+    $'cat > x.sh <<\'EOF\'\ngit credential fill\nEOF\nbash x.sh'; do
+  guard 2 "$cmd"
+done
+guard_run
+guard_report "$git_fail" "the guard hook doesn't block every shell read of a credential store or command that prints a stored credential, or it blocks an ordinary read" "the guard hook blocks shell reads of the credential stores and the commands that print a stored credential, and passes ordinary reads"
 # The Read tool is the harness's own layer, and a Read rule doesn't reach a shell command, so the
 # settings template denies the Read tool the same stores. Tested on planted settings, so a check that
 # stops flagging a missing rule fails here.
@@ -1305,6 +1532,1788 @@ elif [ -n "$read_planted" ]; then
   bad "the Read deny check misses a planted case:$read_planted"
 else
   ok "settings.json denies the Read tool the SSH folder, git's credentials and the gh CLI's config folders"
+fi
+
+# The hook runs under macOS's bash 3.2 too (CLAUDE.md > Scripts), so it holds no bash 4 form: case conversion (${x,,}, ${x^^}),
+# an associative array, mapfile or readarray, coproc, |&, or a negative substring offset (${x: -1}). Comment lines are skipped.
+bash4=$(grep -nE '^[^#]*(\$\{[A-Za-z_0-9]+(\[[^]]*\])?(,,|\^\^)\}|(declare|local|typeset) +-[a-zA-Z]*A|(^|[;&| ])(mapfile|readarray) +|(^|[;&| ])coproc +[A-Za-z]|[[:space:]]\|&[[:space:]]|\$\{[A-Za-z_0-9@*]+(\[[^]]*\])?: -[0-9])' .claude/hooks/guard-git.sh || true)
+if [ -z "$bash4" ]; then ok "the guard hook uses no bash 4 form, so it runs under bash 3.2"
+else bad "the guard hook uses a bash 4 form (bash 3.2 on macOS has none)" "$bash4"; fi
+# bash 3.2 keeps the quotes of a quoted replacement string (${t//x/"$y"}), so the hook replaces text with str_swap, which quotes none.
+bash43=$(grep -nE '^[^#]*\$\{[A-Za-z_0-9]+(\[[^]]*\])?//?("[^"]*"|[^/"}]+)/"' .claude/hooks/guard-git.sh || true)
+if [ -z "$bash43" ]; then ok "the guard hook quotes no replacement string, which bash 3.2 would keep"
+else bad "the guard hook quotes a replacement string (bash 3.2 keeps the quotes)" "$bash43"; fi
+
+# The guard starts no other process (it runs on every Bash, Monitor and PowerShell call, and a process start is slow on Windows). With no
+# PATH only a builtin can run, so "command not found" in its output names a process it tried to start. A spread of the cases that
+# reach most of its rules (credential reads, wrappers, substitutions, loops, a Godot run, heredocs, git flags) is run that way.
+nopath_fail=""
+for cmd in \
+    'git push origin main --force' 'git commit -m x --no-verify' $'git commit -q -F - <<\'EOF\'\nmsg\nEOF' 'git log --output=/tmp/x' \
+    'git -c core.pager=x log' 'git branch -df x' 'git worktree remove --force x' 'GIT=git; $GIT push --force' 'git restore' \
+    'cat ~/.git-credentials' 'cat ~/.ssh/id_rsa' 'Get-Content ~/.ssh/id_rsa' 'gh auth token' 'bash -c "git push --force"' 'eval "cat ~/.ssh/id_rsa"' \
+    'echo $(git push --force)' 'git push "$(echo --force)"' $'git commit \\\n-n -m x' $'# note\\\ngit push --force' \
+    'until test -f x; do sleep 1; done' 'sleep 300' 'for ((i=0;i<9;i++)); do sleep 1; done' $'python3 - <<\'EOF\'\nEOF' \
+    'godot --headless --script x.gd' 'G=$(cat tools/godot_bin.local); timeout 60 "$G" --headless --import' \
+    'Invoke-Expression "git push --force"' $'cat <<EOF | bash\ngit push --force\nEOF' 'git status' 'ls'; do
+  json_str "$cmd"
+  for tool in Bash PowerShell; do
+    printf '{"session_id":"s","tool_name":"%s","tool_input":{"command":"%s","description":"run"}}' "$tool" "$JSON_STR" > "$guard_dir/nopath.json"
+    err=$(PATH=/nonexistent "$BASH" .claude/hooks/guard-git.sh < "$guard_dir/nopath.json" 2>&1 >/dev/null)
+    case $err in *"command not found"*) nopath_fail="$nopath_fail"$'\n'"  ($tool) ${cmd//$'\n'/ NL }: ${err//$'\n'/ | }" ;; esac
+  done
+done
+rm -f "$guard_dir/nopath.json"
+guard_report "$nopath_fail" "the guard starts another process" "the guard starts no other process"
+
+# The guard reads a long file body in time (the hook's timeout in settings.json is 10 seconds): a 25 KB GDScript of $Node.method()
+# lines, written from a Bash heredoc and from a PowerShell here-string, in a UTF-8 locale, each under 5 seconds (about 0.4 and 1.2
+# seconds in Git Bash on Windows). Bash's time keyword reads the clock, so the measurement starts no process of its own.
+gd_body='extends Node2D'$'\n'
+while ((${#gd_body} < 25000)); do gd_body+=$'\t$AnimationPlayer.play("walk")\n\t$Sprite2D.flip_h = not $Sprite2D.flip_h # it\'s "x"\n'; done
+slow_cmds=($'cat > scripts/hero.gd <<\'EOF\'\n'"$gd_body"$'EOF' $'@\'\n'"$gd_body"$'\'@ | Set-Content scripts/hero.gd')
+slow_tools=(Bash PowerShell); slow_fail=""; slow_times=""
+for ((si = 0; si < ${#slow_cmds[@]}; si++)); do
+  json_str "${slow_cmds[si]}"
+  printf '{"session_id":"s","tool_name":"%s","tool_input":{"command":"%s","description":"run"}}' "${slow_tools[si]}" "$JSON_STR" > "$guard_dir/slow.json"
+  TIMEFORMAT=%R
+  slow_out=$( { time { LC_ALL=C.UTF-8 bash .claude/hooks/guard-git.sh < "$guard_dir/slow.json" >/dev/null 2>&1; echo "rc $?" >&2; }; } 2>&1 )
+  unset TIMEFORMAT
+  slow_rc="${slow_out#*rc }"; slow_rc="${slow_rc%%[!0-9]*}"; slow_s="${slow_out##*[!0-9.]}"
+  slow_times="$slow_times ${slow_tools[si]} ${slow_s}s"
+  [ "$slow_rc" = 0 ] || slow_fail="$slow_fail"$'\n'"  (${slow_tools[si]}) the guard exited $slow_rc on a 25 KB GDScript body, expected 0"
+  [ "${slow_s%%.*}" -lt 5 ] 2>/dev/null || slow_fail="$slow_fail"$'\n'"  (${slow_tools[si]}) the guard took ${slow_s}s on a 25 KB GDScript body, over 5 seconds"
+done
+rm -f "$guard_dir/slow.json"
+guard_report "$slow_fail" "the guard is too slow on a long file body" "the guard reads a 25 KB GDScript heredoc and here-string in under 5 seconds each:$slow_times"
+
+# A variable in the hook's environment named like a per-view array (vhang, vcov, vdep, vpx, vps) changes nothing: the arrays start
+# empty, so an exported vhang=1 doesn't skip the git rules.
+env_fail=""
+printf '%s' '{"session_id":"s","tool_name":"Bash","tool_input":{"command":"git push --force","description":"run"}}' > "$guard_dir/env.json"
+for v in vhang vcov vdep vpx vps; do
+  env "$v=1" bash .claude/hooks/guard-git.sh < "$guard_dir/env.json" >/dev/null 2>&1
+  [ $? -eq 2 ] || env_fail="$env_fail"$'\n'"  with $v=1 in the environment the guard passes git push --force"
+done
+rm -f "$guard_dir/env.json"
+guard_report "$env_fail" "a variable in the hook's environment changes what the guard blocks" "a variable in the hook's environment named like the guard's per-view arrays changes nothing"
+
+# The guard's reading of a command, case by case (Director-Driven-Development T278; the B numbers are its bug IDs): the PowerShell
+# tool, the readers of the credential stores, continuations (a backslash in Bash, a backtick in PowerShell, and the comments
+# that end in one), tabs, command substitutions, variables, shell wrappers, wait loops, heredoc bodies, git configuration
+# and program flags, quoted and capitalised names, and Invoke-Expression.
+if [ ! -f .claude/settings.json ]; then
+  bad ".claude/settings.json is missing, so the guard's wiring can't be checked"
+else
+  git_fail=""
+  perm_allow=$(sed -n '/"allow": *\[/,/\]/p' .claude/settings.json)
+  if [ ! -f .claude/hooks/guard-git.sh ]; then
+    git_fail="$git_fail"$'\n'"  .claude/hooks/guard-git.sh is missing"
+  else
+    for cmd in \
+        'git log -1 --format=probe --output=/tmp/probe.txt' \
+        'git log --output /tmp/probe.txt' \
+        'git show --output /tmp/probe.txt HEAD' \
+        'git diff --output=probe.txt' \
+        'git stash show --output=/tmp/probe.txt' \
+        "git log '--output=/tmp/probe.txt'" \
+        'git log "--no-index"' \
+        'git log --out\put=/tmp/probe.txt' \
+        'git log --output="/tmp/my probe.txt"' \
+        'git diff --no-index a b' \
+        'git diff --no-index /dev/null /etc/hosts' \
+        'git log -p --ext-diff' \
+        'git diff --ext-diff' \
+        'git diff /etc/hosts README.md' \
+        'git diff ../other.txt README.md' \
+        'git commit -F /tmp/msg.txt' \
+        'git commit -F/tmp/msg.txt' \
+        'git commit -aF /tmp/msg.txt' \
+        'git commit -F "/tmp/my msg.txt"' \
+        'git commit --file /tmp/msg.txt' \
+        'git commit --file=/tmp/msg.txt' \
+        'git commit -F - -F /tmp/msg.txt' \
+        'git add -A && git commit -F /tmp/msg.txt' \
+        'git -C work/Godot-Director log --output=/tmp/probe.txt' \
+        $'git commit -q -F - <<\'EOF\'\nmsg\nEOF\ngit log --output=/tmp/probe.txt' \
+        'cat ~/.ssh/id_ed25519' \
+        'head "$HOME/.git-credentials"' \
+        'cat ~/.config/gh/hosts.yml' \
+        'less "/c/Users/V/AppData/Roaming/GitHub CLI/hosts.yml"' \
+        'cat "C:\Users\V\.ssh\id_rsa"' \
+        'cat "~/.ssh/id_rsa"' \
+        "head '.git-credentials'" \
+        'cat .git-credentials' \
+        'head ./.config/gh/hosts.yml' \
+        'cat "config/.config/gh/hosts.yml"' \
+        'less .config/git/credentials' \
+        "tail '.git-credentials'" \
+        'tail -n 20 .git-credentials' \
+        'cat README.md; cat .git-credentials' \
+        'cat README.md .git-credentials' \
+        'tail -n 20 .git-credentials' \
+        'head -5 ~/.ssh/id_rsa' \
+        'cat docs/a.md "~/.ssh/id_ed25519"' \
+        'less -R .config/gh/hosts.yml' \
+        'gh auth token' \
+        'gh auth status -t' \
+        "printf 'protocol=https\\nhost=github.com\\n' | git credential fill" \
+        "printf 'protocol=https\\nhost=github.com\\n' | git credential get" \
+        $'cd x\ngit branch -D y' \
+        $'cd x\ngit commit --no-verify -m x' \
+        $'cd x\n\tgit log --output=/tmp/x' \
+        $'echo a\ngit push --force' \
+        $'cd x\ngit commit -F /tmp/msg.txt' \
+        $'cd x\ngit credential fill' \
+        "git commit '-n' -m x" \
+        'git commit "-n" -m x' \
+        'git commit -""n -m x' \
+        "git commit --no-ve''rify -m x" \
+        "git commit -m -- '-n'" \
+        $'git commit \\\n-n -m x' \
+        $'git push \\\n--force' \
+        $'git push origin \\\n+main' \
+        $'git reset \\\n--hard' \
+        $'git credential \\\nfill' \
+        $'git log \\\n--output=/tmp/probe.txt' \
+        $'cat \\\n.git-credentials' \
+        $'cat README.md \\\n.git-credentials' \
+        $'cat\t.git-credentials' \
+        $'head\t-n\t20\t.git-credentials' \
+        $'git\tpush --force' \
+        $'git\tcommit -n -m x' \
+        $'git\tlog --output=/tmp/probe.txt' \
+        $'echo a\\\\\ngit push --force' \
+        $'echo a\\\\\ngit commit -F /tmp/msg.txt' \
+        $'sleep \\\n300'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'git log --oneline -5' \
+        'git diff HEAD' \
+        'git diff --cached --stat' \
+        'git diff origin/main..HEAD -- docs/index.md' \
+        'git show HEAD:README.md' \
+        'git commit -m "fix the --output handling"' \
+        'git commit -m x -- docs/index.md' \
+        "git commit -m x -- '-n'" \
+        'git commit -F -' \
+        'git commit --file=-' \
+        $'git commit -q -F - <<\'EOF\'\nfix the --output and --no-index handling, not -F /tmp/x\nEOF' \
+        'git stash list' \
+        'git worktree list' \
+        'git log --grep -O' \
+        'bash tools/check.sh' \
+        'bash tools/prototype.sh start quick-add' \
+        'bash tools/check.sh && git log origin/main..HEAD' \
+        'cat README.md' \
+        'cat docs/how-to/where.md' \
+        'cat README.md' \
+        'cat docs/notes.md' \
+        'head project.godot' \
+        'cat export_presets.cfg' \
+        'cat README.md docs/x.md' \
+        'tail -n 20 README.md' \
+        'head -5 notes.txt' \
+        'cat README.md docs/notes.md' \
+        'grep -n ssh docs/how-to/trouble.md' \
+        'git log --oneline -3' \
+        'ls ~/.ssh' \
+        'gh auth status' \
+        $'git status\ngit log --oneline -3' \
+        $'git status\ngit commit -q -F - <<\'EOF\'\nfix the --output and --no-index handling, not -F /tmp/x\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nfix the -n flag, not a flag\nEOF' \
+        'echo x\\ngit branch -D y' \
+        $'git log \\\n--oneline -3' \
+        $'git status \\\n-s' \
+        $'git diff \\\nHEAD' \
+        $'echo a\\\\\nls' \
+        $'cat README.md \\\ndocs/x.md' \
+        $'cat\tREADME.md' \
+        $'git\tstatus'; do
+      guard 0 "$cmd"
+    done
+    # PowerShell (B24): its input carries the command as tool_input.command, like Bash's, so the hook must
+    # exit the same way on a PowerShell payload. These are the git flags the deny rules and the guard block.
+    for cmd in \
+        'git push --force' \
+        'git commit --no-verify -m x' \
+        'git reset --hard HEAD~1' \
+        'git log --output=/tmp/probe.txt' \
+        'git diff --no-index a b' \
+        'git commit -F /tmp/msg.txt' \
+        'cat .git-credentials'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in 'git status' 'git log --oneline -5' 'git diff HEAD'; do
+      guard 0 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "git's file-writing, file-reading and external-command flags, or the credential stores, are not all blocked when a continuation, a tab or a later line splits them, or a plain form is blocked (B24, B25)" "the guard hook blocks git's file-writing, file-reading and external-command flags and the credential-store reads on a later line, a continued line or after a tab, in Bash and PowerShell, and passes the plain forms (B24, B25)"
+
+  # The PowerShell readers of credential stores (B27): Get-Content and its aliases gc and type, Select-String
+  # and sls, and [IO.File]::ReadAll... block a credential store in any case, as cat does, and so does a reader
+  # inside a -Command or -c string. The same readers of ordinary files pass, and the checks run for the Bash
+  # tool too, since the hook reads every tool's command the same way.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for reader in 'Get-Content' 'gc' 'type' 'GET-CONTENT' 'Select-String -Pattern x' 'sls x' \
+        'Get-Content -Path' 'Get-Content -LiteralPath'; do
+      for target in '.git-credentials' '.git-credentials' '.git-credentials*' '~/.ssh/id_rsa' '~/.ssh/id_ed25519' \
+          '$HOME\.ssh\id_rsa' '~/.config/gh/hosts.yml' '"$env:APPDATA\GitHub CLI\hosts.yml"'; do
+        guard 2 "$reader $target" PowerShell
+      done
+    done
+    for cmd in \
+        "[IO.File]::ReadAllText('.git-credentials')" \
+        '[System.IO.File]::ReadAllLines(".git-credentials")' \
+        '[io.file]::readallbytes("~/.ssh/id_rsa")' \
+        '[IO.File]::ReadLines("$HOME\.ssh\id_rsa")' \
+        'Get-Content README.md; Get-Content .git-credentials' \
+        'powershell -NoProfile -Command "Get-Content .git-credentials"' \
+        'powershell -c "gc .git-credentials"' \
+        'cmd /c "type .git-credentials"' \
+        "bash -c 'cat .git-credentials'" \
+        'bash -c "cat .git-credentials"' \
+        'cat .git-credentials*' \
+        '\cat .git-credentials' \
+        'echo `cat .git-credentials`' \
+        'type .git-credentials' \
+        'gc .git-credentials'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'Get-Content README.md' \
+        'gc docs/index.md' \
+        'Get-Content -Path docs/index.md' \
+        'Get-Content -LiteralPath README.md' \
+        'Select-String -Path docs/index.md -Pattern title' \
+        'Get-Content README.md' \
+        'gc docs/notes.md' \
+        '[IO.File]::ReadAllText("docs/index.md")' \
+        'Get-ChildItem ~/.ssh' \
+        'powershell -NoProfile -Command "Get-Content README.md"' \
+        'type git'; do
+      guard 0 "$cmd" PowerShell
+    done
+    guard 0 'type git'
+    guard 0 'type README.md'
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't block every read of a credential store, or blocks a read of an ordinary file (B27)" "the guard hook blocks the PowerShell and Bash readers of credential stores, in any case, and passes the readers of ordinary files"
+
+  # PowerShell's backtick (B28): a backtick that ends a line continues it, so a flag or a read it splits is
+  # blocked as the plain form is, and a benign continuation passes. An escaped backtick (``) and a backtick
+  # followed by spaces don't continue. In Bash a backtick is command substitution, so the same text passes
+  # there. A comment that ends in a backtick still shows the next line, which the joined text would hide.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        $'git push `\n--force' \
+        $'git commit `\n-n -m x' \
+        $'cat `\n.git-credentials' \
+        $'cat README.md `\n.git-credentials' \
+        $'git push `\r\n--force' \
+        $'git push `\r--force' \
+        $'git log `\n--output=/tmp/probe.txt' \
+        $'git pu`\nsh --force' \
+        $'cat .git-cre`\ndentials' \
+        $'# note`\ngit push --force'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        $'git log `\n--oneline -3' \
+        $'git status `\n-s' \
+        $'cat ``\n.git-credentials' \
+        $'git push ``\n--force' \
+        $'git push ` \n--force'; do
+      guard 0 "$cmd" PowerShell
+    done
+    guard 0 $'cat README.md `\n.git-credentials'
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't treat a PowerShell backtick at a line's end as a continuation, or treats a Bash or an escaped one as one (B28)" "the guard hook blocks a flag or a read that a PowerShell backtick continuation splits, and passes the benign continuations and the escaped and Bash backticks (B28)"
+
+  # A Bash comment that ends in a backslash (B31): Bash ends the comment at the line break, so the line after it is a
+  # command of its own, and the guard reads it as written. A continued command after such a comment is read from its
+  # own line on. A # inside a word (a#b) is no comment, so its continuation is joined, as Bash joins it. The hang
+  # check reads a heredoc header joined to its delimiter (B29): python3 with - <<'EOF' on the next line and EOF after.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        $'# note\\\ngit push --force' \
+        $'# note\\\ngit commit --no-verify -m x' \
+        $'git status # note\\\ngit push --force' \
+        $'# a\\\ngit commit \\\n-F /tmp/msg.txt' \
+        $'# a\\\ngit push \\\n--force' \
+        $'# a\\\n# b\\\ngit push \\\n--force' \
+        $'git push origin main#\\\n  --force' \
+        $'python3 \\\n- <<\'EOF\'\nEOF'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        $'# note\\\ngit status' \
+        $'git status # note\\\n-s' \
+        $'echo a#b\\\n--force' \
+        $'python3 \\\n- <<\'EOF\'\nprint(1)\nEOF'; do
+      guard 0 "$cmd"
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook reads a command after a Bash comment that ends in a backslash as hidden, or blocks a benign one (B31, B29)" "the guard hook reads the line after a Bash comment that ends in a backslash, and the command continued after it, as Bash does (B31, B29)"
+
+  # A PowerShell comment that ends in a backtick (B35): PowerShell ends the comment at the line break too, so the line after it
+  # is a command of its own, and a continued command after it is read from its own line on, as for a Bash comment (B31). A CRLF
+  # break is the same. A comment that ends in a backtick, followed by a plain command, passes.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        $'# note`\ngit commit `\n-F x' \
+        $'# note`\r\ngit commit `\r\n-F x'; do
+      guard 2 "$cmd" PowerShell
+    done
+    guard 0 $'# note`\ngit status' PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't read a command after a PowerShell comment that ends in a backtick, or blocks a plain one (B35)" "the guard hook reads the command after a PowerShell comment that ends in a backtick, and the command continued after it, as PowerShell does (B35)"
+
+  # A quoted or path-qualified reader, a backtick inside a word and a StreamReader (B30): the call operator with a
+  # quoted name (& 'Get-Content' .git-credentials), a reader by its path (/bin/cat, cat.exe, the Management module's
+  # Get-Content), a backtick escape that leaves a letter or a dot in a reader or a name (Get-Con`tent, .git-cre`dentials),
+  # and the StreamReader constructors are read as the plain forms are. A reader in a string with a backtick-escaped
+  # quote and an ordinary file pass. In PowerShell the escape also reaches the git flag rules (--fo`rce).
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        "& 'Get-Content' .git-credentials" \
+        '& "gc" .git-credentials' \
+        ". 'type' .git-credentials" \
+        "& 'Get-Content' -Path '.git-credentials'" \
+        "Get-Content '.git-credentials'" \
+        'Get-Con`tent .git-credentials' \
+        'gc .git-cre`dentials' \
+        'type `.git-credentials' \
+        'C:\Git\usr\bin\cat.exe .git-credentials' \
+        'Microsoft.PowerShell.Management\Get-Content .git-credentials' \
+        '[System.IO.StreamReader]::new(".git-credentials")' \
+        "[IO.StreamReader]::new('.git-credentials')" \
+        "New-Object System.IO.StreamReader('.git-credentials')" \
+        'New-Object -TypeName System.IO.StreamReader -ArgumentList .git-credentials' \
+        'git push --fo`rce' \
+        'Write-Output x; & "gc" .git-credentials'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        '/bin/cat .git-credentials' \
+        '/usr/bin/head -n 5 .git-credentials' \
+        "'/bin/cat' .git-credentials" \
+        '/usr/bin/tail -n 20 .config/gh/hosts.yml'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        "& 'Get-Content' README.md" \
+        "& 'Get-Content' 'README.md'" \
+        'Write-Output "say `"hi`" now"' \
+        'Write-Output "run `"gc README.md`" next"' \
+        "[System.IO.StreamReader]::new('docs/index.md')" \
+        "New-Object System.IO.StreamReader('README.md')" \
+        'Get-Con`tent README.md' \
+        'cat.exe README.md'; do
+      guard 0 "$cmd" PowerShell
+    done
+    for cmd in \
+        '/bin/cat README.md' \
+        '/usr/bin/head -n 5 README.md' \
+        "'/bin/cat' README.md"; do
+      guard 0 "$cmd"
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook misses a quoted or path-qualified reader, a backtick inside a word or a StreamReader of a credential store (B30)" "the guard hook blocks a quoted or path-qualified reader, a backtick-escaped word and a StreamReader of a credential store, and passes the same readers of ordinary files (B30)"
+
+  # The common file readers (B36): grep, sed, awk, sort, base64, xxd and the rest of the list in the hook print a
+  # credential store as cat does, in Bash and in a PowerShell payload; a reader or a name split by quotes (ca''t, c"a"t)
+  # is read as the shell runs it; [IO.File]::OpenText, OpenRead and Open read one. A pattern is an argument as well
+  # (B27), so grep "\.git-credentials" and git grep .git-credentials are blocked, and ordinary files pass. A commit message
+  # that names a reader, with no credential store after it, passes.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'grep x .git-credentials' \
+        'awk 1 .git-credentials' \
+        'sed -n p .git-credentials' \
+        'base64 .git-credentials' \
+        'xxd .git-credentials' \
+        'egrep x .git-credentials' \
+        'fgrep -i x .config/gh/hosts.yml' \
+        'rg x .git-credentials' \
+        'gawk "{print}" .config/gh/hosts.yml' \
+        'sort .git-credentials' \
+        'uniq .git-credentials' \
+        'cut -d= -f2 .git-credentials' \
+        'nl .git-credentials' \
+        'tac .git-credentials' \
+        'rev .git-credentials' \
+        'od -c .git-credentials' \
+        'hexdump -C .git-credentials' \
+        'diff .git-credentials README.md' \
+        'cmp .git-credentials README.md' \
+        '/usr/bin/grep x .git-credentials' \
+        'grep -rn "\.git-credentials" docs/' \
+        'git grep .git-credentials' \
+        "ca''t .git-credentials" \
+        'c"a"t .git-credentials' \
+        "'ca'\"t\" .git-credentials" \
+        'g""rep x .git-credentials' \
+        'ba"se"64 .git-credentials' \
+        'cat .git-cre'"''"'dentials' \
+        'c'"'"'a'"'"'t .git-credentials'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        "[System.IO.File]::OpenText('.git-credentials')" \
+        '[IO.File]::OpenRead(".git-credentials")' \
+        "[System.IO.File]::Open('.git-credentials', 'Open', 'Read')" \
+        '[io.file]::opentext("~/.ssh/id_rsa")' \
+        '[IO.File]::OpenRead("$HOME\.ssh\id_rsa")' \
+        '& "Get-Content" .git-credentials' \
+        'Select-String -Path .git-credentials -Pattern x'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        'grep x README.md' \
+        'sed -n p docs/notes.md' \
+        'awk 1 project.godot' \
+        'base64 export_presets.cfg' \
+        'xxd README.md' \
+        'ca""t README.md' \
+        'c"a"t docs/notes.md' \
+        'grep -n "DATABASE_URL" src/' \
+        'sed -n 1,5p docs/index.md' \
+        'awk 1 docs/index.md' \
+        'sort README.md' \
+        'cut -c1-3 README.md' \
+        'diff README.md docs/index.md' \
+        'git grep TODO' \
+        'git diff README.md' \
+        'git commit -m "fix: sort the docs and grep notes"' \
+        'git commit -m "docs: sed, awk and diff notes" -- docs/index.md' \
+        'rev-parse --show-toplevel'; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        "[System.IO.File]::OpenText('docs/index.md')" \
+        '[IO.File]::OpenRead("README.md")' \
+        "[System.IO.File]::Open('docs/index.md', 'Open')" \
+        "[IO.File]::OpenText('README.md')"; do
+      guard 0 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook misses a common file reader, a reader or a name split by quotes, or an IO.File Open method of a credential store, or blocks an ordinary read (B36)" "the guard hook blocks grep, sed, awk, sort, base64, xxd and the other common readers, a reader or name split by quotes, and [IO.File]::OpenText, OpenRead and Open of a credential store, and passes the same readers of ordinary files (B36)"
+
+  # A backslash that escapes an ordinary character in a Bash command is removed by the shell (B44): c\at is cat, and .git-cre\dentials
+  # is .git-credentials, so the reader and the name are read as the shell runs them. An escaped backslash (\\) is one backslash, and a
+  # backslash before a space stays, as the shell keeps the name one word. Windows paths and ordinary files pass, and PowerShell's
+  # escape is the backtick (B30), so a backslash in a PowerShell payload is a path separator, not an escape.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'c\at .git-credentials' \
+        'he\ad .git-credentials' \
+        'cat .git-cre\dentials' \
+        'cat .git\-credentials' \
+        'cat .git-c\redentials' \
+        'c\a\t .git-credentials' \
+        'ca\t .git-cre\dentials' \
+        'sed -n p .git-cre\dentials' \
+        'C\AT .git-credentials' \
+        'c\at "config/.git-cre\dentials"' \
+        'cat ~/.s\sh/id_rsa' \
+        'cat C:\Users\V\.git-credentials' \
+        'cat ~/.\ssh/id_rsa'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'c\\at .git-credentials' \
+        'cat .git-cre\\dentials' \
+        'c\at README.md' \
+        'cat C:\Users\V\README.md' \
+        'cat C:\Users\V\docs\index.md' \
+        'cat C:\repo\README.md' \
+        'git commit -m "docs: c\at notes"'; do
+      guard 0 "$cmd"
+    done
+    guard 0 'c\at .git-credentials' PowerShell
+    guard 0 "bash -c 'c\at README.md'" PowerShell
+    guard 0 "powershell -c \"c\at .git-credentials\"" PowerShell
+    guard 2 "bash -c 'c\at .git-credentials'" PowerShell
+    guard 2 'bash -c "cat .git-cre\dentials"' PowerShell
+    guard 2 'type C:\x\.git-credentials' PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook misses a backslash that escapes a character in a Bash credential read, or blocks an ordinary read or a PowerShell backslash (B44)" "the guard hook blocks a Bash credential read whose reader or name has a backslash that escapes a character (c\\at, .git-cre\\dentials), and passes ordinary files, Windows paths and a PowerShell backslash (B44)"
+
+  # The credential-read check (B52): an escaped space in a store path (GitHub\ CLI is the gh CLI's folder, and the backslash-space is
+  # the space in it); an ANSI-C string ($'...') in a reader's or a file's name, which is read as the shell reads it (\xHH, \NNN and the
+  # common escapes), with an escape the guard can't decode (\u, \0) blocked as unjudgeable; and a PowerShell command's $(...), read as
+  # a command of its own, so a Bash command in it that reads through a backslash (c\at) is blocked. PowerShell's backslash is no
+  # escape (its escape is the backtick), so its store path passes as written (B44).
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'cat ~/AppData/Roaming/GitHub\ CLI/hosts.yml' \
+        'cat ~/AppData/Roaming/GitHub\ CLI' \
+        'cat "~/AppData/Roaming/GitHub\ CLI/hosts.yml"' \
+        'cat ~/AppData/Roaming/Git\Hub\ CLI/hosts.yml' \
+        "\$'\\x63at' .git-credentials" \
+        "\$'\\143at' .git-credentials" \
+        "cat \$'.git-cre\\x64entials'" \
+        "cat \$'\\x2egit-credentials'" \
+        "cat \$'\\x2e\\x67it\\x2dcredentials'" \
+        "cat \$'\\x2egit-'\$'credentials'" \
+        "cat \$'.git\\x2dcredentials' docs/index.md" \
+        "cat ~/\$'\\x2essh'/id_rsa" \
+        "cat \$'\\u0063at' .git-credentials" \
+        "cat \$'\\0' README.md" \
+        "echo \$(bash -c \$'c\\x61t .git-credentials')" \
+        "echo \$(bash -c 'c\\at .git-credentials')" \
+        "git log \$(bash -c 'c\\at .git-credentials')"; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        "echo \$(bash -c 'c\\at .git-credentials')" \
+        "echo \"\$(bash -c 'c\\at .git-credentials')\"" \
+        "Write-Output \$(bash -c \"c\\at ~/.ssh/id_rsa\")"; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        'cat README.md docs/index.md' \
+        "printf '%s' \$'\\e[31mred\\e[0m'" \
+        "tr -d \$'\\r' < docs/index.md" \
+        "cat \$'README\\56md'" \
+        "cat \$'\\101\\x42C.md'" \
+        "cat \$'README.md'" \
+        "echo \"\$(bash -c 'c\\at README.md')\"" \
+        "echo \$(bash -c 'echo hi')"; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        'cat ~/AppData/Roaming/GitHub\ CLI/hosts.yml' \
+        'Write-Output "$(Get-Content README.md)"' \
+        'Write-Output "$(Get-Content README.md)"' \
+        "Write-Output \"\$(bash -c 'c\\at README.md')\""; do
+      guard 0 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook misses an escaped space in a store path, an ANSI-C string in a reader's or a file's name, or a PowerShell command's substitution that reads a credential store, or blocks an ordinary read (B52)" "the guard hook blocks a credential read through an escaped space in a store path, an ANSI-C string in a name, and a PowerShell command's substitution, and passes an ANSI-C string that names no credential and the substitutions that read none (B52)"
+
+  # A command substitution in a git command's words (B32): what it prints can be a flag, and the text it runs is a command
+  # the guard can't see. The repro (git push $(echo --force) and its backtick form) is blocked as the plain flag is, in Bash
+  # and PowerShell, and so is a substitution as the command name, or one that runs a non-reading command. A double-quoted
+  # value that starts with fixed text, a commit's or tag's -m value and a read (git, date, cat, echo, printf) pass, as the
+  # procedures use them. The text of a substitution is judged as a command of its own.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'git push $(echo --force)' \
+        'git push `echo --force`' \
+        'git push "$(echo --force)"' \
+        'git log $(echo --output=/tmp/x)' \
+        'git log "$(echo --output=/tmp/x)"' \
+        'git log "--output=$(echo /tmp/x)"' \
+        'git log "--since=$(rm -rf x)"' \
+        'git log -1 "$(date +%F)"' \
+        'git log "x$(git push --force)"' \
+        'git push $(git push --force)' \
+        'git status && echo $(git push --force)' \
+        'echo "$(git push --force)"' \
+        'git log > >(git push --force)' \
+        '$(echo git) push --force' \
+        'git log $(echo git) push' \
+        'git commit -m x "$(cat x)"' \
+        'git commit -m "$(echo $(rm -rf x))"' \
+        $'git commit -c -m "$(cat <<\'EOF\'\n--file=/tmp/x\nEOF\n)"' \
+        $'git commit -m -m "$(cat <<\'EOF\'\n--file=/tmp/x\nEOF\n)"' \
+        $'git commit -m "$(cat <<EOF\n$(git push --force)\nEOF\n)"' \
+        $'git commit -m "$(cat x; git push --force)"' \
+        $'git log \\\n$(echo --output=/tmp/x)' \
+        'git push "--force"$(echo x)'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'git push $(echo --force)' \
+        'git push `echo --force`' \
+        'git push "$(echo --force)"' \
+        'git push (echo --force)' \
+        'git push @(echo --force)' \
+        '$(echo git) push --force' \
+        'git log -- $(echo --output=/tmp/x)' \
+        'git log "$(git push --force)"'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        $'git commit -m "$(cat <<\'EOF\'\nfix the --output handling, and -F /tmp/x\nEOF\n)"' \
+        $'git commit -a -m "$(cat <<\'EOF\'\nmsg one\n\nBody with `ticks` and $(vars) text\nEOF\n)" -- docs/index.md' \
+        $'git commit -m "$(cat <<\'EOF\'\nmsg `git push --force` in a quoted heredoc\nEOF\n)" -- x' \
+        $'git commit -m "$(cat <<EOF\nplain body\nEOF\n)"' \
+        'git commit -m "$(git log -1 --format=%s)"' \
+        'git commit -m "$(echo --file=/tmp/x)"' \
+        'git tag -a "v$(cat VERSION)" -m "release"' \
+        'git checkout -q -b "ddd/bundle-$(date +%F)" origin/main' \
+        'git ls-remote --heads origin "ddd/bundle-$(date +%F)*"' \
+        "git log --since=\"\$(date -d '7 days ago' +%F)\" --oneline" \
+        'git log --format=%h -n 1 -- "docs/$(echo index).md"' \
+        'test -z "$(git status --porcelain)"' \
+        'echo "$r $(git -C work/$r describe --tags)"' \
+        'for f in $(git diff --name-only); do echo "$f"; done' \
+        'K=$(git rev-parse HEAD); echo $K' \
+        'cd "$(git rev-parse --show-toplevel)" && git status' \
+        'git status; echo $(date)' \
+        'git log -1 --format=%h \$(echo --output)' \
+        'echo `date`'; do
+      guard 0 "$cmd"
+    done
+    guard 0 'Write-Output "$(git status)"' PowerShell
+    guard 0 $'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)" && git push origin main' PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook reads a command substitution in a git command's words, or as its name, as harmless, or blocks a plain read (B32)" "the guard hook blocks a command substitution that can print a git flag or run a command the guard can't read, in git's words or as a command name, and passes the quoted values, messages and reads the procedures use (B32)"
+
+  # A Bash comment holds no substitution and opens no quoted string (B43): a backtick, $( or quote in it is text, so the
+  # command after the comment is read as Bash reads it. A substitution after a comment, a tab, ; or & is still read, and so is
+  # one after a # inside a word (a#b) or after an escaped blank, since neither starts a comment. A ) in a comment doesn't close a
+  # substitution, so its text runs to the next line and is blocked. A blank before a # inside ${...} is part of the expansion,
+  # not a comment. An unquoted heredoc body's substitutions are read whole, as the shell expands them, so a comment in one is
+  # read too; a quoted body is text.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        $'git push # x\n`echo --force`' \
+        $'git push # x\ngit push `echo --force`' \
+        $'git status # note\ngit push $(echo --force)' \
+        $'# it\'s\ngit push `echo --force`' \
+        $'git status a#b `echo --force`' \
+        $'git status a\\ #`echo --force`' \
+        $'git status ${x:- #a} $(echo --force)' \
+        $'git push origin ":${y:- #}$(echo main)"' \
+        $'git push `# x`' \
+        $'git push `echo --force` # x' \
+        $'git push $(echo --force) # `' \
+        $'git status $(echo a # `)' \
+        $'git log "--format=$(echo a # )\nprintf x)"' \
+        $'git commit -q -F - <<EOF\n# note `\nmsg\nEOF' \
+        $'git log <<EOF\n# $(git push --force)\nEOF' \
+        $'git status <<EOF\n# `git push --force`\nEOF' \
+        $'# note `\\\ngit push `echo --force`'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        $'# note `\ngit status' \
+        $'# note `echo --force`\ngit status' \
+        $'# note $(echo --force)\ngit status' \
+        $'git status\t# note `\ngit log -1' \
+        $'git status;# note `\ngit log -1' \
+        $'# it\'s\ngit status' \
+        $'git status # $(echo --force)' \
+        $'git status # `echo --force`' \
+        $'git status ${x:-y} # $(echo --force)' \
+        $'# note `\\\ngit status' \
+        $'git commit -q -F - <<\'EOF\'\n# note `echo --force`\nmsg\nEOF'; do
+      guard 0 "$cmd"
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook reads a backtick, \$( or quote in a Bash comment as a substitution or a string, or misses a substitution after one (B43)" "the guard hook reads a Bash comment as text, so a backtick, \$( or quote in it starts no substitution or string, and a substitution after a comment, an escaped blank or a # in a word is still read (B43)"
+
+  # The word decoder (B51) reads a comment on its own line: a quote in it pairs with nothing after the line break, so the
+  # quoted flag, refspec or credential command after it is seen, in Bash, in a heredoc body a shell runs and in PowerShell
+  # (whose # starts a comment the same way). A quote in a comment that never closes is text, so the flags it names pass,
+  # and a quoted command in a comment passes as it did; a # inside a quoted string, an escaped #, ${#x} or $# starts no
+  # comment, so a flag after one is blocked.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        $'# it\'s\ngit push origin \':main\'' \
+        $'# it\'s\ngit push "--force" \'x\'' \
+        $'# say "hi\ngit push "--force" "x"' \
+        $'# it\'s\ngit commit -q "-n" -m \'x\'' \
+        $'# it\'s\ngit push origin "+main" \'x\'' \
+        $'# say "hi\ngit push origin \':main\'' \
+        $'# say "hi\ngit commit -q "-n" -m "x"' \
+        $'git status\n# it\'s\ngit push "--force" \'x\'' \
+        $'echo \'a\'  # it\'s\ngit push "--force" \'x\'' \
+        $'# it\'s\n# don\'t\ngit push origin \':main\' \'x\'' \
+        $'bash <<\'EOF\'\n# it\'s\ngit push origin \':main\'\nEOF' \
+        $'bash <<\'EOF\'\n# it\'s\ngit push "--force" \'x\'\nEOF' \
+        $'# it\'s\ngit credential fill \'x\'' \
+        $'# note\\\ngit push --force' \
+        $'echo a\\ #b ; git push --force' \
+        $'echo "#" ; git push --force' \
+        $'git status ${x:- #} ; git push --force' \
+        $'echo "$(echo "a #") # b" ; git push --force'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        $'# it\'s\ngit status' \
+        $'# it\'s --force\ngit status' \
+        $'# it\'s "--force" -n :main\ngit status' \
+        $'# it\'s \':main\'\ngit log -1' \
+        $'# it\'s "git push --force"\ngit status' \
+        $'# say "--force" and "-n" and ":main"\ngit status' \
+        $'git status # it\'s --force\ngit log -1' \
+        $'git status\n# it\'s\ngit log --oneline -3' \
+        $'# it\'s -n\ngit push origin main' \
+        $'git commit -q -F - <<\'EOF\'\n# it\'s git push origin \':main\'\nEOF' \
+        $'bash <<\'EOF\'\n# it\'s --force\necho done\nEOF' \
+        $'git commit -m "fix #12 it\'s" -m "x"' \
+        $'git status "#" \'it\'' \
+        $'echo ;#x'; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        $'# it\'s\ngit push "--force" \'x\'' \
+        $'# it\'s\ngit commit -q "-n" -m \'x\'' \
+        $'echo "a""b # " ; git push --force' \
+        'git push `#x --force'; do
+      guard 2 "$cmd" PowerShell
+    done
+    guard 0 $'# it\'s --force\ngit status' PowerShell
+    guard 0 $'# it\'s\ngit log -1' PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook reads a quote in a comment as pairing with a quote after its line break, or blocks a comment that names a flag or quotes a command (B51)" "the guard hook reads a quote in a Bash or PowerShell comment as pairing with nothing after its line break, so a quoted flag, refspec or credential command after it is blocked, and a comment that names a flag or quotes a command passes (B51)"
+
+  # A destructive git rule (B33) reads the words as the shell hands them over: a quoted flag, refspec or path is seen, a flag
+  # ends at ; & | ) or a line break as it does at a space, and a heredoc body a shell runs is read too. The rules are a force
+  # push, a +refspec, reset --hard, clean -f, checkout or switch -f, checkout or restore of ".", stash drop or clear, and
+  # branch -D. A quoted message that names one passes, and so does a quoted word that isn't a flag.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+      $'git push --force\necho done' \
+      'git push --force;echo done' \
+      'git push --force&&echo done' \
+      'git push --force|cat' \
+      '(git push --force)' \
+      'git push "--force"' \
+      "git push '--force'" \
+      'git push "--force-with-lease=origin/main"' \
+      'git push --fo"rce"' \
+      'git push -f;echo done' \
+      'git push origin "+main"' \
+      "git push origin '+main'" \
+      'git pu"sh" --force' \
+      'git status && git push --force' \
+      $'git status\ngit push "--force"' \
+      'git checkout "."' \
+      'git checkout -- "."' \
+      'git restore "."' \
+      'git checkout .;echo done' \
+      'git checkout -f;echo done' \
+      'git checkout "-f" main' \
+      'git checkout -qf main' \
+      'git switch "--discard-changes" main' \
+      'git reset "--hard"' \
+      'git reset --hard;echo done' \
+      'git clean "-f"' \
+      'git stash "drop"' \
+      'git stash drop;echo done' \
+      'git branch "-D" x' \
+      'git branch -D x;echo done' \
+      'git branch -vD x' \
+      'git commit -n;echo done' \
+      'git commit -m "-x;y" -F /tmp/msg.txt' \
+      'git diff "/etc/passwd"' \
+      $'bash <<\'EOF\'\ngit push --force\nEOF' \
+      $'bash <<\'EOF\'\ngit push "--force"\nEOF' \
+      $'bash <<\'EOF\'\ngit push origin "+main"\nEOF' \
+      $'bash <<\'EOF\'\ngit checkout "."\nEOF' \
+      $'bash <<\'EOF\'\ngit commit -n -m x\nEOF' \
+      $'sh <<EOF\ngit reset --hard\nEOF'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+      'git push origin main' \
+      'git push origin "HEAD:refs/heads/main"' \
+      'git push "origin" main' \
+      'git push origin main;git status' \
+      'git push -u origin "ddd/bundle-$(date +%F)"' \
+      'git commit -m "stop git push --force;"' \
+      'git commit -m "reset --hard" -m "checkout ."' \
+      'git commit -m "stash drop"' \
+      'git commit -m "-x" -F -' \
+      'git checkout -b "feature/x"' \
+      'git checkout "main"' \
+      'git branch -d x' \
+      'git branch -vv' \
+      'git log --grep "push --force"' \
+      'git log --oneline "--grep=push"' \
+      'git stash show "drop"' \
+      'git tag -a v1 -m "push --force note"' \
+      'echo "git push --force"' \
+      'git status && echo "reset --hard"' \
+      $'git status\ngit log --oneline -3' \
+      $'git commit -q -F - <<\'EOF\'\nStop "git push --force" in the hook, and "git reset --hard".\nEOF' \
+      $'git commit -q -F - <<\'EOF\'\nfix the --output and --no-index handling, not -F /tmp/x\nEOF'; do
+      guard 0 "$cmd"
+    done
+    for cmd in 'git push "--force"' 'git push origin "+main"' 'git checkout "."' 'git push --force;echo done' 'git reset "--hard"'; do
+      guard 2 "$cmd" PowerShell
+    done
+    guard 0 'Write-Output "git push --force"' PowerShell
+    guard 0 'git push origin "HEAD:main"' PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't read a destructive git rule's flag, refspec or path as the shell does, or blocks a message that names one (B33)" "the guard hook blocks a force push, a +refspec, reset, clean, checkout, stash drop and branch -D that a quote, a line break, ; & | ) or a heredoc body hides, and passes the quoted messages (B33)"
+
+  # A script a shell or an interpreter runs is a command of its own (B34): a quoted string given to bash -c, sh -c or
+  # zsh -c (with options before -c), eval, powershell -Command, pwsh -c or cmd /c is read by the same rules, to four levels
+  # of nesting, whatever the name is quoted or prefixed with. A comment, a heredoc body or a message in quotes that names
+  # one is text, and a read or a benign script passes. A command whose quoting the guard can't close, and PowerShell's
+  # -EncodedCommand, whose text is hidden, are blocked.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        "bash -c 'git push --force'" \
+        'sh -c "git commit --no-verify -m x"' \
+        "eval 'git log --output=x'" \
+        'sh -c "git push $(echo --force)"' \
+        "sh -c 'git commit -n -m x'" \
+        "zsh -c 'git branch -D x'" \
+        "bash -lc 'git reset --hard'" \
+        "bash -o pipefail -c 'git push --force'" \
+        'eval "git push" --force' \
+        "bash -c \"git push '--force'\"" \
+        "timeout 240 bash -c 'git push --force'" \
+        "bash -c 'bash -c \"git push --force\"'" \
+        'sh -c "git commit -m \"x\" -n"' \
+        'powershell -NoProfile -Command "git push --force"' \
+        'cmd /c "git push --force"' \
+        '"bash" -c "git push --force"' \
+        "ba''sh -c 'git push --force'" \
+        "nice -n 5 bash -c 'git push --force'" \
+        "sudo sh -c 'git push --force'" \
+        "eval 'bash -c \"git push --force\"'" \
+        "bash -c \"\$(echo git push --force)\"" \
+        "bash -c 'git checkout .'" \
+        'bash -c "git push origin +main"' \
+        "/bin/bash -c 'git push --force'" \
+        "bash -c \$'git push --force'" \
+        "bash -c 'git commit -F /tmp/msg.txt'" \
+        "bash -c 'sleep 300'" \
+        'sh -c "git status' \
+        'powershell -EncodedCommand ZwBpAHQAIABwAHUAcwBoAA==' \
+        $'# don\'t\nbash -c \'git push --force\'' \
+        $'cat <<\'EOF\'\nit\'s\nEOF\nbash -c \'git push --force\'' \
+        $'bash -c \'echo hi\' ; sh -c "git status\nbash -c \'git push --force\'"'; do
+      guard 2 "$cmd"
+    done
+    # Four wrappers nested (bash -c inside sh -c inside zsh -c inside bash -c) reach the git inside; a fifth is blocked.
+    wrap_esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; printf '%s' "$s"; }
+    nest="bash -c 'git push --force'"
+    for _ in 1 2 3; do nest="sh -c \"$(wrap_esc "$nest")\""; done
+    guard 2 "$nest"
+    nest="bash -c 'echo hi'"
+    for _ in 1 2 3; do nest="sh -c \"$(wrap_esc "$nest")\""; done
+    guard 0 "$nest"
+    nest="sh -c \"$(wrap_esc "$nest")\""
+    guard 2 "$nest"
+    for cmd in \
+        "bash -c 'git status'" \
+        'sh -c "echo hi"' \
+        "bash -c 'git log --oneline -3'" \
+        "sh -c \"git commit -m 'fix the --output handling'\"" \
+        'echo "bash -c '"'"'git push --force'"'"'"' \
+        'git commit -m "fix: sh -c '"'"'git push --force'"'"' now blocked"' \
+        $'git commit -q -F - <<\'EOF\'\nthe sh -c \'git push --force\' guard\nEOF' \
+        "timeout 240 bash -c 'until test -f x; do sleep 5; done'" \
+        '(timeout 4m bash -c "while true; do sleep 1; done")' \
+        'bash -c "echo $(date)"' \
+        'powershell -NoProfile -Command "Write-Output '"'"'hi'"'"'"' \
+        "bash -c 'cat README.md'" \
+        'eval "echo hi"' \
+        'git log --grep "bash -c git push --force"' \
+        "bash -c 'echo hi' git status" \
+        'echo sh -c' \
+        'git commit -m "run cmd /c later"' \
+        $'bash -c "git commit -F - <<\'EOF\'\nmsg\nEOF"' \
+        $'git commit -m "$(cat <<\'EOF\'\nmsg with sh -c \'git push --force\'\nEOF\n)"' \
+        'bash tools/check.sh'; do
+      guard 0 "$cmd"
+    done
+    # PowerShell (B34): the same wrappers in the PowerShell tool's payload, and a backtick that joins a flag.
+    for cmd in \
+        "pwsh -c 'git reset --hard'" \
+        'powershell -Command "git push --force"' \
+        'bash -c "git push --force"' \
+        'cmd /c "git push --force"' \
+        'powershell -EncodedCommand ZwBpAHQAIABwAHUAcwBoAA==' \
+        'powershell -c "git push --fo`rce"'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        "pwsh -c 'git status'" \
+        'powershell -NoProfile -Command "Write-Output '"'"'hi'"'"'"' \
+        'cmd /c "echo hi"' \
+        'powershell -File tools/x.ps1 "git push --force"' \
+        'pwsh -c "Get-ChildItem | Select-Object Name"'; do
+      guard 0 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't read a script a shell or an interpreter runs as a command of its own, or blocks a message that names one (B34)" "the guard hook reads a script given to bash -c, sh -c, zsh -c, eval, powershell -Command, pwsh -c or cmd /c as a command, to four levels, and passes the messages, heredocs and reads that name one (B34)"
+
+  # A wait loop in a script a shell or an interpreter runs (B42): the hang check reads each such script as it reads the command,
+  # so an until, while true or while : loop with sleep is blocked under eval, bash -c, sh -c, powershell -Command and cmd /c.
+  # A timeout of 280 seconds or less above the wrapper bounds the whole script, as it bounds a loop the command runs itself,
+  # and a loop with no sleep, or in a message that names one, passes.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        "eval 'until false; do sleep 1; done'" \
+        "eval 'while true; do sleep 1; done'" \
+        "eval 'while :; do sleep 1; done'" \
+        "sh -c 'until false; do sleep 1; done'" \
+        "eval \"until false; do sleep 1; done\"" \
+        "eval 'bash -c \"until false; do sleep 1; done\"'" \
+        "eval 'eval \"while true; do sleep 1; done\"'" \
+        "sh -c \"eval 'while : ; do sleep 1; done'\"" \
+        "timeout 9999 eval 'until false; do sleep 1; done'" \
+        "timeout 0 eval 'until false; do sleep 1; done'" \
+        "timeout 5m eval 'until false; do sleep 1; done'" \
+        'cmd /c "until false; do sleep 1; done"' \
+        'cmd /c "while true; do sleep 1; done"' \
+        'powershell -Command "while ($true) { Start-Sleep 1 }"' \
+        'powershell -NoProfile -Command "while ($true) { sleep 1 }"'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'while ($true) { Start-Sleep 1 }' \
+        'While ($true) { Start-Sleep -Seconds 5 }' \
+        'WHILE ($true) { start-sleep 2 }'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        "timeout 60 eval 'until false; do sleep 1; done'" \
+        "timeout 4m eval 'until false; do sleep 1; done'" \
+        "timeout 240s eval 'until false; do sleep 1; done'" \
+        'timeout 60 cmd /c "until false; do sleep 1; done"' \
+        "timeout 60 bash -c \"eval 'until false; do sleep 1; done'\"" \
+        "sh -c \"timeout 60 eval 'until false; do sleep 1; done'\"" \
+        "eval 'timeout 60 bash -c \"until false; do sleep 1; done\"'" \
+        "eval 'until false; do echo hi; done'" \
+        "eval 'sleep 1'" \
+        "eval 'git commit -m \"until false; do sleep 1; done\"'" \
+        'cmd /c "echo until"' \
+        'powershell -Command "Write-Output (Get-Date)"'; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        'while ($true) { Get-Date }' \
+        'timeout 60 powershell -Command "while ($true) { Start-Sleep 1 }"'; do
+      guard 0 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't block a wait loop in a script a shell or an interpreter runs, or blocks one a timeout bounds (B42)" "the guard hook blocks an until or while loop with sleep in a script given to eval, bash -c, sh -c, powershell -Command or cmd /c, and passes one under a timeout of 280 seconds or less (B42)"
+
+  # The hang check's other forms (B49): a C-style for (( loop with sleep and no time limit; a PowerShell do { } while or until with a
+  # sleep in its body; Start-Sleep and its alias sleep with -Seconds, -s or -Milliseconds over 280 seconds; cmd's timeout /t N over 280
+  # seconds, or -1, which waits for a key press for ever (cmd's timeout is a wait, not a time limit); and a Bash substitution, which
+  # runs before a timeout above it starts, so the timeout doesn't bound it. A substitution in single quotes, or escaped, is the
+  # script's own, so a timeout above a script bounds it. A message that names one of these passes (the quoted text is blanked).
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'for ((;;)); do sleep 1; done' \
+        'for (( ; ; )); do sleep 1; done' \
+        'for ((i = 0; i < 3; i++)); do sleep 1; done' \
+        'timeout 60 echo "$(until false; do sleep 1; done)"' \
+        'timeout 60 echo $(until false; do sleep 1; done)' \
+        'timeout 60 bash -c "echo $(until false; do sleep 1; done)"' \
+        'timeout 60 echo "$(bash -c "until false; do sleep 1; done")"' \
+        'echo "$(sleep 600)"' \
+        'echo "$(cmd /c "timeout /t 600")"' \
+        'powershell -Command "Start-Sleep -Seconds 600"' \
+        'powershell -Command "Start-Sleep -Milliseconds 300001"' \
+        'cmd /c "timeout /t 300"' \
+        'cmd /c "timeout /t -1"' \
+        'timeout 60 cmd /c "timeout /t 600"' \
+        'timeout 60 echo $(cat <<'"'"'EOF'"'"'
+x
+EOF
+) ; while true; do sleep 1; done'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'do { Start-Sleep 1 } while ($true)' \
+        'do { Start-Sleep 1 } until ($false)' \
+        'DO { START-SLEEP -S 600 } WHILE ($true)' \
+        'Start-Sleep -Seconds 600' \
+        'Start-Sleep -s 600' \
+        'Start-Sleep -Milliseconds 280001' \
+        'sleep -Seconds 300' \
+        'timeout 60 Write-Output $(while ($true) { Start-Sleep 1 })' \
+        'powershell -Command "do { Start-Sleep 1 } while ($true)"'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        "timeout 60 bash -c 'echo \$(until false; do sleep 1; done)'" \
+        'timeout 240 bash -c "echo \$(until test -f x; do sleep 5; done)"' \
+        "timeout 240 bash -c 'for ((i = 0; i < 3; i++)); do sleep 1; done'" \
+        'echo "$(date +%s)"' \
+        'echo $(sleep 280)' \
+        'bash -c "echo $(date)"' \
+        'timeout 60 cmd /c "timeout /t 60"' \
+        'cmd /c "timeout /t 280"' \
+        "echo '\$(until false; do sleep 1; done)'" \
+        'git commit -m "wait: Start-Sleep 600 and for ((;;)) and do { x } while (y)"' \
+        'git log --format="%h $(date +%F)" -3' \
+        'echo "$(git log --oneline -3)"' \
+        'for i in 1 2 3; do echo $i; done' \
+        'for ((i = 0; i < 3; i++)); do echo $i; done'; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        'timeout 60 powershell -Command "do { Start-Sleep 1 } while ($true)"' \
+        'timeout 240 powershell -Command "Start-Sleep -Seconds 240"' \
+        'Start-Sleep -Seconds 280' \
+        'Start-Sleep -Milliseconds 280000' \
+        'Start-Sleep 5' \
+        'do { Get-Date } while ($false)' \
+        "Write-Output 'do { Start-Sleep 1 } while (\$true)'"; do
+      guard 0 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't block a for (( loop, a do ... while, Start-Sleep or timeout /t over 280 seconds, or a substitution before a timeout, or blocks a message or a bounded script that names one (B49)" "the guard hook blocks a for (( loop with sleep, a do ... while with sleep, Start-Sleep and timeout /t over 280 seconds, and a substitution that runs before a timeout, and passes a bounded script and a message that names them (B49)"
+
+  # The hang check reads the command without the bodies no shell runs (B50): a commit's, tag's or gh message, and a cat or tee body
+  # nothing runs (the classification's reading, B40 and B48). So a message can name a loop, a pause or a timed wait, as plain text,
+  # in a C-style or a PowerShell loop, with a pause or a wait over five minutes. A body a shell, an interpreter or a runner executes
+  # is still read, and so is the empty-heredoc probe and a command after a message. An unquoted message's substitution is run, so it
+  # is read; a quoted one is text, and so are its backticks.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        $'git commit -q -F - -- a <<\'EOF\'\nPowerShell\'s While loop with Start-Sleep is now seen.\nEOF' \
+        $'gh pr edit 5 --body-file - <<\'EOF\'\nPowerShell\'s While loop with Start-Sleep is now seen.\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nfix: for ((i = 0; i < 3; i++)); do sleep 600; done\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nwait: Start-Sleep -Seconds 600 before retry\nEOF' \
+        $'gh pr create --body-file - <<\'EOF\'\nUse cmd\'s timeout /t 600 to wait\nEOF' \
+        $'gh pr create --body-file - <<\'EOF\'\ndo { Start-Sleep 600 } while ($true)\nEOF' \
+        $'gh pr create --body-file - <<\'EOF\'\nuse `sleep 600` and `timeout /t 600` as examples\nEOF' \
+        $'gh pr create --body-file - <<\'EOF\'\n$(until false; do sleep 1; done)\nEOF' \
+        $'git commit -q -F - <<EOF\nwhile you wait, Start-Sleep 600 $(date +%F)\nEOF' \
+        $'git tag -a v1 -F - <<\'EOF\'\nwhile true; do sleep 600; done\nEOF' \
+        $'gh issue comment 5 -F - <<\'EOF\'\nfor ((;;)); do sleep 1; done\nEOF' \
+        $'gh release create v1 --notes-file - <<\'EOF\'\ndo { Start-Sleep 600 } until ($false)\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nfix: sleep 600\nEOF\ngit status' \
+        $'cat > notes.md <<\'EOF\'\nuntil false; do sleep 600; done\nEOF' \
+        $'cat > notes.md <<EOF\nuntil false; do sleep 600; done\nEOF' \
+        $'tee notes.md <<\'EOF\'\nStart-Sleep -Seconds 600\nEOF'; do
+      guard 0 "$cmd"
+    done
+    guard 0 'git commit -q -m "wait: Start-Sleep -Seconds 600"' PowerShell
+    for cmd in \
+        $'python3 - <<\'EOF\'\nEOF' \
+        $'bash <<\'EOF\'\nuntil false; do sleep 600; done\nEOF' \
+        $'cat > x.sh <<\'EOF\'\nwhile true; do sleep 1; done\nEOF\nbash x.sh' \
+        $'cat > x.sh <<\'EOF\'\nStart-Sleep -Seconds 600\nEOF\nsh x.sh' \
+        $'cat > x.sh <<\'EOF\'\nuntil false; do sleep 1; done\nEOF\n. ./x.sh' \
+        $'echo start; cat > x.sh <<\'EOF\'\nuntil false; do sleep 1; done\nEOF\nbash x.sh' \
+        $'git commit -q -F - <<\'EOF\'\nmsg\nEOF\nwhile true; do sleep 1; done' \
+        $'gh pr create --body-file - <<\'EOF\'\nmsg\nEOF\nsleep 600' \
+        $'git commit -q -F - <<EOF\n$(until false; do sleep 1; done)\nEOF' \
+        $'gh pr create --body-file - <<EOF\n$(sleep 600)\nEOF' \
+        $'git commit -q -F - <<EOF\n`until false; do sleep 1; done`\nEOF' \
+        $'cat > notes.md <<\'EOF\'\nmsg\nEOF\nbash -c "until false; do sleep 600; done"'; do
+      guard 2 "$cmd"
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook blocks a message or an unrun cat body that names a loop, a pause or a timed wait, or passes a body a shell, an interpreter or a runner executes (B50)" "the guard hook passes a commit's, tag's or gh message, and a cat or tee body nothing runs, that names a loop, a pause or a timed wait, and blocks a body a shell, an interpreter or a runner executes (B50)"
+
+  # A variable in a git command's words (B37): the guard can't read what it holds. A variable that the command assigns once,
+  # to a plain value, is read as that value, so FLAG=--force; git push $FLAG is the force push it is. Any other unquoted
+  # variable in the words of a git subcommand the rules read is blocked, and so is a quoted one that a flag or a path could
+  # be, a fixed text that starts a flag (--$X), a variable as the subcommand, and a variable as a command's name followed by
+  # -c or -Command. The everyday forms pass: a quoted variable as the value of -m, -e, -b or -C, after --, after fixed text
+  # that doesn't start a flag, as a push's branch after its remote, and in a subcommand the rules don't read (git status).
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'FLAG=--force; git push $FLAG' \
+        'FLAG=-f; git push ${FLAG} origin' \
+        'export ST=-f && git push $ST origin' \
+        'FLAG=--force; git push "$FLAG"' \
+        'FLAG=ok; FLAG=--force; git push $FLAG' \
+        'FLAG=ok; read FLAG; git push $FLAG' \
+        'NV=--no-verify; git commit $NV -m x' \
+        'git commit $NV -m x' \
+        "git commit \"\$NV\" -m x" \
+        'git push $FLAG' \
+        'git push "$FLAG"' \
+        'git push origin $BR' \
+        'git push --$X' \
+        'git push "--$X"' \
+        'git push -$F origin' \
+        'git log $X' \
+        'git log --output="$X"' \
+        'git diff "$f"' \
+        'git -C $d log' \
+        'git $CMD --force' \
+        'git commit -nm"$x" -- a' \
+        'git commit -m$msg' \
+        'git checkout -b $name' \
+        'git reset --hard $REF' \
+        'git branch -D "$b"' \
+        'git grep "$p"' \
+        $'bash <<\'EOF\'\ngit push $FLAG\nEOF' \
+        "\$X -c 'git push --force'" \
+        '"$SHELL" -c "git push --force"' \
+        'sudo "$X" -c "git push --force"' \
+        'env FOO=1 $X -c x' \
+        'timeout 240 "$X" -c x' \
+        'echo ok && $X -c x' \
+        '"$EDITOR" -c x'; do
+      guard 2 "$cmd"
+    done
+    for cmd in 'git commit $NV -m x' 'git push "$FLAG"' 'git push -u origin $BR' '$X -c "git push --force"' \
+        '& $X -c "git push --force"'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        'for r in A B C; do git -C work/$r status --short; done' \
+        'git -C "work/$r" log --oneline -1' \
+        'git -C "$repo" fetch' \
+        'git -C $d status' \
+        'git status $X' \
+        'git add $FILE' \
+        'git log --since="$since"' \
+        'git commit -m "$msg" -- a' \
+        'git commit -m"$msg" -- a' \
+        'git commit -am "$msg"' \
+        'git commit -C "$c"' \
+        'git push -u origin "$branch"' \
+        'git push origin "$a" "$b"' \
+        'git checkout -b "ddd/bundle-$day"' \
+        'git checkout -b "ddd/bundle-$day" origin/main' \
+        'git switch -c "$b"' \
+        'git grep -e "$p"' \
+        'git tag -a "v$VER" -m "release"' \
+        'git log --format="%h $X"' \
+        'git log -- $X' \
+        'git commit -m "$msg" -- $X' \
+        'git log > "$out"' \
+        'git log >"$out" --oneline' \
+        'FLAG=ok; git push $FLAG' \
+        'FLAG=--force; echo $FLAG' \
+        'MSG=--force; git commit -m "$MSG"' \
+        'a=1; git push $a' \
+        'echo $X -c x' \
+        'echo -n $X -c x' \
+        'echo "$X -c y"' \
+        '"$EDITOR" notes.txt' \
+        'git commit -m "& $X -c y" -- a' \
+        $'git commit -q -F - <<\'EOF\'\nfix the $X handling\nEOF'; do
+      guard 0 "$cmd"
+    done
+    guard 0 'git push -u origin "$branch"' PowerShell
+    guard 0 'git commit -m "$msg" -- a' PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook reads a variable in a git command's words as a value it can't see, or blocks a plain form (B37)" "the guard hook reads a variable a git command assigns once as its value, blocks an unquoted or flag-capable variable in a git command's words, a variable as a subcommand or as a shell's name followed by -c, and passes the everyday forms (B37)"
+
+  # A variable as a command's name, and a variable a shell's script holds (B45): the name a command assigns is the name it runs
+  # (G=git; $G push --force is git), and an unresolved name that the command sets another way, or that a git subcommand or a
+  # destructive flag follows, is blocked. A variable a shell's script (bash -c, eval, -Command) holds is blocked too. The
+  # everyday forms pass: "$PY" -I script.py, a loop that runs "$PY" "$f", a variable as an argument, and a single-quoted
+  # script's own variable (its shell reads it, and it can't name a command here). The Godot path cases are with the hangs above.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'G=git; $G push --force' \
+        '$G push --force' \
+        '"$G" push --force' \
+        'G=git; ${G} push --force' \
+        'G=git; "$G" push --force' \
+        '$G --force' \
+        'if true; then $G push --force; fi' \
+        'for f in x; do $G push --force; done' \
+        '{ $G push --force; }' \
+        'xargs $G push --force' \
+        'find . -exec $G push --force \;' \
+        'if true; then "$X" -c x; fi' \
+        'CMD="git push --force"; $CMD' \
+        'read CMD <<< "git push --force"; $CMD' \
+        'FOO=$(echo git); $FOO push --force' \
+        'bash -c "$CMD"' \
+        'eval "$CMD"' \
+        'eval $CMD' \
+        "bash -c '\$CMD'" \
+        'CMD="git push --force" bash -c '"'"'$CMD'"'"'' \
+        'sh -c "echo $HOME"' \
+        $'G=git; bash <<\'EOF\'\n$G push --force\nEOF' \
+        $'bash <<\'EOF\'\n$G push --force\nEOF' \
+        $'CMD="git push --force" bash <<\'EOF\'\n$CMD\nEOF'; do
+      guard 2 "$cmd"
+    done
+    for cmd in "\$G = 'git'; & \$G push --force" '& $G push --force'; do
+      guard 2 "$cmd" PowerShell
+    done
+    guard 2 'powershell -Command "$P"' PowerShell
+    for cmd in \
+        'G=git; $G status' \
+        'G=ls; $G push --force' \
+        'echo $G push --force' \
+        '"$PY" -I script.py' \
+        'PY=python3; "$PY" -I script.py' \
+        'FOO="a b" "$PY" -I x.py' \
+        'for f in tools/*.py; do "$PY" "$f"; done' \
+        'for f in a b; do echo "$f"; done' \
+        'if true; then "$PY" -I x.py; fi' \
+        'find . -name x -exec "$PY" -I y {} \;' \
+        'xargs -I{} echo {}' \
+        '"$PY" tools/usage.py status' \
+        'bash "$script"' \
+        'bash tools/check.sh "$X"' \
+        'cd "$dir" && git status' \
+        'bash -c "echo \$HOME"' \
+        "bash -c 'echo \$HOME'" \
+        $'git commit -q -F - <<\'EOF\'\n$G push --force\nEOF'; do
+      guard 0 "$cmd"
+    done
+    guard 0 "powershell -Command 'Get-ChildItem | % { \$_.Name }'" PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't read a variable as a command's name, or a script that a variable holds, or blocks an everyday form (B45)" "the guard hook reads a variable as a command's name as the value it assigns, blocks an unresolved one that the command sets another way or a git subcommand follows, blocks a shell's script, eval or -Command that a variable holds, and passes the everyday forms (B45)"
+
+  # An assignment is not a command, so it isn't read as a variable command name (B55): a PowerShell $x = 1, $x += 1 or $env:X = 'y',
+  # and a PowerShell constant or automatic value that no call operator runs ($true, $null, $args), pass in a PowerShell payload and in
+  # a PowerShell script a shell runs. A Bash NAME+=value is an assignment prefix, as NAME=value is. A call operator still runs
+  # what its name holds, and a git subcommand after any name is still read: & $x, & $args[0], $args push --force and $G push
+  # --force block, and so does out+=x $G push --force.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        '$x = 1' \
+        '$files = Get-ChildItem docs' \
+        '$x=1' \
+        '$x += 1' \
+        '$x ??= 1' \
+        "\$env:X = 'y'" \
+        '$x[0] = 1' \
+        '$null = Get-Date' \
+        '$true' \
+        '$false' \
+        '$null' \
+        'while ($true) { Get-Date }' \
+        '$args' \
+        '$_.Name' \
+        '$input | Out-Null'; do
+      guard 0 "$cmd" PowerShell
+    done
+    for cmd in \
+        "\$x = 1; & \$x" \
+        "\$x = 'git'; & \$x push --force" \
+        '$args push --force' \
+        '& $args[0] push --force' \
+        '$input | ForEach-Object { & $_ push --force }' \
+        '& $env:COMSPEC push --force'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        "powershell -Command 'while (\$true) { Get-Date }'" \
+        "powershell -Command '\$x = 1'" \
+        'c="${x:0:1}"; out+="$c"; echo hi' \
+        'out+=x; echo hi'; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        'out+=x $G push --force' \
+        'out+=x; $G push --force' \
+        'c+=y; "$c" push --force' \
+        "powershell -Command '\$args push --force'" \
+        "powershell -Command '\$G = \"git\"; & \$G status'"; do
+      guard 2 "$cmd"
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook reads an assignment or a constant as a variable command name, or passes a call operator or a NAME+=value prefix that runs a git command (B55)" "the guard hook passes a PowerShell assignment, a constant and an automatic value that runs nothing, and a Bash NAME+=value assignment, and blocks a call operator or a prefixed variable that runs git (B55)"
+
+  # PowerShell's Invoke-Expression and iex (B60) run their one string argument as a script, as eval does. A literal argument is read as
+  # a script of its own, and a variable the command assigns once to a plain literal before the call is read as its value. A pipeline into
+  # the call, no argument, an argument that isn't one string (a concatenation, a second argument, a double-quoted $( the caller expands),
+  # and a variable that can't be resolved (one set another way, in a branch, or after the call) are blocked. The benign forms pass.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        "iex 'git push --force'" \
+        "Invoke-Expression 'git push --force'" \
+        "Invoke-Expression -Command 'git push --force'" \
+        "iex -Command:'git push --force'" \
+        "IEX \"git push --force\"" \
+        "iex 'git push --force' -Verbose" \
+        "iex -Verbose 'git push --force'" \
+        "iex '-Verbose git push --force'" \
+        "Microsoft.PowerShell.Utility\\Invoke-Expression 'git push --force'" \
+        "& iex 'git push --force'" \
+        "ForEach-Object { iex 'git push --force' }" \
+        "ForEach-Object {iex 'git push --force'}" \
+        "\$x = 'git push --force'; iex \$x" \
+        "\$x='git push --force'; iex \$x" \
+        "\$x = 'git push --force'; Invoke-Expression \$x" \
+        "\$x = 'git push --force'; iex \"\$x\"" \
+        "\$x = \"git push --force\"; iex \$x" \
+        "\$x = 'git push --force'; iex \${x}" \
+        "\$x = 'git push --force'; iex \$x -Verbose" \
+        "\$x = 'git push --force'; iex \$x | Out-Null" \
+        "\$x = 'git'; iex \"\$x push --force\"" \
+        "iex \$x" \
+        "iex \"\$x\"" \
+        "iex" \
+        "iex \$x; \$x = 'git push --force'" \
+        "\$x = 'git push --force' | Out-Null; iex \$x" \
+        "\$x = 'ls'; iex \"\$x\" \"--force\"" \
+        "\$x = 'ls'; iex \"\$x\"-f ''" \
+        "\$x = 'ls'; iex \$x \$y" \
+        "\$x = 'ls'; Set-Variable x 'git push --force'; iex \$x" \
+        "\$x = 'ls'; . ./evil.ps1; iex \$x" \
+        "\$x = 'ls'; Import-Module ./m.psm1; iex \$x" \
+        "if (\$true) { \$x = 'ls' }; iex \$x" \
+        "\$x = 'git push --force'; iex \$x[0]" \
+        "\$x = 'ls'; \$x[0] = 'git push --force'; iex \$x" \
+        "\$x = 'ls'; \$x += 'git push --force'; iex \$x" \
+        "\$y = '\$x = ''git push --force'''; iex \$y; iex \$x" \
+        "\$x = 'ls'; \$y = '\$x = ''git push --force'''; iex \$y; iex \$x" \
+        "\$x = 'git push --force'; \$y = \$x; iex \$y" \
+        "iex \"\$(Get-Content x.txt)\"" \
+        "iex @args" \
+        "\$x = 'Get-Date'; iex @x" \
+        "iex ('git push' + ' --force')" \
+        "iex 'git pu' + 'sh --force'" \
+        "iex \"git push\" + \" --force\"" \
+        "'git push --force' | iex" \
+        "Get-Content x.ps1 | iex"; do
+      guard 2 "$cmd" PowerShell
+    done
+    guard 2 "powershell -Command \"iex 'git push --force'\"" PowerShell
+    for cmd in \
+        "\$x = 'Get-Date'; iex \$x" \
+        "\$x = 'Get-Date'; iex \"\$x\"" \
+        "\$x = 'git status'; iex \$x" \
+        "\$x = 'Get-Date'; \$y = 'git status'; iex \$x; iex \$y" \
+        "\$x = 'git push --force'" \
+        "\$x = 'git push --force'; iex 'Get-Date'" \
+        "iex 'Get-Date'" \
+        "iex 'Get-Date' -Verbose" \
+        "Invoke-Expression -Command 'Get-Date' -Verbose" \
+        "iex 'Write-Output \$x'" \
+        "iex '\$x = 1'" \
+        "iex \$true" \
+        "iex 'Get-Date' | Out-Null" \
+        "ForEach-Object { iex 'Get-Date' }" \
+        "Get-Help Invoke-Expression" \
+        "Get-Command iex" \
+        "Write-Output 'iex git push --force'"; do
+      guard 0 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't read an Invoke-Expression or iex script as a command, or passes one it can't read (B60)" "the guard hook reads the string argument of Invoke-Expression and iex as a script, resolves a variable the command assigns once to a plain literal, blocks a pipeline into it, an argument that isn't one string and an unresolved variable, and passes the benign forms (B60)"
+
+  # A git command name in another case (B46): PowerShell finds a command case-insensitively, and Windows finds GIT too, so GIT and
+  # Git are git in every git rule. Only the name is matched so: git's subcommands and flags stay case-sensitive, as git reads them.
+  # The git rules, the credential prints, a substitution in the words and a shell body that runs GIT block as their lowercase
+  # forms do, and the everyday forms and a quoted or heredoc message that names git in another case pass.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'GIT push --force origin main' \
+        'Git commit --no-verify -m x' \
+        'GIT reset --hard HEAD~1' \
+        'GIT log --output=/tmp/probe.txt' \
+        'Git diff --no-index a b' \
+        'GIT commit -F /tmp/msg.txt' \
+        'GIT log --ext-diff' \
+        'GIT push origin :main' \
+        'GIT branch -D x' \
+        'GIT credential fill' \
+        'Git credential get' \
+        'GIT -c core.pager=calc log' \
+        'Git push "$(echo --force)" origin main' \
+        $'bash <<\'EOF\'\nGIT push --force\nEOF'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in 'GIT push --force origin main' 'Git commit --no-verify -m x'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'GIT status' \
+        'Git log --oneline -5' \
+        'GIT diff HEAD' \
+        'GIT grep -n foo' \
+        'GIT tag -a v1 -m "see --force and -F"' \
+        'echo "Git push --force is blocked"' \
+        'echo "Git credential fill is blocked"' \
+        $'Git commit -q -F - <<\'EOF\'\nfix the --output and --no-index handling, not -F /tmp/x\nEOF'; do
+      guard 0 "$cmd" PowerShell
+    done
+    guard 0 'GIT status'
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook passes a git command name in another case, or blocks a message that names git in another case (B46)" "the guard hook blocks a git command name in any case (GIT, Git) as it blocks git, and passes the everyday forms and the messages that name git in another case (B46)"
+
+  # Git's configuration keys and program flags (B38). A -c key, or --config-env, that names a program git runs (an alias that
+  # starts with !, the pager, the editor, the ssh command, a diff or credential helper, an include) is blocked, and so is a key a
+  # variable holds; the keys that run nothing pass (core.quotepath, color.*, advice.*, log.*, user.name, pager.<cmd>=false). The
+  # flags that name a program for a remote (--upload-pack, --receive-pack, --exec, and clone's -u), abbreviations included, are
+  # blocked on fetch, pull, push, clone, ls-remote and archive, and a plain fetch, push -u and clone -b pass. A variable that names
+  # a program git runs (GIT_CONFIG_*, GIT_SSH_COMMAND, GIT_PAGER, GIT_EDITOR, EDITOR) set on a git command is blocked too.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'git -c alias.x="!echo hi" x' \
+        "git -c 'alias.x=!echo hi' x" \
+        'git -c "alias.x=!echo hi" x' \
+        'git -c core.pager="sh -c x" log' \
+        'git -c core.sshCommand=x fetch' \
+        'git -c diff.external=x diff' \
+        'git -c "$k=v" log' \
+        'git -c Alias.X=y x' \
+        'git -c core.quotepath=false -c alias.x=y x' \
+        'git -c color.ui=always -c core.pager=x log' \
+        'git -c sequence.editor=x rebase -i HEAD~2' \
+        "git -c credential.helper='!x' fetch origin" \
+        'git -c protocol.ext.allow=always fetch origin' \
+        'git -c include.path=/tmp/x log' \
+        'git -c "core.$(echo pager)=x" log' \
+        'git -c pager.log=less log' \
+        'git --config-env=core.pager=PAGER_VAR log' \
+        'git --git-dir .git -c alias.x=y x' \
+        "git -c \$'alias.x=!echo hi' x" \
+        "git -c 'alias.x=y' x" \
+        'git -c "alias.x" x' \
+        'git -c "a""lias.x=!echo" x' \
+        'git -c "core.pager"=sh x' \
+        'k=core.pager; git -c "$k=sh" log' \
+        $'git \\\n-c core.pager=x log' \
+        'git clone -c core.sshCommand=x https://example.com/r.git d' \
+        'git clone --config=alias.x=y https://example.com/r.git d' \
+        'git clone --config alias.x=y https://example.com/r.git d' \
+        'git clone -c alias.x=y https://example.com/r.git d' \
+        'git clone -u "sh -c x" https://example.com/r.git d' \
+        'git clone --upload-pack="sh -c x" https://example.com/r.git d' \
+        'git clone -qu "sh -c x" https://example.com/r.git d' \
+        'git fetch --upload-pack x origin' \
+        'git fetch --upl=x origin' \
+        'git fetch --upload-pack="$(echo x)" origin' \
+        'git fetch "--$(echo upload-pack)=x" origin' \
+        'git pull --upload-pack=x' \
+        'git push --receive-pack=x origin main' \
+        'git push --receive-pack x origin main' \
+        'git push --exec=x origin main' \
+        'git push origin main --receive=x' \
+        'git ls-remote --upload-pack=x origin' \
+        'git archive --remote=origin --exec=x HEAD' \
+        'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0=x git log' \
+        'GIT_SSH_COMMAND=x git fetch' \
+        'GIT_PAGER=x git log' \
+        'GIT_EXTERNAL_DIFF=x git log -p' \
+        'env GIT_EDITOR=x git commit' \
+        'export GIT_PAGER=x; git log' \
+        'EDITOR=x git commit -a'; do
+      guard 2 "$cmd"
+    done
+    for cmd in 'git -c core.pager=x log' 'git -c "$k=v" log' 'git fetch --upload-pack=x' 'git -c alias.x=!echo x' \
+        '$env:GIT_PAGER="x"; git log'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        'git -c core.quotePath=false status --porcelain --untracked-files=all' \
+        'git -c core.quotepath=off log --oneline -3' \
+        'git -c color.ui=never log --oneline' \
+        'git -c user.name=selftest -c user.email=selftest@localhost commit -m x' \
+        "git -c 'user.name=A B' commit -m x" \
+        'git -c advice.detachedHead=false checkout HEAD~1' \
+        'git -c log.showSignature=false log -1' \
+        'git -c pager.log=false log --oneline' \
+        'git -c "color.ui=always" diff --stat' \
+        'k=color.ui; git -c "$k=always" log --oneline' \
+        'git -C work/Godot-Director fetch' \
+        'git -c core.quotepath=false -C work/Godot-Director status' \
+        'git clone -b main https://example.com/r.git d' \
+        'git clone -q --depth 1 https://example.com/r.git d' \
+        'git clone -c core.quotepath=false https://example.com/r.git d' \
+        'git fetch origin' \
+        'git fetch --unshallow origin' \
+        'git push -u origin "$branch"' \
+        'git push origin main' \
+        'git push --recurse-submodules=check origin main' \
+        'git ls-remote origin' \
+        'git archive --format=tar HEAD' \
+        'git pull --rebase origin main' \
+        'git log -c' \
+        'git commit -c HEAD' \
+        'git commit -m "--upload-pack=x fix"' \
+        'git commit -m "alias.x=!echo hi"' \
+        'git tag -a v1 -m "-c alias.x=y"' \
+        'git commit -m "set EDITOR=vim and GIT_PAGER=x"' \
+        'GIT_AUTHOR_NAME=x git commit -m y' \
+        'FOO=1 git status' \
+        'EDITORCONFIG=x git status' \
+        $'git commit -q -F - <<\'EOF\'\nGIT_PAGER=x and EDITOR=vim in a message\nEOF' \
+        $'git \\\n-c core.quotepath=false status'; do
+      guard 0 "$cmd"
+    done
+    guard 0 'git -c user.email=a@b.c commit -m x' PowerShell
+    guard 0 'git -c color.ui=always status' PowerShell
+    guard 0 'git push -u origin main' PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook passes a git -c key or a program flag that runs a command, or a variable that names one, or blocks a plain form (B38)" "the guard hook blocks a git -c key that names a program (an alias, the pager, the ssh command, a diff or credential helper), a key a variable holds, a program flag for a remote (--upload-pack, --receive-pack, --exec, clone's -u), and a GIT_CONFIG_*, GIT_PAGER or EDITOR variable on a git command; the keys that run nothing and the plain forms pass (B38)"
+
+  # A quoted git name, a heredoc body a shell runs, the long forms and a credential subcommand in quotes (B39). The git name is
+  # read as the shell reads it, quotes removed, so "git", 'git' and g"it" are git. A heredoc body a shell runs (any body but a
+  # commit's or tag's message) is read by the file-writing flag rules, and a backtick ends a flag in it. git branch with --delete
+  # and --force (-d -f, -df, --del --forc), git push --mirror, --delete and -d (abbreviations too) and a :ref refspec are blocked,
+  # as their plain forms are, and the credential-print rules read the decoded words. A message that names them, and a read that
+  # names none, pass: a commit's or tag's message is text no shell runs.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        '"git" push --force' \
+        "'git' push --force" \
+        'g"it" push --force' \
+        '"git" log --output=/tmp/x' \
+        $'bash <<\'EOF\'\ngit log --output=/tmp/x\nEOF' \
+        $'sh <<EOF\ngit diff --no-index a b\nEOF' \
+        $'bash <<\'EOF\'\ngit commit -F /tmp/msg.txt\nEOF' \
+        $'cat <<\'EOF\' | bash\ngit log --output=/tmp/x\nEOF' \
+        $'bash <<\'EOF\'\ngit branch --delete --force x\nEOF' \
+        $'bash <<\'EOF\'\ngit push --mirror\nEOF' \
+        $'bash <<\'EOF\'\ngit credential "fill"\nEOF' \
+        $'bash <<\'EOF\'\ngit push `echo --force`\nEOF' \
+        $'bash <<\'EOF\'\ngit push --force`echo x`\nEOF' \
+        $'ssh host <<\'EOF\'\ngit push `echo --force`\nEOF' \
+        $'git status && bash <<\'EOF\'\ngit push `echo --force`\nEOF' \
+        $'"bash" <<\'EOF\'\ngit push --mirror\nEOF' \
+        $'git commit -m "$(source /dev/stdin <<\'EOF\'\ngit push `echo --force`\nEOF\n)"' \
+        'sh -c "git push --mirror"' \
+        'git branch --delete --force x' \
+        'git branch --delete -f x' \
+        'git branch -d -f x' \
+        'git branch -df x' \
+        'git branch -fd x' \
+        'git branch --del --forc x' \
+        'git push --mirror' \
+        'git push --mirror origin' \
+        'git push --mi origin' \
+        'git push --delete origin x' \
+        'git push --de origin x' \
+        'git push -d origin x' \
+        'git push -fd origin x' \
+        'git push origin :x' \
+        'git push origin ":x"' \
+        'git push origin :refs/heads/x' \
+        'git credential "fill"' \
+        "git credential 'get'" \
+        'git credential fi"ll"' \
+        'gh "auth" "token"' \
+        'g"h" auth token'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'git branch -d x' \
+        'git branch -vv' \
+        'git branch -m old new' \
+        'git branch --list "*f*"' \
+        'git push origin main:main' \
+        'git push origin HEAD:refs/heads/x' \
+        'git push --dry-run origin main' \
+        'git push --set-upstream origin x' \
+        'echo "git push --mirror"' \
+        'echo "git credential fill"' \
+        'git log --grep "push --mirror"' \
+        'git status && echo "git credential fill"' \
+        $'git commit -q -F - <<\'EOF\'\nfix: git push --mirror and git branch -d x\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nfix: git log --output=x in the docs\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nmsg with `git push --force` in it\nEOF' \
+        $'git tag -a v1 -F - <<\'EOF\'\nfix: git push --delete origin x\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nfix the --mirror and --delete flags, not -d\nEOF' \
+        $'bash <<\'EOF\'\necho hi\nEOF' \
+        $'bash <<\'EOF\'\ngit status\nEOF' \
+        $'bash <<\'EOF\'\ngit branch -d x\nEOF' \
+        $'git status && bash <<\'EOF\'\necho x\nEOF'; do
+      guard 0 "$cmd"
+    done
+    for cmd in '"git" push --force' 'git branch --delete --force x' 'git push --mirror' 'git push origin :x' \
+        'git credential "fill"' 'gh "auth" "token"'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in 'git branch -d x' 'git push origin main'; do
+      guard 0 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't read a quoted git name, a heredoc body a shell runs, a long-form branch or push flag, a push refspec that deletes, or a quoted credential subcommand as the shell does, or blocks a message that names a plain form (B39)" "the guard hook blocks a quoted git name, a heredoc body a shell runs with a file-writing flag, a backtick flag or a destructive command, git branch --delete --force, git push --mirror, --delete or a :ref refspec, and a quoted credential subcommand, and passes the messages and reads that name them (B39)"
+
+  # A heredoc body no shell runs is text (B40): a commit's or tag's message, and a cat or tee body that the command doesn't run (no
+  # shell, interpreter, ssh, chmod, make, a ./ path, a dot-source or the .git folder). The destructive rules and the file-writing flag
+  # rules skip such a body, so a message or a written file that names a destructive git command passes, and its substitutions are
+  # still read. A body written to a file and run in the same command (cat > x.sh, then bash x.sh, ./x.sh or . x.sh) is a script a
+  # shell runs, and is read as before. The guard reads command text, so a file written by an earlier command isn't judged.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        $'git commit -q -F - <<\'EOF\'\nfix: git push --force; done\nEOF' \
+        $'git tag -a v1 -F - <<\'EOF\'\nfix: git push --delete origin x\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nmsg with `git push --force` in it\nEOF' \
+        $'git commit -m "$(cat <<\'EOF\'\nfix: git reset --hard\nEOF\n)"' \
+        $'git commit -q -F - <<\'EOF\'\nfix: git log --output=x in the docs\nEOF\nbash x.sh' \
+        $'cat > notes.md <<\'EOF\'\nsee git log --output=x\nEOF' \
+        $'cat > notes.md <<\'EOF\'\na backticked `git push --force` here\nEOF' \
+        $'tee notes.md <<\'EOF\'\ngit push --mirror\nEOF' \
+        $'cat <<\'EOF\' > notes.md\ngit reset --hard\nEOF' \
+        $'cat >> notes.md <<\'EOF\'\ngit branch -D x\nEOF' \
+        $'cat > notes.md <<\'EOF\'\ngit push --force\nEOF\ngit add notes.md && git status' \
+        $'cat > ./notes.md <<\'EOF\'\ngit diff --ext-diff\nEOF' \
+        $'cat > notes.md <<\'EOF\'\nbash -c \'git push --force\'\nEOF' \
+        $'cat > notes.md <<EOF\nplain text, no git here\nEOF' \
+        $'cat > notes.md <<\'EOF\'\ngit push --force\nEOF\necho "run bash later"' \
+        $'cat > notes.md <<\'EOF\'\ngit push --force\nEOF\ngit commit -q -F - <<\'EOF2\'\nfix: git push --force\nEOF2'; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        $'cat > x.sh <<EOF\ngit push --force\nEOF\nbash x.sh' \
+        $'cat > x.sh <<\'EOF\'\ngit push --force\nEOF\nbash x.sh' \
+        $'cat > x.sh <<\'EOF\'\ngit push --force\nEOF\nchmod +x x.sh && ./x.sh' \
+        $'cat > x.sh <<\'EOF\'\ngit reset --hard\nEOF && sh x.sh' \
+        $'cat > x.sh <<\'EOF\'\ngit log --output=/tmp/x\nEOF\nbash x.sh' \
+        $'cat > x.sh <<\'EOF\'\ngit push --force\nEOF\nsource x.sh' \
+        $'tee x.sh <<\'EOF\'\ngit push --force\nEOF\n. ./x.sh' \
+        $'cat > x.sh <<\'EOF\'\ngit push --force\nEOF\n"bash" x.sh' \
+        $'cat > x.sh <<\'EOF\'\ngit push --force\nEOF\npython3 x.sh' \
+        $'cat > x.sh <<\'EOF\'\ngit push --force\nEOF\nenv bash x.sh' \
+        $'cat > Makefile <<\'EOF\'\npush:\n\tgit push --force\nEOF\nmake push' \
+        $'cat > .git/hooks/pre-commit <<\'EOF\'\ngit push --force\nEOF\ngit commit -q -m x' \
+        $'cat > notes.md <<EOF\n$(git push --force)\nEOF' \
+        $'cat > notes.md <<EOF\n`git push --force`\nEOF' \
+        $'git commit -q -F - <<EOF\nfix `git push --force`\nEOF' \
+        $'cat <<\'EOF\' | bash\ngit push --force\nEOF' \
+        $'bash <<\'EOF\'\ngit push --force\nEOF'; do
+      guard 2 "$cmd"
+    done
+    guard 2 $'cat > x.ps1 <<\'EOF\'\ngit push --force\nEOF\n& ./x.ps1' PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook reads a commit's or tag's message, or a cat or tee body that nothing in the command runs, as a script (B40), or passes a body a shell runs" "the guard hook passes a commit's or tag's message and a cat or tee body that the command doesn't run, and blocks a body written to a file and run in the same command (B40)"
+
+  # A gh message with a quoted delimiter (B48): gh pr create and edit, issue create, edit and comment, and release create and edit
+  # take the body from stdin (--body-file -, -F -, --notes-file -) or from a $(cat <<'EOF') given to --body, -b, --notes or -n. That
+  # body is text no shell runs, as a commit's message is (B40), so the destructive rules skip it, and the variable rules (B37)
+  # skip it and a cat body nothing runs. A body a shell runs, an unquoted body with a substitution, a git command that goes on past
+  # the body, or a body piped to a shell is still read.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        $'gh pr edit 5 --body-file - <<\'EOF\'\nfix: git push --force; done\nEOF' \
+        $'gh pr create --body "$(cat <<\'EOF\'\nfix: git push --force\nEOF\n)"' \
+        $'gh pr create --title t --body-file - <<\'EOF\'\nDo not run git push --force\nEOF' \
+        $'gh issue comment 5 -F - <<\'EOF\'\ngit reset --hard\nEOF' \
+        $'gh issue create -b "$(cat <<\'EOF\'\ngit branch -D x\nEOF\n)"' \
+        $'gh release create v1 --notes-file - <<\'EOF\'\ngit push --mirror\nEOF' \
+        $'gh release edit v1 -n "$(cat <<\'EOF\'\ngit push --delete origin x\nEOF\n)"' \
+        $'gh pr create --body-file=- <<\'EOF\'\ngit push --force\nEOF' \
+        $'GH pr create -F- <<\'EOF\'\ngit push --force\nEOF' \
+        $'gh pr create --body="$(cat <<\'EOF\'\ngit push --force\nEOF\n)"' \
+        $'gh pr edit 5 --body-file - <<\'EOF\'\ngit push --force\nEOF' \
+        $'gh pr create --body-file - <<\'EOF\'\nbash -c \'git push --force\'\nEOF' \
+        $'gh pr create --body-file - <<\'EOF\'\necho cmd /c "git push --force"\nEOF' \
+        $'gh pr edit 5 --body-file - <<\'EOF\'\nfix: git push $X handling\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nfix: git push $X handling\nEOF' \
+        $'git tag -a v1 -F - <<\'EOF\'\nfix: git push $X handling\nEOF' \
+        $'cat > notes.md <<\'EOF\'\nfix: git push $X handling\nEOF'; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        $'gh pr edit 5 --body-file - <<\'EOF\' && git push --force\nmsg\nEOF' \
+        $'gh pr create --body-file - <<\'EOF\'\nmsg\nEOF\ngit push --force' \
+        $'gh pr create --body-file - <<\'EOF\' | bash\ngit push --force\nEOF' \
+        $'gh pr create --body-file - <<EOF\nfix: git push --force\nEOF' \
+        $'gh pr create --body "$(cat <<EOF\n$(git push --force)\nEOF\n)"' \
+        $'gh pr create --body "$(cat <<\'EOF\'\nmsg\nEOF\n)" --title "$(git push --force)"' \
+        $'bash <<\'EOF\'\ngit push $X\nEOF' \
+        $'cat > x.sh <<\'EOF\'\ngit push $X\nEOF\nbash x.sh'; do
+      guard 2 "$cmd"
+    done
+    # A shell or PowerShell name right after a word that only prints its words (echo, printf, Write-Output, Write-Host, write) is
+    # text (B48). Anywhere else it may run a script, so a launcher's argument stays read: ssh, find -exec, docker exec, Start-Process.
+    for cmd in \
+        "echo PowerShell 'git push --force'" \
+        "echo pwsh 'git push --force'" \
+        "echo bash -c 'git push --force'" \
+        'echo sh -c "git push --force"' \
+        $'printf sh -c \'git push --force\'' \
+        $'echo eval \'git push --force\'' \
+        'echo PowerShell -Command "git push --force"'; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        'ssh host pwsh -c "git push --force"' \
+        'find . -exec pwsh -c "git push --force" \;' \
+        'docker exec ctr pwsh -c "git push --force"' \
+        'ssh host sh -c "git push --force"' \
+        'find . -exec sh -c "git push --force" \;' \
+        $'docker exec ctr bash -c \'git push --force\''; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'Write-Output PowerShell -Command "git push --force"' \
+        "Write-Output powershell 'git push --force'" \
+        "echo pwsh 'git push --force'" \
+        "Write-Host Pwsh.exe 'git push --force'"; do
+      guard 0 "$cmd" PowerShell
+    done
+    for cmd in \
+        "Start-Process powershell -ArgumentList 'git push --force'" \
+        'ssh host pwsh -c "git push --force"' \
+        'timeout 60 powershell -c "git push --force"'; do
+      guard 2 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook reads a gh message's body, or a variable in a message or a cat body nothing runs, as a command, passes a body a shell runs, or reads a word after echo, printf, Write-Output, Write-Host or write, or a launcher's argument, wrongly (B48)" "the guard hook passes a gh pr, issue or release message with a quoted delimiter, and a variable in a message or in a cat body nothing runs, and blocks a git command after a message, an unquoted message, a message piped to a shell, and a variable in a body a shell runs; a shell or PowerShell name after echo, printf, Write-Output, Write-Host or write is text, and one that a launcher passes a script to is read (B48)"
+  # The PowerShell tool (B24) has its own name. The guard runs for it only when a PreToolUse matcher that runs guard-git.sh
+  # names it (settings.json has one entry each for Bash, Monitor and PowerShell), and a Bash(...) deny or ask rule stops the
+  # same command in PowerShell only through its PowerShell(...) twin, in the same list. The allow list names no PowerShell
+  # command, so nothing PowerShell runs is allowed without a prompt. Read(...) rules are the Read tool's; PowerShell's own
+  # file reads are the guard's (the credential-store cases above).
+  ps_fail=""
+  guard_matchers=$(awk -F'"' '/"matcher"/ { m = $4 } /guard-git\.sh/ { print m }' .claude/settings.json)
+  for tool in Bash Monitor PowerShell; do
+    hit=0
+    while IFS= read -r m; do
+      case "|$m|" in *"|$tool|"*) hit=1 ;; esac
+    done <<< "$guard_matchers"
+    [ "$hit" -eq 1 ] || ps_fail="$ps_fail"$'\n'"  no PreToolUse matcher that runs guard-git.sh names $tool (matchers: ${guard_matchers//$'\n'/, })"
+  done
+  for list in deny ask; do
+    arr=$(sed -n "/\"$list\": *\[/,/\]/p" .claude/settings.json)
+    while IFS= read -r rule; do
+      [ -n "$rule" ] || continue
+      twin="PowerShell(${rule#Bash(}"
+      printf '%s\n' "$arr" | grep -qF "\"$twin\"" \
+        || ps_fail="$ps_fail"$'\n'"  settings.json's $list rules have $rule but no $twin"
+    done <<< "$(printf '%s\n' "$arr" | grep -oE '"Bash\([^"]*\)"' | tr -d '"')"
+  done
+  printf '%s\n' "$perm_allow" | grep -q 'PowerShell(' \
+    && ps_fail="$ps_fail"$'\n'"  settings.json's allow list names a PowerShell command, so PowerShell would run it without a prompt"
+  guard_report "$ps_fail" "the PowerShell tool isn't wired to the guard and the deny and ask rules (B24)" "a matcher that runs the guard hook names Bash, Monitor and PowerShell, every Bash deny and ask rule has a PowerShell twin, and the allow list names no PowerShell command"
 fi
 
 # --- protected-space guard (Claude Code PreToolUse hook) ----------------------------------------
@@ -1345,6 +3354,8 @@ echo "user stories"
 # commit on the stories file's Last validated line (by its date when that commit isn't in the history),
 # and is due when the stories were never validated. The template stands in for a game's file.
 guard 0 'bash tools/stories.sh --due'
+guard_run
+guard_report "$git_fail" "the guard hook blocks bash tools/stories.sh --due" "the guard hook allows bash tools/stories.sh --due"
 out="$(bash tools/stories.sh --due 2>&1)"; status=$?
 expect_status "stories --due exits 0 in Market Day, which uses them" 0 "$status" "$out"
 expect_output "and counts by the date of its Last validated line, whose commit isn't in this history" \
