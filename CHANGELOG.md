@@ -34,6 +34,8 @@ Each entry lists what changed. **Upgrade steps** at the end of an entry cover bo
   - **Upgrade steps:** none; the hook and `rules.md` are framework-owned and arrive with the upgrade.
 - **A session says when the project is behind the latest release.** A framework fix only helps a project once it's installed there, and a project that had fallen behind showed no sign of it. `release-check.sh`, a new session-start hook, compares the installed version with the latest release tag on GitHub, at most once a day, and tells you and the agent when a newer one is out. It works offline, stays silent otherwise and never blocks a session; `PRIVACY.md` says what it reads, and `GODOT_DIRECTOR_RELEASE_CHECK=0` turns it off.
   - **Upgrade steps:** the hook and `.claude/settings.json` are framework-owned and arrive with the upgrade (if you edited `.claude/settings.json`, merge its `.gdir-new` file); restart Claude Code so the new hook loads.
+- **A session reports processes that outlived the shell that started them.** A subagent's or session's cleanup only reaches what a running session knows about, and a process from an ended session could spin a core for days unnoticed. `orphan-report.sh`, a new session-start hook, lists Python, node, shell, Godot and headless browser processes over an hour old whose parent is gone, and leaves stopping them to you. It stops nothing, stays silent otherwise, and `GODOT_DIRECTOR_ORPHAN_REPORT=0` turns it off.
+  - **Upgrade steps:** the hook and `.claude/settings.json` are framework-owned and arrive with the upgrade (if you edited `.claude/settings.json`, merge its `.gdir-new` file); restart Claude Code so the new hook loads.
 
 ## 4.9.0 (2026-11-02)
 

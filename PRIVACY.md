@@ -2,7 +2,7 @@
 
 Godot Director is a set of files and instructions that runs on your own machine. There is no Godot Director service, account or server.
 
-**What it reads.** Only your game's project: its design documents, task list, code, settings and git history, so the AI assistant you use can work on the game. It doesn't collect personal data such as names, emails or addresses. Your git name and email are used only by git itself, in your own commits.
+**What it reads.** Your game's project: its design documents, task list, code, settings and git history, so the AI assistant you use can work on the game. It doesn't collect personal data such as names, emails or addresses. Your git name and email are used only by git itself, in your own commits. At session start a hook also reads the names, ids and ages of the processes on this machine, to report ones left running by an ended session. It stores nothing and sends nothing. To turn it off, set `GODOT_DIRECTOR_ORPHAN_REPORT=0`.
 
 **What it writes.** Files in your game's repository (the workflow files, design records and code the assistant builds), git commits you approve, and the project check's logs under the game's `.godot/` folder. Everything stays on your machine, in your repository. A game built with it also keeps a play log on the machine it runs on (`user://logs/play/`), with the OS user name, the home path and the install id scrubbed out; Godot Director never sends it anywhere.
 
