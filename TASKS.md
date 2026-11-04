@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T45 · B6 · R1
+**Next IDs:** T46 · B6 · R1
 
 ## Queue
+
+### T45 · The Stop hook runs the check only for the session that changed the code · done · M · agent
+- Touches: framework/.claude/hooks/stop-check.sh, framework/.claude/hooks/session-touched.sh (new), framework/.claude/settings.json, framework/.godot-director/rules.md, README.md, selftest.sh, CHANGELOG.md
+- Done when: the Stop hook runs the project check only when this session itself wrote or edited a code, scene or data file (`.gd`, `.tscn`, `.scn`, `.tres`, `.res`, `.gdshader`, `.gdshaderinc`, `project.godot`, the hook's present list) since its last passing check: a new hook, `session-touched.sh`, on Edit, Write, MultiEdit and NotebookEdit records the paths the tool touched in `.godot/godot-director/sessions/<session_id>.touched` (the hook input's `session_id`), and for Bash and PowerShell a PreToolUse snapshot of `git status --porcelain --untracked-files=all` and the same hook after the command record the source files that are new in the list or modified since (one `find -newer` for all of them); a session that touched only docs (design/, TASKS.md, `*.md`, assets such as `.png`) never triggers the check; the builder marker, the fingerprint (the same failure isn't reported twice), `GODOT_DIRECTOR_STOP_CHECK=0`, the prototype exit and the exit 0 when tools/check.sh is missing keep working; no or a malformed `session_id` behaves as before; the session's record is removed when the check passes, and records older than a day are ignored and deleted (check) · in a design session that edits only Markdown while another session has uncommitted code, scenes or data in the same folder, the Stop hook exits at once without running the check, tested with scripted hook input; a session that edits a `.gd` file still gets the check and is blocked once on failure; a Bash command that creates a `.gd` file is recorded; a passing check removes the record; a record older than a day is ignored; no session_id behaves as before; settings.json wires the hook; both hooks use no bash 4 form or GNU-only flag; the installer installs the hook and git ignores the records; `selftest.sh` passes (check) · the entry sits under the Unreleased heading, with upgrade steps
+- GDD: (none)
+- Source: Director-Driven-Development T295
 
 ### T44 · A quoted path with a space, or a backslash path, can't hide git from the guard · done · S · agent
 - Touches: framework/.claude/hooks/guard-git.sh, selftest.sh, CHANGELOG.md

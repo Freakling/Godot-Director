@@ -1111,6 +1111,12 @@ if [ -f .godot-director/procedures/prototype.md ] && [ -f .claude/skills/prototy
 else
   bad "installs prototypes: the procedure, the skill, tools/prototype.sh and the pre-push hook" "$out"
 fi
+if [ -x .claude/hooks/session-touched.sh ] && cut -f2 .godot-director/manifest | grep -q '^\.claude/hooks/session-touched\.sh$' \
+    && git check-ignore -q .godot/godot-director/sessions/design.touched && git check-ignore -q .godot/godot-director/sessions/design.before; then
+  ok "installs the session record hook, and git ignores the records it keeps"
+else
+  bad "installs the session record hook, and git ignores the records it keeps" "$(cat .gitignore)"
+fi
 grep -q "Market Day" AGENTS.md && ok "keeps the project's own files" || bad "keeps the project's own files"
 [ -z "$(git status --porcelain)" ] && ok "adds no duplicate .gitignore/.gitattributes lines" || bad "adds no duplicate lines" "$(git status --porcelain)"
 out="$(bash "$src/install.sh" . 2>&1)"; expect_output "a second run changes nothing" "0 new, 0 updated" "$out"
@@ -4302,6 +4308,194 @@ git checkout -q -- scripts/systems/market.gd
 
 }
 
+l_stop_hook_session() {
+cd "$work" || exit 1
+# --- Stop hook, per session ---------------------------------------------------------------------
+# Two sessions can share one working folder (a design session and a build session, no worktree). The Stop hook runs the
+# check only for a session that wrote or edited a code, scene or data file itself: session-touched.sh keeps that record by
+# the session_id in the hook input (a file tool's PostToolUse; for Bash and PowerShell the git status before and after the
+# command). So a design session that edits only Markdown never waits for, or is blocked by, another session's uncommitted
+# code. A throwaway repository holds it, with a stand-in check that records that it ran and fails while
+# .godot/godot-director/fail exists, and scripted hook inputs. It needs no Godot, so it is a lane of its own that needs no game.
+echo "stop hook, per session"
+sr="$work/session-stop"; new_repo "$sr"
+sr_hooks="$src/framework/.claude/hooks"
+mkdir -p "$sr/tools" "$sr/scripts"
+cat > "$sr/tools/check.sh" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in --fingerprint) cat scripts/*.gd 2>/dev/null | git hash-object --stdin; exit 0 ;; esac
+mkdir -p .godot/godot-director
+: > .godot/godot-director/check-ran
+if [ -f .godot/godot-director/fail ]; then echo "scripts/hero.gd:3 parse error: unexpected token"; exit 1; fi
+exit 0
+EOF
+printf '/.godot/\n' > "$sr/.gitignore"
+git -C "$sr" add -A >/dev/null 2>&1; git_q -C "$sr" commit -qm "a stand-in check" >/dev/null 2>&1
+sr_state="$sr/.godot/godot-director"
+sr_nl=$'\n'
+sr_put() { [ -d "${1%/*}" ] || mkdir -p "${1%/*}"; printf '%s\n' "$2" > "$1"; }   # sr_put <file> <content>
+_sr_wrote() { # _sr_wrote <session> <tool> <path> [path key] [event]: a file tool's PostToolUse input, through the recorder
+  printf '{"session_id":"%s","cwd":"%s","hook_event_name":"%s","tool_name":"%s","tool_input":{"%s":"%s","content":"x"},"tool_response":{"success":true}}' \
+    "$1" "$sr" "${5:-PostToolUse}" "$2" "${4:-file_path}" "$3" | CLAUDE_PROJECT_DIR="$sr" bash "$sr_hooks/session-touched.sh" after 2>&1
+}
+_sr_cmd() { # _sr_cmd <session> before|after <tool> [event]: a Bash or PowerShell command's PreToolUse or PostToolUse input
+  printf '{"session_id":"%s","cwd":"%s","hook_event_name":"%s","tool_name":"%s","tool_input":{"command":"make"}}' \
+    "$1" "$sr" "${4:-PostToolUse}" "$3" | CLAUDE_PROJECT_DIR="$sr" bash "$sr_hooks/session-touched.sh" "$2" 2>&1
+}
+_sr_stop() { # _sr_stop <hook input>: the Stop hook's output; the exit status is the hook's
+  printf '%s' "$1" | CLAUDE_PROJECT_DIR="$sr" bash "$sr_hooks/stop-check.sh" 2>&1
+}
+_sr_stop_as() { _sr_stop "{\"session_id\":\"$1\",\"transcript_path\":\"/x/y.jsonl\",\"hook_event_name\":\"Stop\",\"stop_hook_active\":false}"; }
+_sr_rec() { cat "$sr_state/sessions/$1.touched" 2>/dev/null; }
+_sr_ran() { [ -e "$sr_state/check-ran" ]; }
+
+# 1. A design session that edits only Markdown and assets, while a build session has uncommitted code in the same folder.
+sr_put "$sr/scripts/hero.gd" 'extends Node'
+_sr_wrote build Write "$sr/scripts/hero.gd" >/dev/null
+_sr_wrote design Write "$sr/design/gdd.md" >/dev/null
+_sr_wrote design Edit "$sr/TASKS.md" >/dev/null
+_sr_wrote design MultiEdit "$sr/docs/notes.md" >/dev/null
+_sr_wrote design Write "$sr/art/hero.png" >/dev/null
+out="$(_sr_rec build)"; expect_output "records the code file a session wrote, from the project root" '^scripts/hero\.gd$' "$out"
+if [ ! -e "$sr_state/sessions/design.touched" ]; then ok "records nothing for a session that edited only Markdown and an asset"; else bad "records nothing for a session that edited only Markdown and an asset" "$(_sr_rec design)"; fi
+: > "$sr_state/fail"   # a check that would fail, as the other session's unfinished code makes it
+out="$(_sr_stop_as design)"; status=$?
+expect_status "the Stop hook exits 0 for a design session while another session has uncommitted code in the folder" 0 "$status" "$out"
+if _sr_ran; then bad "the check doesn't run for the session that edited only Markdown"; else ok "the check doesn't run for the session that edited only Markdown"; fi
+_sr_wrote kinds Write "$sr/scripts/a.gd" >/dev/null
+_sr_wrote kinds Edit "$sr/scenes/main.tscn" >/dev/null
+_sr_wrote kinds Write "$sr/scenes/packed.scn" >/dev/null
+_sr_wrote kinds MultiEdit "$sr/data/items.tres" >/dev/null
+_sr_wrote kinds Write "$sr/data/theme.res" >/dev/null
+_sr_wrote kinds Write "$sr/shaders/water.gdshader" >/dev/null
+_sr_wrote kinds NotebookEdit "$sr/shaders/noise.gdshaderinc" notebook_path >/dev/null
+_sr_wrote kinds Edit "$sr/project.godot" >/dev/null
+_sr_wrote kinds Write "$sr/scripts/a.gd.uid" >/dev/null
+_sr_wrote kinds Write "$sr/README.md" >/dev/null
+_sr_wrote kinds Write "$sr/.godot/godot-director/building" >/dev/null
+_sr_wrote kinds Write "/elsewhere/outside.gd" >/dev/null
+out="$(_sr_rec kinds)"
+[ "$out" = "scripts/a.gd${sr_nl}scenes/main.tscn${sr_nl}scenes/packed.scn${sr_nl}data/items.tres${sr_nl}data/theme.res${sr_nl}shaders/water.gdshader${sr_nl}shaders/noise.gdshaderinc${sr_nl}project.godot" ] \
+  && ok "records .gd, .tscn, .scn, .tres, .res, .gdshader, .gdshaderinc and project.godot as code, and skips a .gd.uid, Markdown, the state folder and a file outside the project" \
+  || bad "records .gd, .tscn, .scn, .tres, .res, .gdshader, .gdshaderinc and project.godot as code, and skips a .gd.uid, Markdown, the state folder and a file outside the project" "$out"
+if command -v cygpath >/dev/null 2>&1; then
+  # Claude Code on Windows sends the path with JSON-escaped backslashes (two for each separator), and the project folder as C:\...
+  sr_bs2='\\'                                                      # two backslash characters: one separator, JSON-escaped
+  sr_winroot="$(cygpath -w "$sr")"                                 # C:\...\session-stop, backslashes as Windows writes them
+  sr_winjson="$(printf '%s' "$sr_winroot" | sed 's/\\/\\\\/g')"    # the same, each backslash doubled as JSON writes it
+  printf '{"session_id":"winpath","cwd":"%s","hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"%s","content":"x"}}' \
+    "$sr_winjson" "${sr_winjson}${sr_bs2}scripts${sr_bs2}Win.gd" | CLAUDE_PROJECT_DIR="$sr_winroot" bash "$sr_hooks/session-touched.sh" after >/dev/null 2>&1
+  out="$(_sr_rec winpath)"
+  [ "$out" = "scripts/Win.gd" ] && ok "reads a Windows path with JSON-escaped backslashes against a project folder written as C:\\..." \
+    || bad "reads a Windows path with JSON-escaped backslashes against a project folder written as C:\\..." "$out"
+fi
+
+# 2. The build session that wrote code gets the check, is blocked once for a failure, and not twice for the same one.
+: > "$sr_state/fail"
+out="$(_sr_stop_as build)"; status=$?
+expect_status "the session that wrote code gets the check, and is blocked when it fails" 2 "$status" "$out"
+expect_output "and is given the check's output" 'parse error' "$out"
+if _sr_ran; then ok "the check ran for it"; else bad "the check ran for it"; fi
+rm -f "$sr_state/check-ran"
+out="$(_sr_stop_as build)"; status=$?
+expect_status "the same failure isn't reported twice" 0 "$status" "$out"
+if _sr_ran; then bad "and the check isn't run again for it"; else ok "and the check isn't run again for it"; fi
+
+# 3. A Bash or PowerShell command is read from git's list of changed files before and after it.
+_sr_cmd shell before Bash >/dev/null
+sleep 1
+sr_put "$sr/scripts/made.gd" 'extends Node'
+sr_put "$sr/notes.md" '# notes'
+sr_put "$sr/art/new.png" 'png'
+_sr_cmd shell after Bash >/dev/null
+out="$(_sr_rec shell)"
+[ "$out" = "scripts/made.gd" ] && ok "a Bash command that creates a .gd file is recorded, and a Markdown file, an asset and a file already changed before it are not" \
+  || bad "a Bash command that creates a .gd file is recorded, and a Markdown file, an asset and a file already changed before it are not" "$out"
+_sr_cmd shell2 before PowerShell PreToolUse >/dev/null
+sleep 1
+printf '# edited by a command\n' >> "$sr/scripts/hero.gd"
+_sr_cmd shell2 after PowerShell PostToolUseFailure >/dev/null
+out="$(_sr_rec shell2)"
+[ "$out" = "scripts/hero.gd" ] && ok "a PowerShell command that modifies a file changed before it is recorded, one that fails too" \
+  || bad "a PowerShell command that modifies a file changed before it is recorded, one that fails too" "$out"
+_sr_cmd shell3 before Bash >/dev/null; _sr_cmd shell3 after Bash >/dev/null
+if [ ! -e "$sr_state/sessions/shell3.touched" ]; then ok "a command that changes nothing records nothing"; else bad "a command that changes nothing records nothing" "$(_sr_rec shell3)"; fi
+_sr_cmd shell4 after Bash >/dev/null
+if [ ! -e "$sr_state/sessions/shell4.touched" ]; then ok "a command with no snapshot before it records nothing"; else bad "a command with no snapshot before it records nothing" "$(_sr_rec shell4)"; fi
+
+# 4. A passing check removes the session's record, and not another session's.
+rm -f "$sr_state/fail" "$sr_state/check-ran"
+_sr_cmd build before Bash >/dev/null
+printf '# the fix\n' >> "$sr/scripts/hero.gd"
+out="$(_sr_stop_as build)"; status=$?
+expect_status "a session whose code passes the check ends its turn" 0 "$status" "$out"
+if _sr_ran; then ok "the check ran for it"; else bad "the check ran for it"; fi
+if [ ! -e "$sr_state/sessions/build.touched" ] && [ ! -e "$sr_state/sessions/build.before" ]; then ok "a passing check removes the session's record"; else bad "a passing check removes the session's record" "$(ls "$sr_state/sessions")"; fi
+if [ -s "$sr_state/sessions/shell.touched" ]; then ok "and leaves another session's"; else bad "and leaves another session's"; fi
+
+# 5. A record older than a day is ignored, and deleted with any other session's that old.
+: > "$sr_state/fail"; rm -f "$sr_state/check-ran" "$sr_state/last-reported"
+_sr_wrote old Write "$sr/scripts/hero.gd" >/dev/null
+_sr_wrote stale Write "$sr/scripts/hero.gd" >/dev/null
+touch -t 202001010000 "$sr_state/sessions/old.touched" "$sr_state/sessions/stale.touched"
+out="$(_sr_stop_as old)"; status=$?
+expect_status "a record older than a day is ignored" 0 "$status" "$out"
+if _sr_ran; then bad "and the check doesn't run for it"; else ok "and the check doesn't run for it"; fi
+if [ ! -e "$sr_state/sessions/old.touched" ] && [ ! -e "$sr_state/sessions/stale.touched" ]; then ok "and it is deleted, as is another session's that old"; else bad "and it is deleted, as is another session's that old" "$(ls "$sr_state/sessions")"; fi
+
+# 6. No session_id, or one that can't be a file name, behaves as before: uncommitted code runs the check once.
+out="$(_sr_stop '{"hook_event_name":"Stop"}')"; status=$?
+expect_status "with no session_id the hook decides from git alone: uncommitted code runs the check, and a failure blocks" 2 "$status" "$out"
+if _sr_ran; then ok "and the check ran"; else bad "and the check ran"; fi
+out="$(_sr_stop '{"hook_event_name":"Stop"}')"; expect_status "and the same failure isn't reported twice" 0 $? "$out"
+printf '# another change\n' >> "$sr/scripts/hero.gd"; rm -f "$sr_state/check-ran"
+out="$(_sr_stop_as '../../escape')"; status=$?
+expect_status "a session_id that isn't a plain name behaves the same" 2 "$status" "$out"
+printf '# and another\n' >> "$sr/scripts/hero.gd"
+out="$(_sr_stop '{"session_id":"","hook_event_name":"Stop"}')"; expect_status "so does an empty one" 2 $? "$out"
+
+# 7. What stays as it was: the builder marker, the prototype exit, GODOT_DIRECTOR_STOP_CHECK=0 and a project with no tools/check.sh.
+printf '# once more\n' >> "$sr/scripts/hero.gd"; rm -f "$sr_state/check-ran"
+_sr_wrote marked Write "$sr/scripts/hero.gd" >/dev/null
+: > "$sr_state/building"
+out="$(_sr_stop_as marked)"; status=$?
+expect_status "a session with a record leaves a builder's half-built files alone" 0 "$status" "$out"
+rm -f "$sr_state/building"
+printf '# a prototype\n' > "$sr/PROTOTYPE.md"; printf 'exit 0\n' > "$sr/tools/prototype.sh"   # a stand-in for "bash tools/prototype.sh here" saying yes
+out="$(_sr_stop_as marked)"; expect_status "and in a prototype" 0 $? "$out"
+rm -f "$sr/PROTOTYPE.md" "$sr/tools/prototype.sh"
+out="$(GODOT_DIRECTOR_STOP_CHECK=0 _sr_stop_as marked)"; expect_status "GODOT_DIRECTOR_STOP_CHECK=0 turns the Stop hook off for it" 0 $? "$out"
+GODOT_DIRECTOR_STOP_CHECK=0 _sr_wrote off Write "$sr/scripts/hero.gd" >/dev/null
+if [ ! -e "$sr_state/sessions/off.touched" ]; then ok "and the record with it"; else bad "and the record with it"; fi
+mv "$sr/tools/check.sh" "$sr/tools/check.sh.away"
+out="$(_sr_stop_as marked)"; expect_status "a project with no tools/check.sh ends the turn" 0 $? "$out"
+mv "$sr/tools/check.sh.away" "$sr/tools/check.sh"
+if _sr_ran; then bad "the check isn't run while the builder marker, the prototype, the switch or a missing script excuses it"; else ok "the check isn't run while the builder marker, the prototype, the switch or a missing script excuses it"; fi
+out="$(_sr_stop_as marked)"; expect_status "and the record still blocks once those are gone" 2 $? "$out"
+
+# 8. Work that is committed ends the record: the check passed in the commit, and what differs later is another's.
+rm -f "$sr_state/fail" "$sr_state/check-ran"
+git -C "$sr" add -A >/dev/null 2>&1; git_q -C "$sr" commit -qm "the build session's work" >/dev/null 2>&1
+out="$(_sr_stop_as marked)"; status=$?
+expect_status "a session whose code is all committed ends its turn" 0 "$status" "$out"
+if [ ! -e "$sr_state/sessions/marked.touched" ] && ! _sr_ran; then ok "and its record is removed without running the check"; else bad "and its record is removed without running the check" "$(ls "$sr_state/sessions")"; fi
+sr_put "$sr/docs/more.md" '# more'
+out="$(_sr_stop '{"hook_event_name":"Stop"}')"; expect_status "with no session_id, a Markdown-only change ends the turn, as before" 0 $? "$out"
+
+# The hooks are wired in settings.json: the snapshot before a command, the record after a file tool or a command
+# (a failing one too), and the hook runs under macOS's bash 3.2 and BSD tools, so it holds none of the forms they lack.
+wiring="$(awk '/^    "[A-Za-z]+": \[/ { ev = $1; gsub(/[":]/, "", ev) } /"matcher"/ { split($0, a, "\""); m = a[4] }
+  /session-touched\.sh/ { print ev ";" m ";" ($0 ~ / before"/ ? "before" : "after") }' "$settings")"
+[ "$wiring" = "PreToolUse;Bash|PowerShell;before${sr_nl}PostToolUse;Edit|Write|MultiEdit|NotebookEdit;after${sr_nl}PostToolUse;Bash|PowerShell;after${sr_nl}PostToolUseFailure;Bash|PowerShell;after" ] \
+  && ok "settings.json runs the record hook before Bash and PowerShell, after them (a failing one too) and after Edit, Write, MultiEdit and NotebookEdit" \
+  || bad "settings.json runs the record hook before Bash and PowerShell, after them (a failing one too) and after Edit, Write, MultiEdit and NotebookEdit" "$wiring"
+bash4=$(grep -nE '^[^#]*(\$\{[A-Za-z_0-9]+(\[[^]]*\])?(,,|\^\^)\}|(declare|local|typeset) +-[a-zA-Z]*A|(^|[;&| ])(mapfile|readarray) +|(^|[;&| ])coproc +[A-Za-z]|[[:space:]]\|&[[:space:]]|\$\{[A-Za-z_0-9@*]+(\[[^]]*\])?: -[0-9]|stat +-c|date +-d|sed +-i|readlink +-f|-printf|-delete)' \
+  "$sr_hooks/session-touched.sh" "$sr_hooks/stop-check.sh" || true)
+if [ -z "$bash4" ]; then ok "the Stop hook and the record hook use no bash 4 form and no GNU-only tool flag"
+else bad "the Stop hook and the record hook use no bash 4 form and no GNU-only tool flag" "$bash4"; fi
+
+}
+
 l_precommit() {
 lane_game warm
 git add -A && { git_q commit -qm "state for the hook tests" >/dev/null 2>&1 || true; }
@@ -6421,6 +6615,7 @@ if [ -n "$godot" ]; then
   lane_start prototype           l_prototype
 fi
 lane_start installer-c         l_installer_c
+lane_start stop-hook-session   l_stop_hook_session
 lane_start framework           l_framework
 [ -z "$godot" ] || lane_start autoplay-fresh l_autoplay_fresh
 lane_start installer-a         l_installer_a
@@ -6461,7 +6656,7 @@ if [ -n "$godot" ]; then
   lane_start playlog             l_playlog             warm
 fi
 
-lanes_print framework installer-a installer-b installer-c guard guard2
+lanes_print framework installer-a installer-b installer-c guard guard2 stop-hook-session
 if [ -z "$godot" ]; then
   echo "check and hooks: skipped (pass the path to Godot 4.5+ to test them)"
   lanes_times

@@ -171,7 +171,8 @@ your-game/
 │  Godot Director's, Claude Code adapter: updated on upgrade
 ├── .claude/skills/             /next-task and the rest: each points to its procedure
 ├── .claude/agents/             builder (builds each item in a fresh context) · reviewer and researcher (read-only)
-├── .claude/hooks/              runs the check before a turn ends; blocks risky git commands
+├── .claude/hooks/              runs the check before a turn ends, for a session that changed code;
+│                               blocks risky git commands
 └── .claude/settings.json       permissions, hooks, timeouts
 ```
 Machine-local and gitignored: `tools/godot_bin.local` (the path to your Godot) and `.claude/settings.local.json`.
@@ -229,7 +230,7 @@ It exits 0 on pass, 1 on fail, and 3 when it can't run, including when a Godot r
 - **Parallel tests.** The tests run in several headless Godot processes at once, one per CPU core by default (`[tests] jobs`, or `--jobs N` for one run; `--jobs 1` runs them in one process). Each process takes a contiguous group of the sorted test files, in file order, with its own log in `.godot/godot-director/`, and the check merges them into one report. So a test must not depend on autoload or `user://` state that another test file left behind: it sets up what it reads. Test files also run at the same time and share one `user://` and one `.godot/`, so two of them must not write the same `user://` file: use a unique name per test (or per file, in a `no-split` file).
 - **Balanced and split runs (opt-in).** `[tests] balance = true` deals the test files longest first by their times in the last run instead (files with no time yet go first), each to the process with the least time so far. With it on, `[tests] split_over = <seconds>` splits a file whose whole time is over that into shards of its test methods, each in its own process, its tests counted once; a file whose tests share state across methods keeps a line `# gdir: no-split` among its first ten lines and runs whole. Every run records the times in `.godot/godot-director/test-times.tsv` (each file's whole time, which sizes the split; a split run that finishes all its shards lowers it to their sum but never raises it, and the shard count and longest shard of its last run), so turning it on works at once; `bash tools/check.sh --jobs 1` re-measures every file whole, which is how a file that got slower gets a larger split. Turn it on once no test depends on another having run first, when a few files hold up the run; where heavy files then compete for the CPU it may not help, so compare the slowest-files summary before and after.
 - **Slowest files.** Each test file's time is in the logs, and every run ends with the ten slowest files and their share of the test time, so you know which tests to make faster.
-- **Parallel sessions.** Give each building session its own git worktree (`git worktree add ../game-b`, then `bash tools/setup-clone.sh` there), so sessions don't share `.godot/`, the check's lock or each other's half-written files.
+- **Parallel sessions.** Give each building session its own git worktree (`git worktree add ../game-b`, then `bash tools/setup-clone.sh` there), so sessions don't share `.godot/`, the check's lock or each other's half-written files. The Stop hook runs the check only for a session that wrote a code, scene or data file itself, so a session that edits only documentation isn't held up by the other's code.
 
 ### This repository
 | Path | |
