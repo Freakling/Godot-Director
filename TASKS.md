@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T42 · B6 · R1
+**Next IDs:** T43 · B6 · R1
 
 ## Queue
+
+### T42 · The selftest runs in under fifteen minutes · done · M · agent
+- Touches: selftest.sh
+- Done when: `bash selftest.sh <path to Godot>` finishes in under fifteen minutes on a machine with nothing else running, with the same cases and the same output lines in the same order, so that only the time changes (check) · the sections run side by side as lanes, each in its own copy of the installed example, its own scratch folder and its own `user://` folder, and their output is printed in the sections' order (check) · the guard cases run from a pool of workers, and the guard's time on a long file body is measured before the lanes start (check) · `SELFTEST_LANES=1` runs the lanes one by one, `SELFTEST_ONLY` runs the lanes it names and `SELFTEST_TIMES=1` prints when each lane started and ended (check) · `selftest.sh` passes (check)
+- GDD: (none)
+- Source: Director-Driven-Development T291
 
 ### T41 · The docs call it the guard, since it reads PowerShell too · done · XS · agent
 - Touches: framework/.godot-director/rules.md, framework/.claude/agents/builder.md, README.md, selftest.sh, CHANGELOG.md

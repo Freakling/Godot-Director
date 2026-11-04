@@ -6,12 +6,14 @@
 #   bash selftest.sh [path to Godot 4.5+]      (or set GODOT_BIN)
 #
 # Without Godot, only the parts that don't need it are tested. KEEP=1 keeps the temporary folder.
+# The sections run side by side as lanes (see "lanes" below): SELFTEST_LANES=1 runs them one by one, and
+# SELFTEST_ONLY=a,b runs only the lanes with these names.
 
 set -u
 src="$(cd "$(dirname "$0")" && pwd)"
 godot="${1:-${GODOT_BIN:-}}"
 work="$(mktemp -d)"
-if [ "${KEEP:-0}" = "1" ]; then echo "keeping $work"; else trap 'rm -rf "$work"' EXIT; fi
+if [ "${KEEP:-0}" = "1" ]; then echo "keeping $work"; else trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$work"' EXIT; fi
 
 passed=0; failed=0
 nl='
@@ -38,6 +40,339 @@ new_repo() { # new_repo <folder>: an empty git repository with one commit
   mkdir -p "$1" && (cd "$1" && git init -q && git config core.autocrlf false && printf '# game\n' > README.md && git add -A && git_q commit -qm init)
 }
 
+# --- lanes --------------------------------------------------------------------------------------
+# One after the other the sections below take about two hours on a busy Windows machine, nearly all of it
+# waiting for processes to start (Git Bash forks slowly, and every check run starts several Godots). They
+# don't depend on each other's results, only on a game installed from the example, so each runs as a lane:
+# a background subshell with its own copy of that game, its own scratch folder ($work) and its own user://
+# folder, its output going to a file. At the end the files are printed in the order the sections had and the
+# counts added up, so the output is the sections' output one after the other, and only the time changes.
+#   SELFTEST_LANES=<n>   lanes at a time (default: a third more than the processors, 16 at most; 1 runs them one by one)
+#   SELFTEST_ONLY=a,b    only the lanes with these names (a development aid; "the run" at the end names them)
+#   SELFTEST_TIMES=1     when each lane started and ended, on stderr, just before the last line
+main_work="$work"
+lane_dir="$work/lanes"; mkdir -p "$lane_dir"
+lane_list=" "
+lane_jobs="${SELFTEST_LANES:-}"
+if [ -z "$lane_jobs" ]; then
+  lane_jobs=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+  case "$lane_jobs" in ''|*[!0-9]*) lane_jobs=4 ;; esac
+  lane_jobs=$((lane_jobs + lane_jobs / 3))   # a few more than the processors: a lane spends much of its time waiting for a process to start
+  [ "$lane_jobs" -le 16 ] || lane_jobs=16
+  # Godot's user:// folder can't be moved on macOS, so lanes there would share one: they run one by one
+  [ "$(uname -s)" != Darwin ] || lane_jobs=1
+fi
+case "$lane_jobs" in ''|*[!0-9]*|0) lane_jobs=1 ;; esac
+base=""; ready=""; warm=""
+
+lane_isolate() { # the lane's own user:// folder, so no other lane's Godot writes into the one a case looks at
+  local d="$work/appdata"
+  mkdir -p "$d"
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) command -v cygpath >/dev/null 2>&1 && d="$(cygpath -w "$d")"; export APPDATA="$d" ;;
+    Darwin) ;;
+    *) export XDG_DATA_HOME="$d" ;;
+  esac
+}
+lane_body() { # lane_body <name> <function>: in a subshell of its own, with its counts, output and a mark for a normal end in $lane_dir
+  lane_self="$1"; passed=0; failed=0; lane_t0=$SECONDS
+  work="$main_work/lane-$1"; mkdir -p "$work"; cd "$work" || exit 1
+  lane_isolate
+  trap 'echo "$passed $failed" > "$lane_dir/$lane_self.count"; echo "$lane_t0 $SECONDS" > "$lane_dir/$lane_self.secs"' EXIT
+  "$2" > "$lane_dir/$1.out" 2>&1
+  : > "$lane_dir/$1.done"
+}
+# The games the lanes copy, each made once: base is the example with the framework installed (the first
+# install of "installer"), ready is base with the clone set up (hooks, and the Godot path saved the way
+# PowerShell writes it), warm is ready after one passing check (the import and the class cache are there).
+prepare_base() {
+  local d="$main_work/base-game"
+  cp -R "$src/examples/market-day" "$d"
+  rm -rf "$d/.godot" "$d/.claude" "$d/.godot-director" "$d/.githooks" "$d/tools/godot_bin.local"
+  (cd "$d" && git init -q && git config core.autocrlf false && git add -A && git_q commit -qm "example" \
+    && bash "$src/install.sh" . >/dev/null 2>&1) || { echo "selftest: couldn't prepare the game"; exit 1; }
+  base="$d"
+}
+prepare_ready() {
+  local d="$main_work/ready-game"
+  cp -R "$base" "$d" && (cd "$d" && { bash tools/setup-clone.sh "$godot" >/dev/null 2>&1; printf '\357\273\277%s  \r\n' "$godot" > tools/godot_bin.local; })
+  ready="$d"
+}
+prepare_warm() {
+  local d="$main_work/warm-game"
+  cp -R "$ready" "$d" && (cd "$d" && bash tools/check.sh >/dev/null 2>&1)
+  warm="$d"
+}
+prepare() { # prepare base|ready|warm
+  case "$1" in
+    base) [ -n "$base" ] || prepare_base ;;
+    ready) prepare base; [ -n "$ready" ] || prepare_ready ;;
+    warm) prepare ready; [ -n "$warm" ] || prepare_warm ;;
+  esac
+}
+lane_game() { # lane_game base|ready|warm: this lane's game, a copy of the prepared one; it is $game and the working folder
+  local from
+  case "$1" in base) from="$base" ;; ready) from="$ready" ;; *) from="$warm" ;; esac
+  game="$work/game"
+  cp -R "$from" "$game" && cd "$game" || exit 1
+}
+lane_count_busy() {
+  local name
+  lane_busy=0
+  for name in $lane_list; do
+    [ -f "$lane_dir/$name.count" ] || lane_busy=$((lane_busy + 1))
+  done
+}
+lane_start() { # lane_start <name> <function> [base|ready|warm]: when a place is free and the game it copies is made
+  local name="$1"
+  case ",${SELFTEST_ONLY:-}," in ",,") ;; *",$name,"*) ;; *) return 0 ;; esac
+  [ -z "${3:-}" ] || prepare "$3"
+  lane_count_busy
+  while [ "$lane_busy" -ge "$lane_jobs" ]; do sleep 1; lane_count_busy; done
+  lane_list="$lane_list$name "
+  if [ "$lane_jobs" -gt 1 ]; then
+    ( lane_body "$name" "$2" ) &
+    echo $! > "$lane_dir/$name.pid"
+  else
+    ( lane_body "$name" "$2" )
+  fi
+}
+lanes_times() { # SELFTEST_TIMES=1: when each lane started and how long it ran, on stderr (the output stays as it is)
+  [ -n "${SELFTEST_TIMES:-}" ] || return 0
+  local name a b
+  for name in $lane_list; do
+    a="?"; b="?"; read -r a b < "$lane_dir/$name.secs" 2>/dev/null
+    echo "lane $name: started at $a s, ended at $b s" >&2
+  done
+}
+lanes_print() { # lanes_print <name>...: the output of these lanes in this order, and their counts added to the totals
+  local name pid p f
+  for name in "$@"; do
+    case "$lane_list" in *" $name "*) ;; *) continue ;; esac
+    if [ -f "$lane_dir/$name.pid" ]; then read -r pid < "$lane_dir/$name.pid"; wait "$pid" 2>/dev/null; fi
+    cat "$lane_dir/$name.out"
+    if [ -f "$lane_dir/$name.count" ]; then
+      read -r p f < "$lane_dir/$name.count"; passed=$((passed + p)); failed=$((failed + f))
+    fi
+    [ -f "$lane_dir/$name.done" ] || bad "the $name part stopped before its last case"
+  done
+}
+
+# --- shared by the lanes ----------------------------------------------------------------------
+settings="$src/framework/.claude/settings.json"
+stories_tpl="$src/framework/.godot-director/templates/user-stories.md"
+stories_ex="$src/examples/market-day/design/user-stories.md"
+
+git_fail=""
+guard_report() { # guard_report <failed cases> <what is wrong> <what holds>: one line for a block of cases, and the failed ones under it
+  if [ -n "$1" ]; then
+    bad "$2"
+    printf '%s\n' "${1#$'\n'}" | sed 's/^/          /'
+  else ok "$3"; fi
+  git_fail=""
+}
+# json_str <text>: sets JSON_STR to the text as the inside of a JSON string, with \, ", a line break, a tab and a return escaped.
+json_str() {
+  local s="$1" out="" i c
+  for ((i = 0; i < ${#s}; i++)); do
+    c="${s:i:1}"
+    case $c in
+      '\') out+='\\' ;;
+      '"') out+='\"' ;;
+      $'\n') out+='\n' ;;
+      $'\t') out+='\t' ;;
+      $'\r') out+='\r' ;;
+      *) out+="$c" ;;
+    esac
+  done
+  JSON_STR="$out"
+}
+# The guard cases (Director-Driven-Development B41). guard queues a case: its JSON payload goes to a file, and its expected
+# exit code, tool and text are kept. guard_run runs the queued cases, guard_jobs at a time, each as its own run of the hook
+# with its own payload, then checks every exit code against that case's expected one, in the order the cases were queued,
+# so a failure names its case and why. Each block of cases ends with guard_run and guard_report.
+guard_jobs=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); [ "$guard_jobs" -le 8 ] || guard_jobs=8
+guard_cmds=(); guard_exps=(); guard_tools=()
+guard() { # guard <expected exit> <command> [tool name: Bash by default, or PowerShell]
+  local n=${#guard_cmds[@]} tool="${3:-Bash}"
+  json_str "$2"
+  printf '{"session_id":"s","tool_name":"%s","tool_input":{"command":"%s","description":"run"}}' "$tool" "$JSON_STR" > "$guard_dir/$n.json"
+  guard_cmds+=("$2"); guard_exps+=("$1"); guard_tools+=("$tool")
+}
+guard_run() { # runs the queued cases, guard_jobs workers at a time; worker k takes cases k, k + guard_jobs, ...
+  local n=${#guard_cmds[@]} i k w
+  local -a pid=()
+  [ "$n" -gt 0 ] || return 0
+  w=$guard_jobs; [ "$w" -le "$n" ] || w=$n
+  for ((k = 0; k < w; k++)); do
+    (
+      for ((i = k; i < n; i += w)); do
+        bash .claude/hooks/guard-git.sh < "$guard_dir/$i.json" >/dev/null 2>&1
+        echo $? > "$guard_dir/$i.rc"
+      done
+    ) &
+    pid[k]=$!
+  done
+  for ((k = 0; k < w; k++)); do wait "${pid[k]}"; done
+  for ((i = 0; i < n; i++)); do
+    rc="missing"; read -r rc < "$guard_dir/$i.rc" 2>/dev/null
+    [ "$rc" = "${guard_exps[i]}" ] || git_fail="$git_fail"$'\n'"  guard exited $rc, expected ${guard_exps[i]} (${guard_tools[i]}): ${guard_cmds[i]//$'\n'/ NL }"
+  done
+  guard_cmds=(); guard_exps=(); guard_tools=()
+  rm -f "$guard_dir"/*.json "$guard_dir"/*.rc
+}
+
+# The guard reads a long file body in time: measured first, in guard_slow_measure, while the lanes aren't running yet (a
+# timing is the one result a busy machine changes). The guard lane reports it where the measurement used to be.
+guard_slow_measure() {
+  local slow_dir="$work/slow-body"
+  mkdir -p "$slow_dir/.claude" "$slow_dir/guard-cases" && cp -R "$src/framework/.claude/hooks" "$slow_dir/.claude/hooks" || return 1
+  local guard_dir="$slow_dir/guard-cases"
+  cd "$slow_dir" || return 1
+gd_body='extends Node2D'$'\n'
+while ((${#gd_body} < 25000)); do gd_body+=$'\t$AnimationPlayer.play("walk")\n\t$Sprite2D.flip_h = not $Sprite2D.flip_h # it\'s "x"\n'; done
+slow_cmds=($'cat > scripts/hero.gd <<\'EOF\'\n'"$gd_body"$'EOF' $'@\'\n'"$gd_body"$'\'@ | Set-Content scripts/hero.gd')
+slow_tools=(Bash PowerShell); slow_fail=""; slow_times=""
+for ((si = 0; si < ${#slow_cmds[@]}; si++)); do
+  json_str "${slow_cmds[si]}"
+  printf '{"session_id":"s","tool_name":"%s","tool_input":{"command":"%s","description":"run"}}' "${slow_tools[si]}" "$JSON_STR" > "$guard_dir/slow.json"
+  TIMEFORMAT=%R
+  slow_out=$( { time { LC_ALL=C.UTF-8 bash .claude/hooks/guard-git.sh < "$guard_dir/slow.json" >/dev/null 2>&1; echo "rc $?" >&2; }; } 2>&1 )
+  unset TIMEFORMAT
+  slow_rc="${slow_out#*rc }"; slow_rc="${slow_rc%%[!0-9]*}"; slow_s="${slow_out##*[!0-9.]}"
+  slow_times="$slow_times ${slow_tools[si]} ${slow_s}s"
+  [ "$slow_rc" = 0 ] || slow_fail="$slow_fail"$'\n'"  (${slow_tools[si]}) the guard exited $slow_rc on a 25 KB GDScript body, expected 0"
+  [ "${slow_s%%.*}" -lt 5 ] 2>/dev/null || slow_fail="$slow_fail"$'\n'"  (${slow_tools[si]}) the guard took ${slow_s}s on a 25 KB GDScript body, over 5 seconds"
+done
+rm -f "$guard_dir/slow.json"
+  cd "$work"
+}
+
+guard_write() { # guard_write <expected exit> <what> <file_path as sent (JSON-escaped)> [project dir]
+  local out got
+  out="$(printf '{"session_id":"s","tool_name":"Write","tool_input":{"file_path":"%s","content":"x"}}' "$3" \
+    | CLAUDE_PROJECT_DIR="${4:-$game}" bash .claude/hooks/guard-protected.sh 2>&1)"
+  got=$?
+  if [ "$got" -eq "$1" ]; then ok "$([ "$1" -eq 2 ] && echo blocks || echo allows): $2"; else bad "guard-protected exit $got, expected $1: $2" "$out"; fi
+}
+
+user_data_init() { # the example's real user:// folder, in this lane's own APPDATA (or XDG_DATA_HOME)
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) user_data="$(cygpath -u "$APPDATA")/Godot/app_userdata/Market Day" ;;
+    Darwin) user_data="$HOME/Library/Application Support/Godot/app_userdata/Market Day" ;;
+    *) user_data="${XDG_DATA_HOME:-$HOME/.local/share}/godot/app_userdata/Market Day" ;;
+  esac
+}
+
+gen_token() { # gen_token: sets _tok to "ghp_" and 36 generated letters and digits
+  local chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789' i
+  _tok="ghp_"
+  for ((i = 0; i < 36; i++)); do _tok="$_tok${chars:$((RANDOM % 62)):1}"; done
+}
+gitleaks_prelude() { # the gitleaks found here, a PATH without it, and a stand-in (sets _gl_ok, _gl_real, _no_gl_path, _no_gl_ok, _fake_gl)
+_gl_ok=0; _gl_real=""
+if command -v gitleaks >/dev/null 2>&1; then
+  _gl_real="$(gitleaks version 2>/dev/null | tr -d 'v \r\n')"
+  _gl_maj="${_gl_real%%.*}"; _gl_rest="${_gl_real#*.}"; _gl_mnr="${_gl_rest%%.*}"
+  case "$_gl_maj$_gl_mnr" in
+    ''|*[!0-9]*) ;;
+    *) if [ "$_gl_real" != "8.19.0" ] && { [ "$_gl_maj" -gt 8 ] || { [ "$_gl_maj" -eq 8 ] && [ "$_gl_mnr" -ge 18 ]; }; }; then _gl_ok=1; fi ;;
+  esac
+fi
+# A PATH without gitleaks: every directory that holds it is left out (the other tools must remain).
+_no_gl_path=""
+while IFS= read -r _dir; do
+  [ -n "$_dir" ] || continue
+  if [ -x "$_dir/gitleaks" ] || [ -x "$_dir/gitleaks.exe" ]; then continue; fi
+  _no_gl_path="${_no_gl_path:+$_no_gl_path:}$_dir"
+done <<EOF
+$(printf '%s\n' "$PATH" | tr ':' '\n')
+EOF
+_no_gl_ok=1
+for _tool in git bash awk sed tr grep head tail cat mkdir rm find sort; do
+  PATH="$_no_gl_path" command -v "$_tool" >/dev/null 2>&1 || _no_gl_ok=0
+done
+PATH="$_no_gl_path" command -v gitleaks >/dev/null 2>&1 && _no_gl_ok=0
+# A stand-in gitleaks: it reports FAKE_GL_VERSION, logs each call to FAKE_GL_LOG, and a scan finds nothing,
+# or fails with FAKE_GL_ERROR's text and no report (as 8.19.0 does for every command). protect, the staged
+# scan, writes one finding in FAKE_GL_FINDING (a file) when it is set, in the report's own layout.
+_fake_gl="$work/fake-gl"; mkdir -p "$_fake_gl"
+cat > "$_fake_gl/gitleaks" << 'FAKE'
+#!/usr/bin/env bash
+[ -n "${FAKE_GL_LOG:-}" ] && printf '%s\n' "$*" >> "$FAKE_GL_LOG"
+case "$1" in
+  version) echo "v${FAKE_GL_VERSION:-8.30.1}" ;;
+  dir|detect|protect)
+    for a in "$@"; do case "$a" in --report-path=*) report="${a#--report-path=}" ;; esac; done
+    if [ -n "${FAKE_GL_ERROR:-}" ]; then echo "$FAKE_GL_ERROR"; exit 1; fi
+    if [ "$1" = protect ] && [ -n "${FAKE_GL_FINDING:-}" ]; then
+      printf '[\n {\n  "RuleID": "selftest-rule",\n  "StartLine": 7,\n  "Match": "REDACTED",\n  "Secret": "REDACTED",\n  "File": "%s",\n  "Fingerprint": "%s:selftest-rule:7"\n }\n]\n' "$FAKE_GL_FINDING" "$FAKE_GL_FINDING" > "$report"
+      exit 1
+    fi
+    exit 0 ;;
+  *) exit 0 ;;
+esac
+FAKE
+chmod +x "$_fake_gl/gitleaks"
+}
+
+runs=playtesting/autoplay
+latest_run() { ls -d "$runs/$1"-* 2>/dev/null | grep -v -- '-replay' | LC_ALL=C /usr/bin/sort | tail -n 1; }
+after_line() { # after_line <file> <exact line> <lines to add after it>; awk reads \t and \n in both
+  awk -v line="$2" -v text="$3" '{ print } $0 == line { print text }' "$1"
+}
+replace_line() { # replace_line <file> <exact line> <its replacement>
+  awk -v line="$2" -v text="$3" '{ print ($0 == line ? text : $0) }' "$1"
+}
+normalized() { # a run's JSONL without time stamps, run ids and timing lines
+  sed -e 's/^{"t":[0-9]*,/{/' -e 's/[0-9]\{8\}-[0-9]\{6\}\(-[0-9][0-9]*\)\{0,1\}/<id>/g' "$1"/run-*.jsonl \
+    | grep -v -e '"event":"frame.hitch"' -e '"event":"window.focus"'
+}
+
+crash_defs() {
+# A Godot process that exits 139 (a segmentation fault) with a clean log: the check names the process, its
+# status and its log in one line before the FAIL, and the exit code stays 1. crashy <pattern> [silent]: a
+# stand-in for Godot that runs the real one, then exits 139 for a call whose arguments contain the pattern;
+# with "silent" it exits 139 before running anything, so the log stays empty.
+crashy() {
+  if [ "${2:-}" = "silent" ]; then
+    cat > "$work/godot-crash" <<CRASH
+#!/usr/bin/env bash
+case "\$*" in *"$1"*) exit 139 ;; esac
+"$godot" "\$@"
+CRASH
+  else
+    cat > "$work/godot-crash" <<CRASH
+#!/usr/bin/env bash
+"$godot" "\$@"
+status=\$?
+case "\$*" in *"$1"*) exit 139 ;; esac
+exit \$status
+CRASH
+  fi
+  chmod +x "$work/godot-crash"
+}
+line_of() { printf '%s\n' "$1" | grep -n -E -- "$2" | head -n 1 | cut -d: -f1; }
+before() { # before <output> <regex> <regex>: the first line matching the first regex comes before the second's
+  local a b
+  a="$(line_of "$1" "$2")"; b="$(line_of "$1" "$3")"
+  [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]
+}
+}
+
+parallel_prelude() { # the example's [autoplay] left out of tools/check.cfg, and the helpers the parallel-tests lanes share
+logs=".godot/godot-director"
+# These cases count the processes that run the tests, and autoplay in the check takes one of them, so
+# the example's [autoplay] is left out here ("autoplay beside the tests" covers it).
+cp tools/check.cfg "$work/saved-check-cfg-ap"
+awk '/^\[autoplay\]$/ { skip = 1; next } /^\[/ { skip = 0 } !skip' "$work/saved-check-cfg-ap" > tools/check.cfg
+test_order() { for f in "$@"; do tr -d '\r' < "$f"; done | sed -n 's/^GDIR-TEST: \(.*\)::.*$/\1/p' | uniq; }
+deal_of() { printf '%s\n' "$1" | sed -n 's/^check: deal: job \([0-9]*\) [0-9.?]* /\1 /p' | tr '\n' ';'; }
+times="$logs/test-times.tsv"
+}
+
+l_framework() {
+cd "$work" || exit 1
 # --- framework files ----------------------------------------------------------------------------
 echo "framework"
 plugin_version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$src/.claude-plugin/plugin.json")"
@@ -120,7 +455,6 @@ for file in framework/.godot-director/procedures/research.md framework/.godot-di
 done
 [ -z "$missing" ] && ok "the research assistant's files exist" || bad "research assistant files missing:$missing"
 researcher="$src/framework/.claude/agents/researcher.md"
-settings="$src/framework/.claude/settings.json"
 if [ "$(sed -n 's/^tools: //p' "$researcher" | tr -d '\r')" = "Read, Grep, Glob, WebSearch, WebFetch" ] \
     && grep -q '^model: inherit' "$researcher" \
     && grep -Eq '^ *"WebSearch",?[[:space:]]*$' "$settings" && grep -Eq '^ *"WebFetch",?[[:space:]]*$' "$settings"; then
@@ -491,8 +825,6 @@ done
 # the procedures, the settings and the docs name them, each step only with them on; and Market Day
 # uses them, with a Stories: line on every agent item. tools/stories.sh --due is tested under
 # "user stories", with them on, off and unanswered.
-stories_tpl="$src/framework/.godot-director/templates/user-stories.md"
-stories_ex="$src/examples/market-day/design/user-stories.md"
 ex_tasks="$src/examples/market-day/TASKS.md"
 wired=""
 [ -f "$stories_tpl" ] && [ -f "$src/framework/tools/stories.sh" ] && [ -f "$stories_ex" ] || wired="$wired files"
@@ -702,6 +1034,9 @@ grep -q '^- \*\*Nothing is written until the director approves a summary of it\.
 [ -z "$wired" ] && ok "nothing is written until the human approves a summary: the rule, design.md's Summary and approval, and the pointer in each procedure that records from a conversation" \
   || bad "the approval of a summary isn't wired into:$wired"
 
+}
+
+l_installer_a() {
 # --- installer ----------------------------------------------------------------------------------
 echo "installer"
 game="$work/market-day"
@@ -863,7 +1198,10 @@ grep -q "^# Godot Director: runs" "$(git rev-parse --git-path hooks)/pre-commit"
   && ok "updates the clone's 2.x pre-commit shim and drops the old runtime folder" \
   || bad "updates the clone's 2.x pre-commit shim and drops the old runtime folder" "$out"
 cd "$game" || exit 1
+}
 
+l_installer_b() {
+cd "$work" || exit 1
 # Upgrading from the last release, v3.10.0 (taken from git history; skipped where the tag isn't there):
 # the new files and seeds arrive, the game keeps its own AGENTS.md and check.cfg, the layout lint in
 # the check ends up off, and align lists the screens the catalog doesn't cover without failing.
@@ -924,7 +1262,10 @@ if git -C "$src" rev-parse -q --verify 'v3.10.0^{commit}' >/dev/null 2>&1; then
 else
   echo "  skip  upgrade from v3.10.0: no v3.10.0 tag in this checkout"
 fi
+}
 
+l_installer_c() {
+cd "$work" || exit 1
 core_only="$work/core-only"; new_repo "$core_only"
 out="$(bash "$src/install.sh" --tools none "$core_only" 2>&1)"
 if [ ! -e "$core_only/.claude" ] && [ ! -e "$core_only/CLAUDE.md" ] && [ -f "$core_only/AGENTS.md" ] && [ -f "$core_only/.godot-director/rules.md" ]; then
@@ -1088,65 +1429,12 @@ out="$(bash "$src/install.sh" . 2>&1)"; status=$?
 expect_status "reinstalls in a CRLF clone" 0 "$status" "$out"
 expect_output "reports that clone as reinstalled" "reinstalled" "$out"
 expect_no_output "CRLF line endings don't count as local edits" "CONFLICT|kept your changes" "$out"
-cd "$game" || exit 1
+}
 
-# --- git guard (Claude Code PreToolUse hook) ----------------------------------------------------
+l_guard() {
+lane_game base
 echo "git guard"
 guard_dir="$work/guard-cases"; mkdir -p "$guard_dir"
-git_fail=""
-guard_report() { # guard_report <failed cases> <what is wrong> <what holds>: one line for a block of cases, and the failed ones under it
-  if [ -n "$1" ]; then
-    bad "$2"
-    printf '%s\n' "${1#$'\n'}" | sed 's/^/          /'
-  else ok "$3"; fi
-  git_fail=""
-}
-# json_str <text>: sets JSON_STR to the text as the inside of a JSON string, with \, ", a line break, a tab and a return escaped.
-json_str() {
-  local s="$1" out="" i c
-  for ((i = 0; i < ${#s}; i++)); do
-    c="${s:i:1}"
-    case $c in
-      '\') out+='\\' ;;
-      '"') out+='\"' ;;
-      $'\n') out+='\n' ;;
-      $'\t') out+='\t' ;;
-      $'\r') out+='\r' ;;
-      *) out+="$c" ;;
-    esac
-  done
-  JSON_STR="$out"
-}
-# The guard cases (Director-Driven-Development B41). guard queues a case: its JSON payload goes to a file, and its expected
-# exit code, tool and text are kept. guard_run runs the queued cases, guard_jobs at a time, each as its own run of the hook
-# with its own payload, then checks every exit code against that case's expected one, in the order the cases were queued,
-# so a failure names its case and why. Each block of cases ends with guard_run and guard_report.
-guard_jobs=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); [ "$guard_jobs" -le 8 ] || guard_jobs=8
-guard_cmds=(); guard_exps=(); guard_tools=()
-guard() { # guard <expected exit> <command> [tool name: Bash by default, or PowerShell]
-  local n=${#guard_cmds[@]} tool="${3:-Bash}"
-  json_str "$2"
-  printf '{"session_id":"s","tool_name":"%s","tool_input":{"command":"%s","description":"run"}}' "$tool" "$JSON_STR" > "$guard_dir/$n.json"
-  guard_cmds+=("$2"); guard_exps+=("$1"); guard_tools+=("$tool")
-}
-guard_run() {
-  local n=${#guard_cmds[@]} first i k
-  local -a pid=() rc=()
-  for ((first = 0; first < n; first += guard_jobs)); do
-    for ((k = 0; k < guard_jobs && first + k < n; k++)); do
-      bash .claude/hooks/guard-git.sh < "$guard_dir/$((first + k)).json" >/dev/null 2>&1 &
-      pid[k]=$!
-    done
-    for ((k = 0; k < guard_jobs && first + k < n; k++)); do
-      wait "${pid[k]}"; rc[first + k]=$?
-    done
-  done
-  for ((i = 0; i < n; i++)); do
-    [ "${rc[i]}" -eq "${guard_exps[i]}" ] || git_fail="$git_fail"$'\n'"  guard exited ${rc[i]}, expected ${guard_exps[i]} (${guard_tools[i]}): ${guard_cmds[i]//$'\n'/ NL }"
-  done
-  guard_cmds=(); guard_exps=(); guard_tools=()
-  rm -f "$guard_dir"/*.json
-}
 for cmd in 'git commit -m x --no-verify' 'git commit -nm "x"' 'git push origin main --force' \
     'git push --force-with-lease=main origin' 'git push origin +main' 'git reset HEAD --hard' \
     'git -c core.hooksPath=/dev/null commit -m x' 'git config core.hooksPath ""' 'cd x && git clean -fd' \
@@ -1641,22 +1929,6 @@ guard_report "$nopath_fail" "the guard starts another process" "the guard starts
 # The guard reads a long file body in time (the hook's timeout in settings.json is 10 seconds): a 25 KB GDScript of $Node.method()
 # lines, written from a Bash heredoc and from a PowerShell here-string, in a UTF-8 locale, each under 5 seconds (about 0.4 and 1.2
 # seconds in Git Bash on Windows). Bash's time keyword reads the clock, so the measurement starts no process of its own.
-gd_body='extends Node2D'$'\n'
-while ((${#gd_body} < 25000)); do gd_body+=$'\t$AnimationPlayer.play("walk")\n\t$Sprite2D.flip_h = not $Sprite2D.flip_h # it\'s "x"\n'; done
-slow_cmds=($'cat > scripts/hero.gd <<\'EOF\'\n'"$gd_body"$'EOF' $'@\'\n'"$gd_body"$'\'@ | Set-Content scripts/hero.gd')
-slow_tools=(Bash PowerShell); slow_fail=""; slow_times=""
-for ((si = 0; si < ${#slow_cmds[@]}; si++)); do
-  json_str "${slow_cmds[si]}"
-  printf '{"session_id":"s","tool_name":"%s","tool_input":{"command":"%s","description":"run"}}' "${slow_tools[si]}" "$JSON_STR" > "$guard_dir/slow.json"
-  TIMEFORMAT=%R
-  slow_out=$( { time { LC_ALL=C.UTF-8 bash .claude/hooks/guard-git.sh < "$guard_dir/slow.json" >/dev/null 2>&1; echo "rc $?" >&2; }; } 2>&1 )
-  unset TIMEFORMAT
-  slow_rc="${slow_out#*rc }"; slow_rc="${slow_rc%%[!0-9]*}"; slow_s="${slow_out##*[!0-9.]}"
-  slow_times="$slow_times ${slow_tools[si]} ${slow_s}s"
-  [ "$slow_rc" = 0 ] || slow_fail="$slow_fail"$'\n'"  (${slow_tools[si]}) the guard exited $slow_rc on a 25 KB GDScript body, expected 0"
-  [ "${slow_s%%.*}" -lt 5 ] 2>/dev/null || slow_fail="$slow_fail"$'\n'"  (${slow_tools[si]}) the guard took ${slow_s}s on a 25 KB GDScript body, over 5 seconds"
-done
-rm -f "$guard_dir/slow.json"
 guard_report "$slow_fail" "the guard is too slow on a long file body" "the guard reads a 25 KB GDScript heredoc and here-string in under 5 seconds each:$slow_times"
 
 # A variable in the hook's environment named like a per-view array (vhang, vcov, vdep, vpx, vps) changes nothing: the arrays start
@@ -3388,17 +3660,15 @@ EOF
   guard_report "$ps_fail" "the PowerShell tool isn't wired to the guard and the deny and ask rules (B24)" "a matcher that runs the guard hook names Bash, Monitor and PowerShell, every Bash deny and ask rule has a PowerShell twin, and the allow list names no PowerShell command"
 fi
 
+}
+
+l_guard2() {
+lane_game base
+guard_dir="$work/guard-cases"; mkdir -p "$guard_dir"; git_fail=""
 # --- protected-space guard (Claude Code PreToolUse hook) ----------------------------------------
 # Claude Code sends the path as given: relative, absolute POSIX, or Windows (JSON-escaped). The
 # project root is $CLAUDE_PROJECT_DIR (the Windows cases pass a made-up root; the hook only reads text).
 echo "protected-space guard"
-guard_write() { # guard_write <expected exit> <what> <file_path as sent (JSON-escaped)> [project dir]
-  local out got
-  out="$(printf '{"session_id":"s","tool_name":"Write","tool_input":{"file_path":"%s","content":"x"}}' "$3" \
-    | CLAUDE_PROJECT_DIR="${4:-$game}" bash .claude/hooks/guard-protected.sh 2>&1)"
-  got=$?
-  if [ "$got" -eq "$1" ]; then ok "$([ "$1" -eq 2 ] && echo blocks || echo allows): $2"; else bad "guard-protected exit $got, expected $1: $2" "$out"; fi
-}
 guard_write 2 "relative director/x" 'director/x'
 guard_write 2 "./director/x" './director/x'
 guard_write 2 "x/../director/y" 'x/../director/y'
@@ -3510,11 +3780,10 @@ printf -- '- User stories: off\n' > "$_st_nogit/AGENTS.md"
 out="$(cd "$_st_nogit" && GIT_CEILING_DIRECTORIES="$work" bash tools/stories.sh --due 2>&1)"; status=$?
 expect_status "with the stories off it exits 0 there, needing no repository" 0 "$status" "$out"
 
-if [ -z "$godot" ]; then
-  echo "check and hooks: skipped (pass the path to Godot 4.5+ to test them)"
-  finish
-fi
+}
 
+l_setup() {
+lane_game base
 # --- per-clone setup ----------------------------------------------------------------------------
 echo "setup-clone"
 out="$(GODOT_BIN=/nonexistent/godot bash tools/check.sh 2>&1)"; expect_status "the check exits 3 without Godot" 3 $? "$out"
@@ -3531,7 +3800,10 @@ grep -qs "Godot Director" "$(git rev-parse --git-path hooks)/pre-commit" && ok "
 [ -z "$(git config --get core.hooksPath)" ] && ok "leaves core.hooksPath alone (Git LFS keeps working)" || bad "leaves core.hooksPath alone"
 # A path saved by PowerShell: UTF-8 BOM, trailing spaces, CRLF.
 printf '\357\273\277%s  \r\n' "$godot" > tools/godot_bin.local
+}
 
+l_check_import_a() {
+lane_game ready
 # --- the check ----------------------------------------------------------------------------------
 echo "check"
 out="$(bash tools/check.sh 2>&1)"; status=$?
@@ -3548,6 +3820,10 @@ expect_output "and skips the import pass when no imported file changed" "check: 
 out="$(bash tools/check.sh --import 2>&1)"; status=$?
 expect_status "--import runs the import pass and passes" 0 "$status" "$out"
 expect_no_output "and doesn't skip it" "import pass skipped" "$out"
+}
+
+l_check_import_b() {
+lane_game warm
 rm -rf .godot/imported
 out="$(bash tools/check.sh 2>&1)"; status=$?
 expect_status "a check without an import cache passes" 0 "$status" "$out"
@@ -3571,6 +3847,10 @@ expect_status "a body-only edit passes the check" 0 "$status" "$out"
 expect_output "and the check skips the import pass for it" "import pass skipped" "$out"
 rm -f scripts/selftest_helper.gd scripts/selftest_helper.gd.uid scripts/selftest_user.gd scripts/selftest_user.gd.uid
 
+}
+
+l_check_faults_a() {
+lane_game warm
 fault() { # fault <what> <file> <text to append> <regex the output must contain>
   cp "$2" "$work/saved"
   printf '%s\n' "$3" >> "$2"
@@ -3583,6 +3863,18 @@ fault "a parse error" scripts/systems/market.gd 'func broken( -> void:' 'market\
 fault "an untyped declaration" scripts/systems/market.gd "$(printf '\nfunc untyped(value):\n\treturn value')" 'market\.gd'
 fault "randomness in a screen" scripts/ui/shop_screen.gd "$(printf '\nfunc _roll() -> int:\n\treturn randi()')" 'screen script does .randi'
 fault "a screen assigning to an autoload" scripts/ui/shop_screen.gd "$(printf '\nfunc _cheat() -> void:\n\tRunState.gold = 999')" 'RunState\.gold'
+}
+
+l_check_faults_b() {
+lane_game warm
+fault() { # fault <what> <file> <text to append> <regex the output must contain>
+  cp "$2" "$work/saved"
+  printf '%s\n' "$3" >> "$2"
+  out="$(bash tools/check.sh 2>&1)"; status=$?
+  expect_status "fails on $1" 1 "$status" "$out"
+  expect_output "names the cause of $1" "$4" "$out"
+  cp "$work/saved" "$2"
+}
 fault "a failing test" tests/test_market.gd "$(printf '\nfunc test_selftest_failure() -> void:\n\texpect_eq(1, 2)')" 'expected 2, got 1'
 fault "an async test" tests/test_market.gd "$(printf '\nfunc test_selftest_async() -> void:\n\tawait Engine.get_main_loop().process_frame\n\texpect(true)')" 'must be synchronous'
 fault "a runtime error in a test" tests/test_market.gd "$(printf '\nfunc test_selftest_crash() -> void:\n\tvar node: Node = null\n\tnode.get_name()')" 'SCRIPT ERROR'
@@ -3598,6 +3890,10 @@ sed 's|scripts/resources/market_config\.gd|scripts/resources/renamed.gd|' "$work
 out="$(bash tools/check.sh 2>&1)"; expect_status "fails on a resource whose script was renamed" 1 $? "$out"
 cp "$work/saved" data/market_config.tres
 
+}
+
+l_check_misc_a() {
+lane_game warm
 # Known screen violations pass with a note; other frameworks' tests are skipped.
 cp scripts/ui/shop_screen.gd "$work/saved-screen"; cp tools/check.cfg "$work/saved-cfg"
 printf '\nfunc _roll() -> int:\n\treturn randi()\n' >> scripts/ui/shop_screen.gd
@@ -3627,6 +3923,10 @@ expect_status "accepts expected errors marked GDIR-IGNORE, or C4G-IGNORE as in 2
 expect_output "sets the check meta under the new and the deprecated 2.x name" "14 tests passed" "$out"
 rm -f tests/test_selftest_meta.gd tests/test_selftest_meta.gd.uid
 
+}
+
+l_check_misc_b() {
+lane_game warm
 out="$(bash tools/check.sh 2>&1)"; expect_status "passes again after the faults are removed" 0 $? "$out"
 
 # --only: one test file, the supported way to run it (the guard refuses a direct Godot run past
@@ -3658,14 +3958,13 @@ grep -q 'check\.sh --only' .godot-director/procedures/build.md && grep -q 'check
   && ok "the build procedure, the rules, the builder agent and the guard's refusal name --only" \
   || bad "the build procedure, the rules, the builder agent and the guard's refusal name --only"
 
+}
+
+l_par_a() {
+lane_game warm
 # --- parallel tests, per-file times, timeout ----------------------------------------------------
 echo "parallel tests"
-logs=".godot/godot-director"
-# These cases count the processes that run the tests, and autoplay in the check takes one of them, so
-# the example's [autoplay] is left out here ("autoplay beside the tests" covers it).
-cp tools/check.cfg "$work/saved-check-cfg-ap"
-awk '/^\[autoplay\]$/ { skip = 1; next } /^\[/ { skip = 0 } !skip' "$work/saved-check-cfg-ap" > tools/check.cfg
-test_order() { for f in "$@"; do tr -d '\r' < "$f"; done | sed -n 's/^GDIR-TEST: \(.*\)::.*$/\1/p' | uniq; }
+parallel_prelude
 out="$(bash tools/check.sh --jobs 1 2>&1)"; expect_status "--jobs 1 runs the tests in one process" 0 $? "$out"
 expect_output "and runs all of the example's tests" "12 tests passed" "$out"
 expect_no_output "with no group processes" "running the tests in" "$out"
@@ -3695,34 +3994,12 @@ cp "$work/saved" tests/test_market.gd
 times="$logs/test-times.tsv"
 [ -f "$times" ] && grep -qE '^res://tests/test_market\.gd	([0-9]+\.[0-9]{3})	1	[0-9]+\.[0-9]{3}$' "$times" \
   && ok "a whole run stores each test file's time, one shard and its time as the longest" || bad "a whole run stores each test file's time, one shard and its time as the longest" "$(cat "$times" 2>/dev/null)"
-# A Godot process that exits 139 (a segmentation fault) with a clean log: the check names the process, its
-# status and its log in one line before the FAIL, and the exit code stays 1. crashy <pattern> [silent]: a
-# stand-in for Godot that runs the real one, then exits 139 for a call whose arguments contain the pattern;
-# with "silent" it exits 139 before running anything, so the log stays empty.
-crashy() {
-  if [ "${2:-}" = "silent" ]; then
-    cat > "$work/godot-crash" <<CRASH
-#!/usr/bin/env bash
-case "\$*" in *"$1"*) exit 139 ;; esac
-"$godot" "\$@"
-CRASH
-  else
-    cat > "$work/godot-crash" <<CRASH
-#!/usr/bin/env bash
-"$godot" "\$@"
-status=\$?
-case "\$*" in *"$1"*) exit 139 ;; esac
-exit \$status
-CRASH
-  fi
-  chmod +x "$work/godot-crash"
 }
-line_of() { printf '%s\n' "$1" | grep -n -E -- "$2" | head -n 1 | cut -d: -f1; }
-before() { # before <output> <regex> <regex>: the first line matching the first regex comes before the second's
-  local a b
-  a="$(line_of "$1" "$2")"; b="$(line_of "$1" "$3")"
-  [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]
-}
+
+l_par_b1() {
+lane_game warm
+parallel_prelude
+crash_defs
 crashy "--import"
 out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --import --jobs 2 2>&1)"; expect_status "an import pass that crashes with a clean log fails the check" 1 $? "$out"
 expect_output "names the import pass, its status and its log" "check: the import pass exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/import\.log" "$out"
@@ -3735,6 +4012,12 @@ crashy "--tests 2 2"
 out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --jobs 2 2>&1)"; expect_status "a test group that crashes after its report fails the check" 1 $? "$out"
 expect_output "names the group, its status and its log" "check: test group 2 of 2 exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/tests-2\.log" "$out"
 before "$out" "printed no error" "^check: FAIL" && ok "and the FAIL follows it" || bad "and the FAIL follows it" "$out"
+}
+
+l_par_b2() {
+lane_game warm
+parallel_prelude
+crash_defs
 crashy "--tests 2 2" silent
 out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --jobs 2 2>&1)"; expect_status "a test group that crashes before its report fails the check" 1 $? "$out"
 expect_output "names the group, its status and its log" "check: test group 2 of 2 exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/tests-2\.log" "$out"
@@ -3746,7 +4029,11 @@ before "$out" "printed no error" "^check: FAIL" && ok "and the FAIL follows it" 
 crashy "tools/check.gd"
 out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --jobs 1 2>&1)"; expect_status "a serial run whose check crashes with a clean log fails the check" 1 $? "$out"
 expect_output "names the check, its status and its log" "check: tools/check\.gd exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/check\.log" "$out"
-deal_of() { printf '%s\n' "$1" | sed -n 's/^check: deal: job \([0-9]*\) [0-9.?]* /\1 /p' | tr '\n' ';'; }
+}
+
+l_par_c1() {
+lane_game warm
+parallel_prelude
 printf 'res://tests/test_dev_menu.gd\t5\nres://tests/test_market.gd\t200\nres://tests/test_play_log.gd\t30\n' > "$times"
 out="$(GDIR_CHECK_DEAL=1 bash tools/check.sh --jobs 3 2>&1)"; expect_status "with no balance setting, --jobs 3 passes" 0 $? "$out"
 [ "$(deal_of "$out")" = "1 res://tests/test_dev_menu.gd;2 res://tests/test_market.gd;3 res://tests/test_play_log.gd;" ] \
@@ -3794,6 +4081,12 @@ out="$(GDIR_CHECK_DEAL=1 bash tools/check.sh --jobs 3 2>&1)"; expect_status "a s
 grep -qE "^res://tests/test_market\.gd	0\.010	2	0\.[0-9]{3}\$" "$times" && expect_output "and splits in two" "deal: job [0-9]+ [0-9.]+ res://tests/test_market\.gd shard 2/2" "$out" \
   && ok "a higher sum leaves the stored whole time alone" || bad "a higher sum leaves the stored whole time alone" "$out$nl$(cat "$times")"
 cp "$work/saved" tests/test_market.gd
+}
+
+l_par_c2() {
+lane_game warm
+parallel_prelude
+cp tools/check.cfg "$work/saved-cfg"
 cp "$work/saved-cfg" tools/check.cfg; printf '\n[tests]\nbalance=true\nsplit_over=60\n' >> tools/check.cfg
 # A file marked no-split runs whole.
 cp tests/test_market.gd "$work/saved"
@@ -3834,6 +4127,12 @@ out="$(bash tools/check.sh 2>&1)"; expect_status "[tests] jobs=1 in check.cfg ru
 expect_no_output "with no group processes" "running the tests in" "$out"
 cp "$work/saved-cfg" tools/check.cfg; printf '\n[tests]\njobs="2"\n' >> tools/check.cfg
 out="$(bash tools/check.sh 2>&1)"; expect_output "[tests] jobs=\"2\" in check.cfg runs two" "running the tests in 2 processes" "$out"
+}
+
+l_par_d() {
+lane_game warm
+parallel_prelude
+cp tools/check.cfg "$work/saved-cfg"; cp tests/test_market.gd "$work/saved"
 # A run that hits its timeout exits 3 and names the file it was in.
 if timeout --version 2>/dev/null | grep -qi coreutils || gtimeout --version 2>/dev/null | grep -qi coreutils; then
   printf 'extends "res://tools/test_case.gd"\n\nfunc test_hang() -> void:\n\tOS.delay_msec(120000)\n\texpect(true)\n' > tests/test_zz_hang.gd
@@ -3857,17 +4156,16 @@ else
   echo "  (no GNU timeout: the timeout cases are skipped)"
 fi
 cp "$work/saved-check-cfg-ap" tools/check.cfg
+}
 
+l_playlog() {
+lane_game warm
 # --- play log -----------------------------------------------------------------------------------
 # The example's PlayLog runs under the check and writes nothing; tests/play-log/selftest_play_log.gd
 # runs the base outside the check, into a folder of its own, and checks the files it writes.
 echo "play log"
 # The example's real user:// folder.
-case "$(uname -s)" in
-  MINGW*|MSYS*|CYGWIN*) user_data="$(cygpath -u "$APPDATA")/Godot/app_userdata/Market Day" ;;
-  Darwin) user_data="$HOME/Library/Application Support/Godot/app_userdata/Market Day" ;;
-  *) user_data="${XDG_DATA_HOME:-$HOME/.local/share}/godot/app_userdata/Market Day" ;;
-esac
+user_data_init
 mkdir -p "$user_data" && : > "$work/before-play-log" && sleep 1
 rm -f .godot/godot-director/last-pass
 out="$(bash tools/check.sh 2>&1)"; expect_status "the check passes with the example's PlayLog" 0 $? "$out"
@@ -3908,6 +4206,10 @@ printf '%s\n' "$out" | grep -q '^DONE$' && ok "the dev menu's own test ran to th
 expect_no_output "and raised no script error" "SCRIPT ERROR|Parse Error" "$out"
 rm -f tools/selftest_dev_menu.gd tools/selftest_dev_menu.gd.uid
 
+}
+
+l_stop_hook() {
+lane_game warm
 # --- Stop hook ----------------------------------------------------------------------------------
 echo "stop hook"
 git add -A && { git_q commit -qm "state for the hook tests" >/dev/null 2>&1 || true; }
@@ -3936,6 +4238,11 @@ cp "$work/failing" scripts/systems/market.gd
 out="$(hook)"; expect_status "blocks the failing state again after it was fixed once" 2 $? "$out"
 git checkout -q -- scripts/systems/market.gd
 
+}
+
+l_precommit() {
+lane_game warm
+git add -A && { git_q commit -qm "state for the hook tests" >/dev/null 2>&1 || true; }
 # --- pre-commit hook ----------------------------------------------------------------------------
 echo "pre-commit hook"
 printf 'func broken( -> void:\n' >> scripts/systems/market.gd
@@ -3982,6 +4289,10 @@ bash "$src/install.sh" "$no_project" >/dev/null 2>&1
   && git add -A && git_q commit -qm "install" >/dev/null 2>&1)
 expect_status "commits in a repository without project.godot yet" 0 $?
 
+}
+
+l_secrets_a() {
+lane_game warm
 # --- secrets (gitleaks) -------------------------------------------------------------------------
 # gitleaks is optional. With it installed, the check scans the working tree (each credential listed as
 # file:line, the value redacted) and the pre-commit hook scans the staged changes of every commit,
@@ -3992,34 +4303,7 @@ expect_status "commits in a repository without project.godot yet" 0 $?
 # scan). Every token is assembled at run time ("ghp_" and 36 generated letters and digits) and written
 # only into a temporary copy of the example, never into a tracked file.
 echo "secrets"
-gen_token() { # gen_token: sets _tok to "ghp_" and 36 generated letters and digits
-  local chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789' i
-  _tok="ghp_"
-  for ((i = 0; i < 36; i++)); do _tok="$_tok${chars:$((RANDOM % 62)):1}"; done
-}
-_gl_ok=0; _gl_real=""
-if command -v gitleaks >/dev/null 2>&1; then
-  _gl_real="$(gitleaks version 2>/dev/null | tr -d 'v \r\n')"
-  _gl_maj="${_gl_real%%.*}"; _gl_rest="${_gl_real#*.}"; _gl_mnr="${_gl_rest%%.*}"
-  case "$_gl_maj$_gl_mnr" in
-    ''|*[!0-9]*) ;;
-    *) if [ "$_gl_real" != "8.19.0" ] && { [ "$_gl_maj" -gt 8 ] || { [ "$_gl_maj" -eq 8 ] && [ "$_gl_mnr" -ge 18 ]; }; }; then _gl_ok=1; fi ;;
-  esac
-fi
-# A PATH without gitleaks: every directory that holds it is left out (the other tools must remain).
-_no_gl_path=""
-while IFS= read -r _dir; do
-  [ -n "$_dir" ] || continue
-  if [ -x "$_dir/gitleaks" ] || [ -x "$_dir/gitleaks.exe" ]; then continue; fi
-  _no_gl_path="${_no_gl_path:+$_no_gl_path:}$_dir"
-done <<EOF
-$(printf '%s\n' "$PATH" | tr ':' '\n')
-EOF
-_no_gl_ok=1
-for _tool in git bash awk sed tr grep head tail cat mkdir rm find sort; do
-  PATH="$_no_gl_path" command -v "$_tool" >/dev/null 2>&1 || _no_gl_ok=0
-done
-PATH="$_no_gl_path" command -v gitleaks >/dev/null 2>&1 && _no_gl_ok=0
+gitleaks_prelude
 [ "$_no_gl_ok" -eq 1 ] || echo "  skip  the cases without gitleaks on PATH (no PATH without it keeps the other tools)"
 
 # The seeds: gitleaks's built-in rules, and the allowlist for .godot/ (Godot's gitignored cache, which holds
@@ -4031,28 +4315,6 @@ if grep -q '^useDefault = true$' "$src/project/.gitleaks.toml" && grep -qF "'''^
 else
   bad "the seeds: .gitleaks.toml and [gitleaks] min-version in check.cfg"
 fi
-
-# A stand-in gitleaks: it reports FAKE_GL_VERSION, logs each call to FAKE_GL_LOG, and a scan finds nothing,
-# or fails with FAKE_GL_ERROR's text and no report (as 8.19.0 does for every command). protect, the staged
-# scan, writes one finding in FAKE_GL_FINDING (a file) when it is set, in the report's own layout.
-_fake_gl="$work/fake-gl"; mkdir -p "$_fake_gl"
-cat > "$_fake_gl/gitleaks" << 'FAKE'
-#!/usr/bin/env bash
-[ -n "${FAKE_GL_LOG:-}" ] && printf '%s\n' "$*" >> "$FAKE_GL_LOG"
-case "$1" in
-  version) echo "v${FAKE_GL_VERSION:-8.30.1}" ;;
-  dir|detect|protect)
-    for a in "$@"; do case "$a" in --report-path=*) report="${a#--report-path=}" ;; esac; done
-    if [ -n "${FAKE_GL_ERROR:-}" ]; then echo "$FAKE_GL_ERROR"; exit 1; fi
-    if [ "$1" = protect ] && [ -n "${FAKE_GL_FINDING:-}" ]; then
-      printf '[\n {\n  "RuleID": "selftest-rule",\n  "StartLine": 7,\n  "Match": "REDACTED",\n  "Secret": "REDACTED",\n  "File": "%s",\n  "Fingerprint": "%s:selftest-rule:7"\n }\n]\n' "$FAKE_GL_FINDING" "$FAKE_GL_FINDING" > "$report"
-      exit 1
-    fi
-    exit 0 ;;
-  *) exit 0 ;;
-esac
-FAKE
-chmod +x "$_fake_gl/gitleaks"
 
 sg="$work/secrets-game"
 cp -R "$game" "$sg" && rm -rf "$sg/clones"
@@ -4090,6 +4352,16 @@ out="$(PATH="$_fake_gl:$PATH" FAKE_GL_VERSION=8.18.0 FAKE_GL_LOG="$_fake_log" ba
 expect_status "a clean game passes with a stand-in gitleaks 8.18.0" 0 "$status" "$out"
 grep -q '^detect --no-git --redact --report-path=' "$_fake_log" && ok "gitleaks 8.18.0 scans with detect --no-git" || bad "gitleaks 8.18.0 scans with detect --no-git" "$(cat "$_fake_log")"
 
+}
+
+l_secrets_b() {
+lane_game warm
+gitleaks_prelude
+sg="$work/secrets-game"
+cp -R "$game" "$sg" && rm -rf "$sg/clones"
+cd "$sg" || exit 1
+git add -A && { git_q commit -qm "state for the secrets tests" >/dev/null 2>&1 || true; }
+cp tools/check.cfg "$work/saved-check-cfg-gl"
 # A game with a secret in a script and in a config file, assembled at run time.
 gen_token; tok_script="$_tok"; gen_token; tok_cfg="$_tok"; gen_token; tok_note="$_tok"
 printf 'extends RefCounted\n\nconst API_TOKEN: String = "%s"\n' "$tok_script" > scripts/secret_config.gd
@@ -4146,6 +4418,16 @@ if [ "$_gl_ok" -eq 1 ]; then
   git reset -q HEAD -- scripts/secret_config.gd data/store.cfg
 fi
 
+}
+
+l_secrets_c() {
+lane_game warm
+gitleaks_prelude
+sg="$work/secrets-game"
+cp -R "$game" "$sg" && rm -rf "$sg/clones"
+cd "$sg" || exit 1
+git add -A && { git_q commit -qm "state for the secrets tests" >/dev/null 2>&1 || true; }
+cp tools/check.cfg "$work/saved-check-cfg-gl"
 # The hook with a stand-in gitleaks: it names each finding as file:line (rule), blocks one that can't scan
 # (8.19.0) without calling it a finding, and passes when the scan finds nothing.
 rm -f scripts/secret_config.gd data/store.cfg notes_upload.md
@@ -4206,8 +4488,11 @@ if [ "$_gl_ok" -eq 1 ]; then
 else
   echo "  skip  the real-gitleaks cases (gitleaks isn't installed, or is below 8.18.0, or is 8.19.0, which can't scan)"
 fi
-cd "$game" || exit 1
+}
 
+l_prototype() {
+game="$work/hook-game"; mkdir -p "$game/.claude" && cp -R "$src/framework/.claude/hooks" "$game/.claude/hooks" && cd "$game" || exit 1
+gitleaks_prelude
 # --- prototypes -----------------------------------------------------------------------------------
 echo "prototype"
 # tools/prototype.sh on a throwaway repository with an origin: start stops while origin/main is ahead, creates the
@@ -4624,22 +4909,9 @@ out="$(cd "$_ps" && bash tools/prototype.sh list 2>&1)"
 expect_output "and so does list" "^  gate files that differ from main's: \.githooks/pre-commit$" "$out"
 out="$(cd "$_ps" && bash tools/prototype.sh remove try 2>&1)"; status=$?
 [ "$status" -eq 0 ] && [ ! -e "$_psw" ] && ok "remove works there" || bad "remove works in a folder whose name has a space (exit $status)" "$out"
-cd "$game" || exit 1
+}
 
-# --- screen capture (/ui-design) ----------------------------------------------------------------
-echo "ui capture"
-captures=design/ui/captures
-# The catalogs below have views no adapter opens, and these tests are about the layout lint: keep the
-# check's autoplay smoke (tools/check.cfg) off until the autoplay sections.
-cp tools/check.cfg "$work/saved-check-cfg-ui"
-sed -e 's/^check_in_check=.*/check_in_check=false/' "$work/saved-check-cfg-ui" > tools/check.cfg
-out="$(GODOT_BIN=/nonexistent/godot bash tools/ui_capture.sh --all 2>&1)"; expect_status "capture exits 3 without Godot" 3 $? "$out"
-[ ! -e "$captures" ] && ok "and writes nothing" || bad "capture without Godot wrote $captures"
-out="$(bash tools/ui_capture.sh --list 2>&1)"; expect_status "lists the catalog" 0 $? "$out"
-expect_output "lists each screen with its states and scene" "^shop · Shop screen · states: default, closed · opens res://scenes/shop_screen\.tscn · drawing: no · spec: no$" "$out"
-
-# Lint fixtures: a screen built to break each rule, and a clean one. Headless, so no display needed.
-cp tools/ui_screens.gd "$work/saved-catalog"
+capture_defs() { # the lint fixtures: write_fixtures, remove_fixtures and lint_fixtures (both capture lanes use them)
 write_fixtures() {
   mkdir -p ui_fixtures
   # A HUD an autoload draws, and a scene a screen can name as an overlay.
@@ -4891,7 +5163,6 @@ func _placed(page: Control, node_name: String, control: Control, area: Rect2) ->
 EOF
 }
 remove_fixtures() { rm -rf ui_fixtures; [ -f "$work/saved-project" ] && cp "$work/saved-project" project.godot; }
-write_fixtures
 lint_fixtures() { # lint_fixtures <how>: each broken fixture gets exactly its own rule; the clean one nothing
   local rule file found
   [ ! -s "$captures/clean@1280x720.lint.txt" ] && [ -f "$captures/clean@1280x720.lint.txt" ] \
@@ -4903,6 +5174,27 @@ lint_fixtures() { # lint_fixtures <how>: each broken fixture gets exactly its ow
     [ "$found" = "${rule%%:*} " ] && ok "lint catches ${rule%%:*} ($1)" || bad "lint on the ${rule#*:} fixture ($1): found '$found'" "$(cat "$file" 2>&1)"
   done
 }
+}
+
+l_capture_a1() {
+lane_game warm
+user_data_init
+capture_defs
+# --- screen capture (/ui-design) ----------------------------------------------------------------
+echo "ui capture"
+captures=design/ui/captures
+# The catalogs below have views no adapter opens, and these tests are about the layout lint: keep the
+# check's autoplay smoke (tools/check.cfg) off until the autoplay sections.
+cp tools/check.cfg "$work/saved-check-cfg-ui"
+sed -e 's/^check_in_check=.*/check_in_check=false/' "$work/saved-check-cfg-ui" > tools/check.cfg
+out="$(GODOT_BIN=/nonexistent/godot bash tools/ui_capture.sh --all 2>&1)"; expect_status "capture exits 3 without Godot" 3 $? "$out"
+[ ! -e "$captures" ] && ok "and writes nothing" || bad "capture without Godot wrote $captures"
+out="$(bash tools/ui_capture.sh --list 2>&1)"; expect_status "lists the catalog" 0 $? "$out"
+expect_output "lists each screen with its states and scene" "^shop · Shop screen · states: default, closed · opens res://scenes/shop_screen\.tscn · drawing: no · spec: no$" "$out"
+
+# Lint fixtures: a screen built to break each rule, and a clean one. Headless, so no display needed.
+cp tools/ui_screens.gd "$work/saved-catalog"
+write_fixtures
 out="$(bash tools/ui_capture.sh --all --no-images --size 1280x720 2>&1)"; expect_status "--no-images maps and lints the fixtures headless" 0 $? "$out"
 lint_fixtures "headless"
 grep -q '"id":"Chest","path":"Node3D#[0-9]*/Chest","kind":"Area3D"' "$captures/pickable@1280x720.elements.json" 2>/dev/null \
@@ -4961,6 +5253,16 @@ out="$(bash tools/ui_capture.sh clean --verify --no-images --size 1280x720 2>&1)
 expect_output "and says where the spec goes" "no spec at design/ui/clean\.md" "$out"
 out="$(bash tools/ui_capture.sh --all --verify 2>&1)"; expect_status "verify takes one screen" 1 $? "$out"
 
+}
+
+l_capture_a2() {
+lane_game warm
+user_data_init
+capture_defs
+captures=design/ui/captures
+cp tools/check.cfg "$work/saved-check-cfg-ui"; sed -e 's/^check_in_check=.*/check_in_check=false/' "$work/saved-check-cfg-ui" > tools/check.cfg
+cp tools/ui_screens.gd "$work/saved-catalog"
+write_fixtures
 # The lint in the check (tools/ui_capture.cfg › [lint]): a screen under enforce with a finding fails
 # the check, one without passes, and with the lint off (or the keys missing) the check is unchanged.
 cp tools/ui_capture.cfg "$work/saved-lint-cfg"
@@ -4993,6 +5295,16 @@ set_lint false '[]'
 [ "$fp_before" != "$(bash tools/check.sh --fingerprint)" ] && ok "the check's fingerprint covers tools/ui_capture.cfg" || bad "the check's fingerprint covers tools/ui_capture.cfg"
 cp "$work/saved-lint-cfg" tools/ui_capture.cfg
 
+}
+
+l_capture_a3() {
+lane_game warm
+user_data_init
+capture_defs
+captures=design/ui/captures
+cp tools/check.cfg "$work/saved-check-cfg-ui"; sed -e 's/^check_in_check=.*/check_in_check=false/' "$work/saved-check-cfg-ui" > tools/check.cfg
+cp tools/ui_screens.gd "$work/saved-catalog"
+write_fixtures
 # A catalog with problems: each is named, the good screen is still captured, exit 1.
 cat > tools/ui_screens.gd <<'EOF'
 extends "res://tools/ui_catalog.gd"
@@ -5047,6 +5359,24 @@ cp "$work/saved-capture-cfg" tools/ui_capture.cfg
 out="$(bash tools/ui_capture.sh nowhere --no-images 2>&1)"; expect_output "refuses an unknown screen" "no screen 'nowhere'" "$out"
 cp "$work/saved-catalog" tools/ui_screens.gd; remove_fixtures; rm -rf "$captures"
 
+}
+
+l_capture_b() {
+lane_game warm
+user_data_init
+capture_defs
+captures=design/ui/captures
+cp tools/check.cfg "$work/saved-check-cfg-ui"; sed -e 's/^check_in_check=.*/check_in_check=false/' "$work/saved-check-cfg-ui" > tools/check.cfg
+cp tools/ui_screens.gd "$work/saved-catalog"
+mkdir -p design/ui
+spec_table='| # | Element | Name | Where (x, y, w, h %) | Shows | Does | Size |
+|---|---|---|---|---|---|---|
+| 1 | Hero sheet | %Sheet | 1, 11, 20, 70 | - | - | fill |
+| 2 | Gear list | %Gear | 62, 12, 34, 60 | - | - | fill |
+| 3 | Go | %Go | 62, 80, 18, 8 | - | click | fit |'
+printf '# Spec fixture\n\n## Layout (at 1280x720)\n%s\n' "$spec_table" > design/ui/specfix.md
+cp design/ui/specfix.md design/ui/specmoved.md
+printf '# Spec fixture\n\n## Layout (at 1280x720)\n%s\n' "$(printf '%s\n' "$spec_table" | grep -v '%Gear')" > design/ui/specdrawn.md
 # Drawings, headless. The fixture drawing (tests/ui-drawing/) has a green box with bound text and
 # click:, a blue box over an existing element, a red X over an element, an arrowed comment, a box
 # inside a box, a note outside the frame and a freehand squiggle; its expected reading was worked
@@ -5281,26 +5611,17 @@ else
 fi
 
 rm -f tools/selftest_drawings.gd tools/selftest_drawings.gd.uid design/ui/spec*.md
+}
 
+l_autoplay() {
+lane_game warm
+user_data_init
 # --- autoplay -----------------------------------------------------------------------------------
-cp "$work/saved-check-cfg-ui" tools/check.cfg
 # The example plays itself through its adapter: the real main scene, ui actions by real input and an
 # api action, screenshots and element maps, the invariants, repros and replays, and the same log
 # from the same seed. The planted bugs are the spec's three: a script error in a view's button
 # handler, a progress block that never clears, a view with no default focus.
 echo "autoplay"
-runs=playtesting/autoplay
-latest_run() { ls -d "$runs/$1"-* 2>/dev/null | grep -v -- '-replay' | LC_ALL=C /usr/bin/sort | tail -n 1; }
-after_line() { # after_line <file> <exact line> <lines to add after it>; awk reads \t and \n in both
-  awk -v line="$2" -v text="$3" '{ print } $0 == line { print text }' "$1"
-}
-replace_line() { # replace_line <file> <exact line> <its replacement>
-  awk -v line="$2" -v text="$3" '{ print ($0 == line ? text : $0) }' "$1"
-}
-normalized() { # a run's JSONL without time stamps, run ids and timing lines
-  sed -e 's/^{"t":[0-9]*,/{/' -e 's/[0-9]\{8\}-[0-9]\{6\}\(-[0-9][0-9]*\)\{0,1\}/<id>/g' "$1"/run-*.jsonl \
-    | grep -v -e '"event":"frame.hitch"' -e '"event":"window.focus"'
-}
 out="$(GODOT_BIN=/nonexistent/godot bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "autoplay exits 3 without Godot" 3 $? "$out"
 [ -z "$(ls -A "$runs" 2>/dev/null)" ] && ok "and writes nothing" || bad "autoplay without Godot wrote $runs"
 out="$(bash tools/autoplay.sh --list 2>&1)"; expect_status "lists the scenarios" 0 $? "$out"
@@ -5606,6 +5927,12 @@ expect_output "and says where" "check $sig: PRESENT in playtesting/autoplay/smok
 expect_output "delta: new again, against the clean run" "^  - $sig " "$(review_section "$back/review.md" Delta)"
 out="$(bash tools/log_review.sh "$back"/run-*.jsonl 2>&1)"; expect_status "reviews a run's .jsonl by its path" 0 $? "$out"
 cp "$work/saved-shop" scripts/ui/shop_screen.gd
+}
+
+l_autoplay2_a() {
+lane_game warm
+user_data_init
+cp scripts/ui/shop_screen.gd "$work/saved-shop"; cp tools/autoplay_adapter.gd "$work/saved-adapter"
 echo "autoplay"
 # --from-save: the save written before the failing step, loaded through the adapter's load_save(),
 # and the recorded actions from that step on, with the same step numbers.
@@ -5654,6 +5981,12 @@ expect_output "it's found when the view opens" "FAIL: smoke step 0: no-focus: th
 run="$(latest_run smoke-1)"
 out="$(bash tools/autoplay.sh --replay "$run" --until 0 --no-images 2>&1)"; expect_output "--replay reproduces it at the same step" "FAIL: smoke step 0: no-focus: the view shop " "$out"
 cp "$work/saved-shop" scripts/ui/shop_screen.gd
+}
+
+l_autoplay2_b() {
+lane_game warm
+user_data_init
+cp scripts/ui/shop_screen.gd "$work/saved-shop"; cp tools/autoplay_adapter.gd "$work/saved-adapter"
 # Where a view keeps its focus: the adapter's focus_roots(). The shop has no default focus here, and
 # the planted adapter adds a HUD layer outside the view node whose stand-in button holds the window's
 # focus (and, for _make_page(), a SubViewport page under the view whose own button has the page's, the
@@ -5760,6 +6093,12 @@ sed 's/"kind": "smoke", "turns": 3}/"kind": "strategy", "strategy": "random"}/' 
 out="$(bash tools/autoplay.sh --list 2>&1)"; expect_status "refuses scenarios without a smoke scenario" 1 $? "$out"
 expect_output "and says a smoke scenario is required" "a smoke scenario is required" "$out"
 cp "$work/saved-scenarios" tools/autoplay_scenarios.gd
+}
+
+l_autoplay2_c() {
+lane_game warm
+user_data_init
+cp scripts/ui/shop_screen.gd "$work/saved-shop"; cp tools/autoplay_adapter.gd "$work/saved-adapter"
 # A second view in the catalog: smoke opens it through the action whose `opens` names it and backs
 # out with the view's `back` action; without that action, the view smoke can't reach is a finding.
 cp tools/ui_screens.gd "$work/saved-screens"
@@ -5829,6 +6168,10 @@ out="$(bash tools/log_review.sh --latest 2>&1)"; expect_status "log review with 
 expect_output "and names where runs come from" "no autoplay run with a play log in playtesting/autoplay" "$out"
 
 
+}
+
+l_autoplay_check_a() {
+lane_game warm
 # --- autoplay in the check -----------------------------------------------------------------------
 # tools/check.cfg > [autoplay]: smoke played headless once the rest passed. A finding fails the check
 # only for a scenario under enforce; with the keys missing or check_in_check=false the check is what it
@@ -5854,6 +6197,15 @@ out="$(bash tools/check.sh 2>&1)"; expect_status "with enforce empty the same fi
 expect_output "and is a note, marked as not enforced" "check: note: \(not enforced\) autoplay: smoke step 1: error: Cannot call method 'queue_free'" "$out"
 grep -v '^enforce=' "$work/saved-check-cfg" > tools/check.cfg
 out="$(bash tools/check.sh 2>&1)"; expect_status "with check_in_check on and enforce missing, smoke is a note too" 0 $? "$out"
+}
+
+l_autoplay_check_b() {
+lane_game warm
+cp tools/check.cfg "$work/saved-check-cfg"; cp scripts/ui/shop_screen.gd "$work/saved-shop"
+set_autoplay() { # set_autoplay <check_in_check> <enforce as JSON>
+  sed -e "s/^check_in_check=.*/check_in_check=$1/" -e "s/^enforce=.*/enforce=$2/" "$work/saved-check-cfg" > tools/check.cfg
+}
+rm -rf "$runs"
 set_autoplay true '["*"]'
 cp "$work/saved-shop" scripts/ui/shop_screen.gd
 out="$(bash tools/check.sh 2>&1)"; expect_status "enforce [\"*\"] plays every scenario, clean" 0 $? "$out"
@@ -5879,6 +6231,11 @@ set_autoplay false '[]'
 cp "$work/saved-check-cfg" tools/check.cfg; cp "$work/saved-shop" scripts/ui/shop_screen.gd
 rm -rf "$runs"
 
+}
+
+l_autoplay_beside_a() {
+lane_game warm
+cp tools/check.cfg "$work/saved-check-cfg"; cp scripts/ui/shop_screen.gd "$work/saved-shop"
 # In a parallel run autoplay starts as soon as the import and the load pass are clean, in its own process
 # beside the test jobs (one fewer, so the CPU count holds); its result joins the report, with the exit
 # codes as they were. A serial run (--jobs 1) plays it after the tests.
@@ -5905,6 +6262,12 @@ printf 'extends "res://tools/test_case.gd"\n\nfunc test_autoplay_plays_beside_th
 out="$(bash tools/check.sh --jobs 3 2>&1)"; expect_status "a test that waits for autoplay's log passes: autoplay started while the tests ran" 0 $? "$out"
 expect_output "and counts as one more test" "13 tests passed" "$out"
 rm -f tests/test_zz_beside.gd tests/test_zz_beside.gd.uid
+}
+
+l_autoplay_beside_b() {
+lane_game warm
+cp scripts/ui/shop_screen.gd "$work/saved-shop"
+logs=".godot/godot-director"
 # A finding beside the tests fails the check as it does after them.
 after_line "$work/saved-shop" 'func _on_buy_pressed() -> void:' '\tvar receipt: Node = null\n\treceipt.queue_free()' > scripts/ui/shop_screen.gd
 out="$(bash tools/check.sh --jobs 3 2>&1)"; expect_status "a finding in smoke beside the tests fails the check" 1 $? "$out"
@@ -5933,6 +6296,10 @@ cp "$work/saved" scripts/systems/market.gd
 out="$(bash tools/check.sh 2>&1)"; expect_status "the check passes again after the beside-the-tests cases" 0 $? "$out"
 rm -rf "$runs"
 
+}
+
+l_autoplay_fresh() {
+cd "$work" || exit 1
 # A game made from the seeds, with nothing wired yet: the new project's seed has autoplay in the check
 # on, smoke exits 0 and says what to wire at each stage, the check passes, and nothing is written.
 fresh="$work/fresh-game"; mkdir -p "$fresh"
@@ -5977,4 +6344,69 @@ grep -q 'Wire autoplay' "$src/CHANGELOG.md" && grep -q 'enforce=\["smoke"\]' "$s
   && ok "and the changelog's upgrade step adds the \"Wire autoplay\" item and says how to turn the check on" || bad "the changelog's upgrade step for autoplay"
 
 
+}
+
+
+# --- the run ------------------------------------------------------------------------------------
+# The guard's time on a long file body is measured first, with nothing else of ours running. Then the
+# lanes start, the lanes that need no game first and then the longest of the rest; a lane that needs a
+# game waits for it to be made (prepare, above), and when every place is taken the next one waits for a
+# free place. The names after lane_start are the lanes' names (SELFTEST_ONLY); the order of lanes_print
+# is the order of the sections.
+cd "$work" || exit 1
+guard_slow_measure
+if [ -n "$godot" ]; then
+  lane_start prototype           l_prototype
+fi
+lane_start installer-c         l_installer_c
+lane_start framework           l_framework
+[ -z "$godot" ] || lane_start autoplay-fresh l_autoplay_fresh
+lane_start installer-a         l_installer_a
+lane_start installer-b         l_installer_b
+lane_start guard               l_guard               base
+lane_start guard2              l_guard2              base
+if [ -n "$godot" ]; then
+  lane_start setup               l_setup               base
+  lane_start check-import-a      l_check_import_a      ready
+  lane_start autoplay            l_autoplay            warm
+  lane_start stop-hook           l_stop_hook           warm
+  lane_start check-import-b      l_check_import_b      warm
+  lane_start autoplay-beside-b   l_autoplay_beside_b   warm
+  lane_start check-faults-b      l_check_faults_b      warm
+  lane_start autoplay2-b         l_autoplay2_b         warm
+  lane_start par-c2              l_par_c2              warm
+  lane_start secrets-b           l_secrets_b           warm
+  lane_start capture-a2          l_capture_a2          warm
+  lane_start autoplay-check-a    l_autoplay_check_a    warm
+  lane_start autoplay-check-b    l_autoplay_check_b    warm
+  lane_start check-faults-a      l_check_faults_a      warm
+  lane_start autoplay-beside-a   l_autoplay_beside_a   warm
+  lane_start autoplay2-a         l_autoplay2_a         warm
+  lane_start par-d               l_par_d               warm
+  lane_start check-misc-a        l_check_misc_a        warm
+  lane_start pre-commit          l_precommit           warm
+  lane_start capture-a1          l_capture_a1          warm
+  lane_start capture-b           l_capture_b           warm
+  lane_start capture-a3          l_capture_a3          warm
+  lane_start par-b2              l_par_b2              warm
+  lane_start par-b1              l_par_b1              warm
+  lane_start check-misc-b        l_check_misc_b        warm
+  lane_start autoplay2-c         l_autoplay2_c         warm
+  lane_start par-c1              l_par_c1              warm
+  lane_start secrets-a           l_secrets_a           warm
+  lane_start par-a               l_par_a               warm
+  lane_start secrets-c           l_secrets_c           warm
+  lane_start playlog             l_playlog             warm
+fi
+
+lanes_print framework installer-a installer-b installer-c guard guard2
+if [ -z "$godot" ]; then
+  echo "check and hooks: skipped (pass the path to Godot 4.5+ to test them)"
+  lanes_times
+  finish
+fi
+lanes_print setup check-import-a check-import-b check-faults-a check-faults-b check-misc-a check-misc-b par-a par-b1 par-b2 par-c1 par-c2 par-d \
+  playlog stop-hook pre-commit secrets-a secrets-b secrets-c prototype capture-a1 capture-a2 capture-a3 capture-b autoplay \
+  autoplay2-a autoplay2-b autoplay2-c autoplay-check-a autoplay-check-b autoplay-beside-a autoplay-beside-b autoplay-fresh
+lanes_times
 finish
