@@ -12,8 +12,8 @@
 # hook is what keeps the whole-tree forms with the human: a pathspec of the whole tree (., ./, ./., .\, :/,
 # *, :(top), quoted or not), --pathspec-from-file, and a `git restore` that names no file.
 #
-# It also blocks the commands that hang or run past five minutes (an empty Python heredoc, an
-# unbounded wait loop, a Godot run without `timeout`, a sleep over 280 seconds); see "Hangs" below.
+# It also blocks the commands that hang or run past five minutes (a Python that reads its script from a heredoc,
+# an unbounded wait loop, a Godot run without `timeout`, a sleep over 280 seconds); see "Hangs" below.
 #
 # It also blocks shell reads, Bash or PowerShell, of the credential stores (the SSH folder, git's credentials
 # files, the gh CLI's config folders) and the commands that print a stored credential (gh auth token, gh auth
@@ -1533,8 +1533,8 @@ git_print_re='(^|[^[:alnum:]_.-])[Gg][Ii][Tt](\.[Ee][Xx][Ee])?[[:space:]]+([^;&|
 
 # --- Hangs ---------------------------------------------------------------------------------------
 # A command that never returns, or that runs past five minutes, wastes the turn: the prompt cache
-# expires after five minutes, so the next turn rewrites the whole context. So: no empty-heredoc probes,
-# no unbounded wait loops, no Godot run without a time limit, no long sleeps. These checks run for every
+# expires after five minutes, so the next turn rewrites the whole context. So: no Python that reads its script from a
+# heredoc, no unbounded wait loops, no Godot run without a time limit, no long sleeps. These checks run for every
 # command (Bash, Monitor and PowerShell) and every reading of it. Text matching only: a loop built another
 # way isn't seen. The rules read the command without the bodies no shell runs (B50, hang_strip), so a
 # message can name them.
@@ -1617,18 +1617,112 @@ hcode="${hbt//$nl/;}"
 hdq='"[^"]*"'
 blank_q "$hcode" "$hdq"; blank_q "$BQ" "$sq"; hcode="$BQ"
 
-# (1) An empty heredoc fed to Python: `python3 - <<'EOF'` followed at once by `EOF`. Python then waits for console input on
-#     Windows and never returns. The probe reads hbt: an interpreter's body stays in it, and a message's doesn't. A body of blank
-#     lines is not empty (the lines are read one by one, so a blank line stays a line), and python may sit behind a path.
-text="$hbt"
-heredoc_re='(^|[^[:alnum:]_.-])(python3?|py)(\.exe)?[[:space:]]+-[[:space:]]*<<-?[[:space:]]*\\?["'"'"']?([A-Za-z_][A-Za-z0-9_]*)'
-lines=(); while IFS= read -r line || [ -n "$line" ]; do lines+=("$line"); done <<<"$text"
-for ((i = 0; i + 1 < ${#lines[@]}; i++)); do
-  if [[ ${lines[i]} =~ $heredoc_re ]]; then
-    delim="${BASH_REMATCH[4]}"; next="${lines[i + 1]//[[:space:]]/}"
-    [ "$next" = "$delim" ] && hang "Python reads an empty heredoc here, waits for console input on Windows and never returns. To test whether Python is installed, run \`python3 --version\`; to run code, put it in the heredoc body."
-  fi
-done
+# (1) Python that reads its script from a heredoc (B64): `python3 - <<'EOF'`, `python <<EOF`, a here-string (`python - <<<'x'`), or a
+#     heredoc or here-string piped in (`cat <<'EOF' | python -`; in PowerShell `@'` ... `'@ | python -`), whatever the body. On Windows
+#     Python can wait for console input there and never return. An empty body is only one shape of it (a quoted string that closes on a
+#     later line leaves the body empty after it: `python3 - <<'E' 2>/dev/null || node -e "`, then `x()"`, then `E`), so the form is
+#     blocked, with a time limit above it or not. It reads hbt a line at a time (py_line): a heredoc body a shell or an interpreter
+#     runs stays in hbt, so a heredoc in the body of `bash <<'X'` is judged, and a message's body or an unrun cat body, which hang_strip
+#     left out, isn't. In a line the quoted strings are blanked (a message that names the form is text, and an apostrophe in a comment
+#     on an earlier line pairs with nothing), a quoted interpreter path ("C:/Program Files/Python313/python.exe") is its name, and a
+#     comment is cut off. Only a Python that takes its script from standard input is blocked (py_stdin): a script file fed data from a
+#     heredoc (`python tool.py <<'E'`), -c and -m pass. The interpreter is python, python3, python3.13, pythonw or py, with or without
+#     .exe, in any case, behind a path or a wrapper (timeout, env, uv run); a command that only prints or searches its words (echo,
+#     printf, grep) is text, and a name right after << is a heredoc's delimiter (<<PY). Nothing is read unless the command holds a << or
+#     a PowerShell here-string and something spelled py, and then only the lines that spell py and hold a << (or close a here-string
+#     with '@ |) are judged, so a long body costs two glob tests and one more per line.
+MSG_PYHD="python reading its script from a heredoc can hang: on Windows it can wait for console input and never return.
+Write the script to a file with Write and run it (python3 script.py), use python3 -c for one line, and run python3 --version to test whether Python is there."
+py_name_re='(^|[^[:alnum:]_.$-])(py(thonw?[0-9]*(\.[0-9]+)*)?)(\.exe)?([[:space:];&|)`<]|$)'
+py_qpath_re='["'"'"'](([^"'"'"']*[/\\])?)py(thonw?[0-9]*(\.[0-9]+)*)?(\.exe)?["'"'"']'
+py_say_re='^(echo|printf|grep|egrep|fgrep|rg|write-output|write-host|write)$'
+py_close_re='^[[:space:]]*["'"'"']@[[:space:]]*[|](.*)$'
+# py_stdin <the words after the interpreter's name, up to the end of its command>: 0 when Python reads its script from standard input
+# (a - or no script before a heredoc or here-string: an option is skipped, -X and -W take the word after them), 1 when the script
+# comes from elsewhere (a file name, -c, -m, --version or --help) and the heredoc, if any, is data. Options are case-sensitive
+# (-x is not -X), so the walk runs with nocasematch off.
+py_stdin() {
+  local rc
+  shopt -u nocasematch
+  py_walk "$1"; rc=$?
+  shopt -s nocasematch
+  return $rc
+}
+py_walk() {
+  local -a pw=()
+  local i=0 n w
+  IFS=$' \t' read -r -a pw <<<"$1"
+  n=${#pw[@]}
+  while ((i < n)); do
+    w="${pw[i]}"; i=$((i + 1))
+    case $w in
+      '<<'*) return 0 ;;
+      -) return 0 ;;
+      '<'*) [[ $w == '<' ]] && i=$((i + 1)) ; continue ;;
+      [0-9]'>'* | '>'*) [[ $w == *'>' ]] && i=$((i + 1)); continue ;;
+      --version | --help | -V | -VV | -h) return 1 ;;
+      --check-hash-based-pycs) i=$((i + 1)); continue ;;
+    esac
+    if [[ $w =~ ^-[A-Za-z]*[cm]$ ]]; then return 1; fi
+    if [[ $w =~ ^-[A-Za-z]*[XW]$ ]]; then i=$((i + 1)); continue; fi
+    [[ $w == -* ]] && continue
+    return 1
+  done
+  return 0
+}
+# py_fed <text before a command>: 0 when the command is a later stage of a pipeline whose earlier stage has a << (`cat <<E | python`).
+py_fed() {
+  local l="$1" p
+  while [[ $l == *'|' && $l != *'||' ]]; do
+    l="${l%'|'}"; p="${l##*[;&|]}"
+    [[ $p == *'<<'* ]] && return 0
+    l="${l%"$p"}"
+  done
+  return 1
+}
+# py_line <line> <fed>: blocks the line when it runs a Python that reads its script from a heredoc or a here-string. <fed> is 1 for the
+# text after a PowerShell here-string's closing '@ |, where each stage of the pipeline up to a ; is fed the string.
+py_line() {
+  local t="$1" fed="$2" m g1 pb pre all seg lead tail tseg fw a2 rest="" before="" out=""
+  while [[ $t =~ $py_qpath_re ]]; do
+    m="${BASH_REMATCH[0]}"; out+="${t%%"$m"*} python "; t="${t#*"$m"}"
+  done
+  t="$out$t"
+  blank_q "$t" "$hdq"; blank_q "$BQ" "$sq"; t="$BQ"
+  [[ $t == '#'* ]] && return 0
+  t="${t%%[[:space:]]#*}"
+  t="${t//>&/> }"; t="${t//&>/> }"
+  rest="$t"
+  while [[ $rest =~ $py_name_re ]]; do
+    m="${BASH_REMATCH[0]}"; g1="${BASH_REMATCH[1]}"; pb="${BASH_REMATCH[6]}"
+    pre="${rest%%"$m"*}"; all="$before$pre$g1"
+    before="$before$pre$m"; rest="${rest#*"$m"}"
+    a2="${all%"${all##*[![:space:]]}"}"
+    case $a2 in *'<<' | *'<<-' | *'<<\' | *'<<-\') continue ;; esac
+    seg="${all##*[;&|]}"; lead="${all%"$seg"}"
+    fw="${seg#"${seg%%[![:space:]]*}"}"; fw="${fw%%[[:space:]]*}"
+    [[ $fw =~ $py_say_re ]] && continue
+    tail="$pb$rest"; tseg="${tail%%[;&|)]*}"; tseg="${tseg%%"$bt"*}"
+    py_stdin "$tseg" || continue
+    if [[ $seg$tseg == *'<<'* ]] || { ((fed)) && [[ $lead != *';'* && $lead != *'&&'* && $lead != *'||'* ]]; } || py_fed "$lead"; then
+      shopt -u nocasematch
+      hang "$MSG_PYHD"
+    fi
+  done
+  return 0
+}
+if [[ ( $hbt == *'<<'* || $hbt == *"@'"* || $hbt == *'@"'* ) && $hbt == *[Pp][Yy]* ]]; then
+  pt="$hbt"
+  # A PowerShell here-string's body is text, so it is left out before the lines are read (its closing line stays).
+  if ((${vps[vi]:-0})) && [[ $pt == *"@'"* || $pt == *'@"'* ]]; then ps_here_strip "$pt"; pt="$PH"; fi
+  shopt -s nocasematch
+  while IFS= read -r pline || [ -n "$pline" ]; do
+    [[ $pline == *[Pp][Yy]* ]] || continue
+    if [[ $pline == *'@'* && $pline =~ $py_close_re ]]; then py_line "${BASH_REMATCH[1]}" 1
+    elif [[ $pline == *'<<'* ]]; then py_line "$pline" 0; fi
+  done <<<"$pt"
+  shopt -u nocasematch
+fi
 
 # (4) A sleep past the five-minute prompt cache. A count may have a fraction (sleep 600.5), read to the millisecond.
 sleep_re='(^|[^[:alnum:]_./-])sleep[[:space:]]+([0-9]+)(\.[0-9]*)?([smhd]?)([[:space:]]|$|[;&|)])'

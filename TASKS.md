@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T47 · B6 · R1
+**Next IDs:** T48 · B6 · R1
 
 ## Queue
+
+### T47 · The guard blocks any Python that reads its script from a heredoc · done · M · agent
+- Touches: framework/.claude/hooks/guard-git.sh, framework/.godot-director/rules.md, selftest.sh, CHANGELOG.md
+- Done when: `guard-git.sh` blocks `python`, `python3`, `python3.13`, `pythonw` and `py` (with or without `.exe`, bare or behind a path or a wrapper, quoted or not) reading their script from a heredoc, a here-string or a piped heredoc, in the Bash and PowerShell tools, whatever the body, in place of the empty-body check, so a quoted multi-line string after the header no longer hides it (check) · a time limit above it doesn't exempt it (check) · a script file fed data from a heredoc, `-c`, `-m`, `--version` and a message, a quoted `echo` or `grep`, or a `cat` body that names the form still pass (check) · the refusal says why and names the forms that work (check) · `rules.md` › Commands that may run long names the rule in place of the empty heredoc probe (check) · the entry sits under 4.10.0, and `selftest.sh` passes (check)
+- GDD: (none)
+- Source: Director-Driven-Development T309
 
 ### T46 · Subagents write no shell heredocs, and the background commands they leave are stopped · done · M · agent
 - Touches: framework/.godot-director/rules.md, framework/.godot-director/procedures/build.md, research.md, review.md and next-task.md, framework/.claude/agents/builder.md, researcher.md and reviewer.md, CHANGELOG.md
