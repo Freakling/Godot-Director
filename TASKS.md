@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T44 · B6 · R1
+**Next IDs:** T45 · B6 · R1
 
 ## Queue
+
+### T44 · A quoted path with a space, or a backslash path, can't hide git from the guard · done · S · agent
+- Touches: framework/.claude/hooks/guard-git.sh, selftest.sh, CHANGELOG.md
+- Done when: the guard blocks `"C:\Program Files\Git\bin\git.exe" push --force`, `& 'C:\Program Files\Git\bin\git.exe' push --force` and `C:\Git\bin\git.exe push --force` in the Bash and PowerShell tools, as it blocks the bare name, with their cases in `selftest.sh` (check) · `& 'C:\Program Files\Git\bin\git.exe' status`, `"C:\Program Files\Git\bin\git.exe" log -1`, a commit message naming the path, `echo "C:\Program Files\Git"` and `c\at README.md` still pass, and a quoted Godot path under `timeout 120` still passes while the same run without a timeout is blocked (check) · `selftest.sh` passes (check)
+- GDD: (none)
+- Source: Director-Driven-Development T293
 
 ### T43 · The variable command name rule skips a global option's value · done · XS · agent
 - Touches: framework/.claude/hooks/guard-git.sh, selftest.sh, CHANGELOG.md

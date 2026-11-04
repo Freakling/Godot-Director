@@ -1843,6 +1843,61 @@ done
 guard_run
 guard_report "$git_fail" "the guard hook doesn't block every hang (an empty Python heredoc, an unbounded wait, a Godot run without a time limit, a long sleep), or it blocks a bounded form" "the guard hook blocks an empty Python heredoc, an unbounded wait, a Godot run without a time limit and a long sleep, in every reading of the command, and passes the bounded forms"
 
+# A command name written as a path (Director-Driven-Development T293): a quoted name with a space in its path, or an unquoted backslash
+# path that starts with a drive, ., .., ~ or two backslashes, is read as its last part (git.exe is git) in the Bash and the PowerShell
+# tool, after an assignment, a wrapper, a separator or a call operator. A quoted path that is an argument, a message or a body nothing
+# runs is text, an escaped name (c\at) is still the shell's name, and the Godot path under a timeout still passes.
+for cmd in \
+    '"C:\Program Files\Git\bin\git.exe" push --force' \
+    "& 'C:\\Program Files\\Git\\bin\\git.exe' push --force" \
+    'C:\Git\bin\git.exe push --force' \
+    '"C:\Program Files\Git\cmd\git.exe" push --force' \
+    'FOO=1 "C:\Program Files\Git\bin\git.exe" push --force' \
+    'env "C:\Program Files\Git\bin\git.exe" push --force' \
+    'cd x && "C:\Program Files\Git\bin\git.exe" push --force' \
+    'true; C:\Git\bin\git.exe push --force' \
+    'echo $("C:\Program Files\Git\bin\git.exe" push --force)' \
+    'timeout 60 "C:\Program Files\Git\bin\git.exe" push --force' \
+    '"C:\Program Files\Git\bin\git.exe" -C x push --force' \
+    '"C:\Program Files\Git\bin\git.exe" reset --hard' \
+    '"C:\Program Files\Git\bin\git.exe" restore .' \
+    '"C:\Program Files\Git\bin\git.exe" branch -D x' \
+    '"C:\Program Files\Git\bin\git.exe" commit -m x --no-verify' \
+    '..\bin\git.exe push --force' '~\bin\git.exe push --force' '\\server\share\git.exe push --force' \
+    "bash -c '\"C:\\Program Files\\Git\\bin\\git.exe\" push --force'" \
+    ". 'C:\\Git\\bin\\git.exe' push --force"; do
+  guard 2 "$cmd"
+  guard 2 "$cmd" PowerShell
+done
+guard 2 $'bash <<\'EOF\'\n"C:\\Program Files\\Git\\bin\\git.exe" push --force\nEOF'
+for cmd in \
+    "& 'C:\\Program Files\\Git\\bin\\git.exe' status" \
+    '"C:\Program Files\Git\bin\git.exe" log -1' \
+    '"C:\Program Files\Git\bin\git.exe" push origin main' \
+    'git commit -q -m "docs: C:\Program Files\Git\bin\git.exe push --force is blocked"' \
+    'echo "C:\Program Files\Git"' \
+    'echo "C:\Program Files\Git\bin\git.exe push --force"' \
+    'git log "C:\Program Files\Git\bin\git.exe"' \
+    'git log --format="C:\Git\bin\git.exe push --force"' \
+    'cp "C:\x y\git.exe" backup' \
+    'c\at README.md' \
+    'timeout 120 "C:\Tools\Godot_v4.7.2-stable_win64_console.exe" --headless --script x.gd' \
+    'git commit -q -m "docs: a quoted C:\Tools\Godot_v4.7.2-stable_win64_console.exe needs a timeout" -- a.md'; do
+  guard 0 "$cmd"
+  guard 0 "$cmd" PowerShell
+done
+guard 0 $'cat > notes.md <<\'EOF\'\n"C:\\Program Files\\Git\\bin\\git.exe" push --force\nEOF\ngit add notes.md'
+guard 0 $'git commit -q -F - <<\'EOF\'\ndocs: "C:\\Program Files\\Git\\bin\\git.exe" push --force is blocked\nEOF'
+for cmd in \
+    '"C:\Tools\Godot_v4.7.2-stable_win64_console.exe" --headless --script x.gd' \
+    '"C:\Tools\Godot_v4.7.2-stable_win64_console.exe" --headless --import' \
+    "& 'C:\\Tools\\Godot_v4.7.2-stable_win64_console.exe' --headless --script x.gd"; do
+  guard 2 "$cmd"
+  guard 2 "$cmd" PowerShell
+done
+guard_run
+guard_report "$git_fail" "the guard hook doesn't read a command name written as a path, quoted with a space or as a backslash path, so git passes behind it, or it blocks a path that is an argument, a message, a body nothing runs or the Godot path under a timeout" "the guard hook blocks git behind a quoted path with a space, a backslash path, an assignment, a wrapper, a separator, a call operator and a substitution, in the Bash and the PowerShell tool, and a heredoc body a shell runs, and passes the paths that are arguments and messages, an escaped name and the Godot path under a timeout"
+
 # The credential stores: shell reads of ~/.ssh, git's credentials files and the gh CLI's config folders,
 # and the commands that print a stored credential. A command that names a store without reading it, or
 # reads a name that only ends in ssh, passes, and so do two commands on separate lines.
