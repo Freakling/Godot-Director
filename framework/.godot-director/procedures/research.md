@@ -23,6 +23,7 @@ Two readers:
 
 ## Core procedure
 Research one question and report a note. You inform; the human decides.
+A shell command, where your tool gives you one, follows `rules.md` › Shell commands: one short command at a time, never a heredoc, and none of yours left in the background when you report.
 
 1. **Frame.** Read the item's `Question:` and the records it touches: AGENTS.md (the engine version is in Project facts, and in `project.godot` under `config/features`), GDD › Design Pillars, the GDD sections under `GDD:`, `design/decisions.md`, and notes on the same topic in `design/research/`. Settle the decision or outcome sought, the scope, the exclusions, the project's constraints and the depth needed. State a reasonable assumption instead of asking; never ask for what you can discover. Read `.godot-director/research-domain.md` when the question concerns the engine and its docs, plugins and assets, export and store requirements, or how other games solve the problem; other questions stay technology-neutral.
 2. **Decompose** into the subquestions that matter. Use only the categories that apply: current state and constraints, capabilities, options, requirements, operation and support, resilience, cost, dependencies, migration.

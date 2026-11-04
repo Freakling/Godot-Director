@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T46 · B6 · R1
+**Next IDs:** T47 · B6 · R1
 
 ## Queue
+
+### T46 · Subagents write no shell heredocs, and the background commands they leave are stopped · done · M · agent
+- Touches: framework/.godot-director/rules.md, framework/.godot-director/procedures/build.md, research.md, review.md and next-task.md, framework/.claude/agents/builder.md, researcher.md and reviewer.md, CHANGELOG.md
+- Done when: `rules.md` › Doing the work has a Shell commands bullet: files are written with the file tools, never with a shell heredoc or an `echo` or `printf` redirect of multi-line content; a multi-line script goes in a file first; every shell call is one short command, and the only long runs are the check, an autoplay run and an export, each with an explicit long timeout or in the background; a command moved to the background is stopped before a report or the end of a turn (check) · `build.md` says it before step 1, has a step 8 before Report that stops a command moved to the background and never reports while one is alive, and a `Background:` line in the report (check) · `research.md` › Core procedure and `review.md` say it in one sentence each (check) · `next-task.md` › 3. Build stops what a subagent left in the background before it deletes `.godot/godot-director/building` and moves on, tool-neutral, with TaskStop named in its In Claude Code bullet, and the Review and Research items steps point to it (check) · `builder.md`, `researcher.md` and `reviewer.md` each carry one line with the rule, and their tools lists are unchanged (check) · the entry sits under 4.10.0, and `selftest.sh` passes (check)
+- GDD: (none)
+- Source: Director-Driven-Development T306
 
 ### T45 · The Stop hook runs the check only for the session that changed the code · done · M · agent
 - Touches: framework/.claude/hooks/stop-check.sh, framework/.claude/hooks/session-touched.sh (new), framework/.claude/settings.json, framework/.godot-director/rules.md, README.md, selftest.sh, CHANGELOG.md
