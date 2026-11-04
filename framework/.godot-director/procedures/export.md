@@ -32,7 +32,7 @@ Exporting changes no source file and commits nothing. It writes builds to `build
 Exporting doesn't run the check (`bash tools/check.sh`). If an export fails on a script error, say so and offer to run it.
 
 ## Set up exports
-Used by onboarding step 6 and by the setup item. Ask in short rounds, options with a recommendation, and let the human pick. Ask only for what Godot doesn't already have: read `export_presets.cfg` and GDD › Presentation and Platforms first, and skip what they answer.
+Used by onboarding step 6 and by the setup item. Ask in short rounds, options with a recommendation, and let the human pick, and hold the answers in the conversation. Ask only for what Godot doesn't already have: read `export_presets.cfg` and GDD › Presentation and Platforms first, and skip what they answer.
 
 1. **Target platforms.** Which platforms the game ships to (Windows, Linux, macOS, Web, Android, iOS), and for each what Godot needs that the project can't supply:
    - Web: the renderer must be `gl_compatibility` for broad browser support; say so if the project uses another one.
@@ -41,15 +41,16 @@ Used by onboarding step 6 and by the setup item. Ask in short rounds, options wi
 2. **Where exports run.** One of:
    - **This machine.** `/export` runs here with the Godot already recorded in `tools/godot_bin.local`. The simplest option, and the others use the same command.
    - **A build container,** on this machine or in the cloud. A container image with the same Godot version and its export templates installed runs the command in "Export the game" step 4. Walk the human through choosing or building the image; the version must match the project's.
-   - **A hosted service such as GitHub Actions.** The same command runs in a job on a Godot image with the templates. Explain what the job needs: the project checked out, the Godot version, and the templates. Offer to write the workflow file only if the human asks for it now.
-3. **Write it down.**
+   - **A hosted service such as GitHub Actions.** The same command runs in a job on a Godot image with the templates. Explain what the job needs: the project checked out, the Godot version, and the templates. Offer to write the workflow file only if the human asks for it now; it goes into the summary below.
+3. **Summary and approval.** After the last round, show a summary of everything "Write it down" will write, as it will read: the presets in `export_presets.cfg`, the GDD text and the `design/decisions.md` lines, the AGENTS.md › Project rules line, the workflow file when the human asked for one, and the removal of the answered `Q<n>` from GDD › Open Questions when the setup answers one. Then ask: "Approve this summary, or tell me what to change?" Write nothing until the human approves a summary of all of it (`design.md` › Summary and approval); a chat message or an "Other" answer before then re-opens the options. "Write it down" starts after the approval, and "Try it" runs on what it wrote.
+4. **Write it down.**
    - `export_presets.cfg`: one preset per target platform, named after it (`Windows Desktop`, `Linux`, `Web`, ...), with `export_path="builds/<preset name>/<game>.<ext>"`. Create it only for platforms the human named; the editor's Project > Export dialog can refine it later. Keep secrets (keystore passwords, signing identities) out of it: Godot keeps them in `.godot/export_credentials.cfg`, which stays ignored.
    - GDD › Presentation and Platforms: the platforms, as the current design. `design/decisions.md`: one line for the platforms and one for where exports run.
    - AGENTS.md › Project rules: where exports run, in one line (for example "Exports run on GitHub Actions; `/export` runs them locally too").
    - `.gitignore` has `/builds/` (the installer adds it).
-4. **Try it.** Run "Export the game" for one preset and report the result, including a missing-templates message if that's what comes back. A game that exports once is set up.
+5. **Try it.** Run "Export the game" for one preset and report the result, including a missing-templates message if that's what comes back. A game that exports once is set up.
 
-**When the human skips it.** Add the open question and the item, and nothing else:
+**When the human skips it.** The open question and the item, and nothing else, go into the summary (step 3) and are added once the human approves it:
 - GDD › Open Questions: `- **Q<n>** · Export: which platforms does the game export to, and where do exports run (this machine, a build container, or a hosted service such as GitHub Actions)? Answering it sets up exports: /design Q<n> runs the "Set up exports" step.` Bump `Next`.
 - TASKS.md:
 

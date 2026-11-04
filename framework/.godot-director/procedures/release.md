@@ -21,11 +21,12 @@ The request names the stage: `uat` (the default) or `production`, and optionally
 On GitHub Actions, the workflow in `.godot-director/templates/release-workflow.yml` runs the same commands: export on every change, UAT on `main`, and production behind a protected GitHub Environment the human approves. Any other CI can run the export command from `export.md` and then `bash tools/release.sh uat`.
 
 ## Set up release
-Used by onboarding step 6 and by the setup item. Set exports up first if the game has none (`export.md` › "Set up exports"). Ask in short rounds, options with a recommendation, and let the human pick. Skip what `release.cfg` already answers.
+Used by onboarding step 6 and by the setup item. Set exports up first if the game has none (`export.md` › "Set up exports"). Ask in short rounds, options with a recommendation, and let the human pick, and hold the answers in the conversation. Skip what `release.cfg` already answers.
 
 1. **The upload commands.** For each export preset: the command that uploads `builds/<preset>/` to its UAT branch or channel, and the command for production. Any command that runs in a shell from the project root will do (a store's command-line tool, `rsync`, a script of the game's). Don't assume a store, and don't promise the tool is installed where the command will run. A preset with no production command is never promoted.
 2. **Credentials.** Say what the commands need, and ask for the names of the environment variables that hold them (for example `STEAM_USER`, `ITCH_API_KEY`). Values are CI secrets only: the human sets them in the CI's secrets, never in the repo, `export_presets.cfg`, `release.cfg` or the chat. List the names back as the secrets to set.
-3. **Write it down.**
+3. **Summary and approval.** After the last round, show a summary of everything "Write it down" will write, as it will read: `release.cfg`, the workflow file when the human uses GitHub Actions, the `design/decisions.md` lines, the AGENTS.md › Project rules line, and the removal of the answered `Q<n>` from GDD › Open Questions when the setup answers one. Then ask: "Approve this summary, or tell me what to change?" Write nothing until the human approves a summary of all of it (`design.md` › Summary and approval); a chat message or an "Other" answer before then re-opens the options. "Write it down" starts after the approval, and "Try it" runs on what it wrote.
+4. **Write it down.**
    - `release.cfg` in the project root, committed: one section per preset, named exactly like the preset.
 
      ```
@@ -38,9 +39,9 @@ Used by onboarding step 6 and by the setup item. Set exports up first if the gam
      Only names go in `secrets`; the commands read the values from the environment.
    - If the human uses GitHub Actions: copy `.godot-director/templates/release-workflow.yml` to `.github/workflows/release.yml` and fill in its marked lines (the Godot image for the project's version, the secrets under `env:`, a step that installs the upload tool). Tell the human to create a GitHub Environment named `production` with themselves as required reviewer, so the production job waits for their approval. Other CI services run the same commands.
    - `design/decisions.md`: one line for the release targets and one for where credentials live. AGENTS.md › Project rules: one line (for example "Release: `release.cfg` names the upload commands; secrets are CI secrets; `/release` promotes only when asked").
-4. **Try it.** Run `bash tools/release.sh uat --dry-run` and report the commands it would run. Upload nothing during setup.
+5. **Try it.** Run `bash tools/release.sh uat --dry-run` and report the commands it would run. Upload nothing during setup.
 
-**When the human skips it.** Add the open question and the item, and nothing else:
+**When the human skips it.** The open question and the item, and nothing else, go into the summary (step 3) and are added once the human approves it:
 - GDD › Open Questions: `- **Q<n>** · Release: what command uploads each export preset's build to UAT and to production, and which CI secrets does it need? Answering it sets up release: /design Q<n> runs the "Set up release" step.` Bump `Next`.
 - TASKS.md:
 

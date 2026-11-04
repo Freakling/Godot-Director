@@ -6,12 +6,14 @@
 #   bash selftest.sh [path to Godot 4.5+]      (or set GODOT_BIN)
 #
 # Without Godot, only the parts that don't need it are tested. KEEP=1 keeps the temporary folder.
+# The sections run side by side as lanes (see "lanes" below): SELFTEST_LANES=1 runs them one by one, and
+# SELFTEST_ONLY=a,b runs only the lanes with these names.
 
 set -u
 src="$(cd "$(dirname "$0")" && pwd)"
 godot="${1:-${GODOT_BIN:-}}"
 work="$(mktemp -d)"
-if [ "${KEEP:-0}" = "1" ]; then echo "keeping $work"; else trap 'rm -rf "$work"' EXIT; fi
+if [ "${KEEP:-0}" = "1" ]; then echo "keeping $work"; else trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$work"' EXIT; fi
 
 passed=0; failed=0
 nl='
@@ -38,6 +40,346 @@ new_repo() { # new_repo <folder>: an empty git repository with one commit
   mkdir -p "$1" && (cd "$1" && git init -q && git config core.autocrlf false && printf '# game\n' > README.md && git add -A && git_q commit -qm init)
 }
 
+# --- lanes --------------------------------------------------------------------------------------
+# One after the other the sections below take about two hours on a busy Windows machine, nearly all of it
+# waiting for processes to start (Git Bash forks slowly, and every check run starts several Godots). They
+# don't depend on each other's results, only on a game installed from the example, so each runs as a lane:
+# a background subshell with its own copy of that game, its own scratch folder ($work) and its own user://
+# folder, its output going to a file. At the end the files are printed in the order the sections had and the
+# counts added up, so the output is the sections' output one after the other, and only the time changes.
+#   SELFTEST_LANES=<n>   lanes at a time (default: a third more than the processors, 16 at most; 1 runs them one by one)
+#   SELFTEST_ONLY=a,b    only the lanes with these names (a development aid; "the run" at the end names them)
+#   SELFTEST_TIMES=1     when each lane started and ended, on stderr, just before the last line
+main_work="$work"
+lane_dir="$work/lanes"; mkdir -p "$lane_dir"
+lane_list=" "
+lane_jobs="${SELFTEST_LANES:-}"
+if [ -z "$lane_jobs" ]; then
+  lane_jobs=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+  case "$lane_jobs" in ''|*[!0-9]*) lane_jobs=4 ;; esac
+  lane_jobs=$((lane_jobs + lane_jobs / 3))   # a few more than the processors: a lane spends much of its time waiting for a process to start
+  [ "$lane_jobs" -le 16 ] || lane_jobs=16
+  # Godot's user:// folder can't be moved on macOS, so lanes there would share one: they run one by one
+  [ "$(uname -s)" != Darwin ] || lane_jobs=1
+fi
+case "$lane_jobs" in ''|*[!0-9]*|0) lane_jobs=1 ;; esac
+base=""; ready=""; warm=""
+
+lane_isolate() { # the lane's own user:// folder, so no other lane's Godot writes into the one a case looks at
+  local d="$work/appdata"
+  mkdir -p "$d"
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) command -v cygpath >/dev/null 2>&1 && d="$(cygpath -w "$d")"; export APPDATA="$d" ;;
+    Darwin) ;;
+    *) export XDG_DATA_HOME="$d" ;;
+  esac
+}
+lane_body() { # lane_body <name> <function>: in a subshell of its own, with its counts, output and a mark for a normal end in $lane_dir
+  lane_self="$1"; passed=0; failed=0; lane_t0=$SECONDS
+  work="$main_work/lane-$1"; mkdir -p "$work"; cd "$work" || exit 1
+  lane_isolate
+  trap 'echo "$passed $failed" > "$lane_dir/$lane_self.count"; echo "$lane_t0 $SECONDS" > "$lane_dir/$lane_self.secs"' EXIT
+  "$2" > "$lane_dir/$1.out" 2>&1
+  : > "$lane_dir/$1.done"
+}
+# The games the lanes copy, each made once: base is the example with the framework installed (the first
+# install of "installer"), ready is base with the clone set up (hooks, and the Godot path saved the way
+# PowerShell writes it), warm is ready after one passing check (the import and the class cache are there).
+prepare_base() {
+  local d="$main_work/base-game"
+  cp -R "$src/examples/market-day" "$d"
+  rm -rf "$d/.godot" "$d/.claude" "$d/.godot-director" "$d/.githooks" "$d/tools/godot_bin.local"
+  (cd "$d" && git init -q && git config core.autocrlf false && git add -A && git_q commit -qm "example" \
+    && bash "$src/install.sh" . >/dev/null 2>&1) || { echo "selftest: couldn't prepare the game"; exit 1; }
+  base="$d"
+}
+prepare_ready() {
+  local d="$main_work/ready-game"
+  cp -R "$base" "$d" && (cd "$d" && { bash tools/setup-clone.sh "$godot" >/dev/null 2>&1; printf '\357\273\277%s  \r\n' "$godot" > tools/godot_bin.local; })
+  ready="$d"
+}
+prepare_warm() {
+  local d="$main_work/warm-game"
+  cp -R "$ready" "$d" && (cd "$d" && bash tools/check.sh >/dev/null 2>&1)
+  warm="$d"
+}
+prepare() { # prepare base|ready|warm
+  case "$1" in
+    base) [ -n "$base" ] || prepare_base ;;
+    ready) prepare base; [ -n "$ready" ] || prepare_ready ;;
+    warm) prepare ready; [ -n "$warm" ] || prepare_warm ;;
+  esac
+}
+lane_game() { # lane_game base|ready|warm: this lane's game, a copy of the prepared one; it is $game and the working folder
+  local from
+  case "$1" in base) from="$base" ;; ready) from="$ready" ;; *) from="$warm" ;; esac
+  game="$work/game"
+  cp -R "$from" "$game" && cd "$game" || exit 1
+}
+lane_count_busy() {
+  local name
+  lane_busy=0
+  for name in $lane_list; do
+    [ -f "$lane_dir/$name.count" ] || lane_busy=$((lane_busy + 1))
+  done
+}
+lane_start() { # lane_start <name> <function> [base|ready|warm]: when a place is free and the game it copies is made
+  local name="$1"
+  case ",${SELFTEST_ONLY:-}," in ",,") ;; *",$name,"*) ;; *) return 0 ;; esac
+  [ -z "${3:-}" ] || prepare "$3"
+  lane_count_busy
+  while [ "$lane_busy" -ge "$lane_jobs" ]; do sleep 1; lane_count_busy; done
+  lane_list="$lane_list$name "
+  if [ "$lane_jobs" -gt 1 ]; then
+    ( lane_body "$name" "$2" ) &
+    echo $! > "$lane_dir/$name.pid"
+  else
+    ( lane_body "$name" "$2" )
+  fi
+}
+lanes_times() { # SELFTEST_TIMES=1: when each lane started and how long it ran, on stderr (the output stays as it is)
+  [ -n "${SELFTEST_TIMES:-}" ] || return 0
+  local name a b
+  for name in $lane_list; do
+    a="?"; b="?"; read -r a b < "$lane_dir/$name.secs" 2>/dev/null
+    echo "lane $name: started at $a s, ended at $b s" >&2
+  done
+}
+lanes_print() { # lanes_print <name>...: the output of these lanes in this order, and their counts added to the totals
+  local name pid p f
+  for name in "$@"; do
+    case "$lane_list" in *" $name "*) ;; *) continue ;; esac
+    if [ -f "$lane_dir/$name.pid" ]; then read -r pid < "$lane_dir/$name.pid"; wait "$pid" 2>/dev/null; fi
+    cat "$lane_dir/$name.out"
+    if [ -f "$lane_dir/$name.count" ]; then
+      read -r p f < "$lane_dir/$name.count"; passed=$((passed + p)); failed=$((failed + f))
+    fi
+    [ -f "$lane_dir/$name.done" ] || bad "the $name part stopped before its last case"
+  done
+}
+
+# --- shared by the lanes ----------------------------------------------------------------------
+settings="$src/framework/.claude/settings.json"
+stories_tpl="$src/framework/.godot-director/templates/user-stories.md"
+stories_ex="$src/examples/market-day/design/user-stories.md"
+
+git_fail=""
+guard_report() { # guard_report <failed cases> <what is wrong> <what holds>: one line for a block of cases, and the failed ones under it
+  if [ -n "$1" ]; then
+    bad "$2"
+    printf '%s\n' "${1#$'\n'}" | sed 's/^/          /'
+  else ok "$3"; fi
+  git_fail=""
+}
+# json_str <text>: sets JSON_STR to the text as the inside of a JSON string, with \, ", a line break, a tab and a return escaped.
+json_str() {
+  local s="$1" out="" i c
+  for ((i = 0; i < ${#s}; i++)); do
+    c="${s:i:1}"
+    case $c in
+      '\') out+='\\' ;;
+      '"') out+='\"' ;;
+      $'\n') out+='\n' ;;
+      $'\t') out+='\t' ;;
+      $'\r') out+='\r' ;;
+      *) out+="$c" ;;
+    esac
+  done
+  JSON_STR="$out"
+}
+# The guard cases (Director-Driven-Development B41). guard queues a case: its JSON payload goes to a file, and its expected
+# exit code, tool and text are kept. guard_run runs the queued cases, guard_jobs at a time, each as its own run of the hook
+# with its own payload, then checks every exit code against that case's expected one, in the order the cases were queued,
+# so a failure names its case and why. Each block of cases ends with guard_run and guard_report.
+guard_jobs=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); [ "$guard_jobs" -le 8 ] || guard_jobs=8
+guard_cmds=(); guard_exps=(); guard_tools=(); guard_pats=()
+guard() { # guard <expected exit> <command> [tool name: Bash by default, or PowerShell] [extended regex the guard's message must match]
+  local n=${#guard_cmds[@]} tool="${3:-Bash}"
+  json_str "$2"
+  printf '{"session_id":"s","tool_name":"%s","tool_input":{"command":"%s","description":"run"}}' "$tool" "$JSON_STR" > "$guard_dir/$n.json"
+  guard_cmds+=("$2"); guard_exps+=("$1"); guard_tools+=("$tool"); guard_pats+=("${4:-}")
+}
+guard_run() { # runs the queued cases, guard_jobs workers at a time; worker k takes cases k, k + guard_jobs, ...
+  local n=${#guard_cmds[@]} i k w msg
+  local -a pid=()
+  [ "$n" -gt 0 ] || return 0
+  w=$guard_jobs; [ "$w" -le "$n" ] || w=$n
+  for ((k = 0; k < w; k++)); do
+    (
+      for ((i = k; i < n; i += w)); do
+        bash .claude/hooks/guard-git.sh < "$guard_dir/$i.json" >/dev/null 2>"$guard_dir/$i.err"
+        echo $? > "$guard_dir/$i.rc"
+      done
+    ) &
+    pid[k]=$!
+  done
+  for ((k = 0; k < w; k++)); do wait "${pid[k]}"; done
+  for ((i = 0; i < n; i++)); do
+    rc="missing"; read -r rc < "$guard_dir/$i.rc" 2>/dev/null
+    if [ "$rc" != "${guard_exps[i]}" ]; then
+      git_fail="$git_fail"$'\n'"  guard exited $rc, expected ${guard_exps[i]} (${guard_tools[i]}): ${guard_cmds[i]//$'\n'/ NL }"
+    elif [ -n "${guard_pats[i]}" ]; then   # a case with a pattern also checks what the guard said
+      msg=""; read -r -d '' msg < "$guard_dir/$i.err" 2>/dev/null
+      [[ $msg =~ ${guard_pats[i]} ]] || git_fail="$git_fail"$'\n'"  guard's message doesn't match /${guard_pats[i]}/ (${guard_tools[i]}): ${guard_cmds[i]//$'\n'/ NL }"
+    fi
+  done
+  guard_cmds=(); guard_exps=(); guard_tools=(); guard_pats=()
+  rm -f "$guard_dir"/*.json "$guard_dir"/*.rc "$guard_dir"/*.err
+}
+
+# The guard reads a long file body in time: measured first, in guard_slow_measure, while the lanes aren't running yet (a
+# timing is the one result a busy machine changes). The guard lane reports it where the measurement used to be.
+guard_slow_measure() {
+  local slow_dir="$work/slow-body"
+  mkdir -p "$slow_dir/.claude" "$slow_dir/guard-cases" && cp -R "$src/framework/.claude/hooks" "$slow_dir/.claude/hooks" || return 1
+  local guard_dir="$slow_dir/guard-cases"
+  cd "$slow_dir" || return 1
+gd_body='extends Node2D'$'\n'
+while ((${#gd_body} < 25000)); do gd_body+=$'\t$AnimationPlayer.play("walk")\n\t$Sprite2D.flip_h = not $Sprite2D.flip_h # it\'s "x"\n'; done
+py_body='import sys'$'\n'
+while ((${#py_body} < 25000)); do py_body+=$'def copy_py(x):\n    # python data, it\'s "ok"\n    return x\n'; done
+slow_cmds=($'cat > scripts/hero.gd <<\'EOF\'\n'"$gd_body"$'EOF' $'@\'\n'"$gd_body"$'\'@ | Set-Content scripts/hero.gd' $'python3 tool.py <<\'EOF\'\n'"$py_body"$'EOF')
+slow_tools=(Bash PowerShell Bash); slow_names=(heredoc here-string python-data); slow_fail=""; slow_times=""
+for ((si = 0; si < ${#slow_cmds[@]}; si++)); do
+  json_str "${slow_cmds[si]}"
+  printf '{"session_id":"s","tool_name":"%s","tool_input":{"command":"%s","description":"run"}}' "${slow_tools[si]}" "$JSON_STR" > "$guard_dir/slow.json"
+  TIMEFORMAT=%R
+  slow_out=$( { time { LC_ALL=C.UTF-8 bash .claude/hooks/guard-git.sh < "$guard_dir/slow.json" >/dev/null 2>&1; echo "rc $?" >&2; }; } 2>&1 )
+  unset TIMEFORMAT
+  slow_rc="${slow_out#*rc }"; slow_rc="${slow_rc%%[!0-9]*}"; slow_s="${slow_out##*[!0-9.]}"
+  slow_times="$slow_times ${slow_names[si]} (${slow_tools[si]}) ${slow_s}s,"
+  [ "$slow_rc" = 0 ] || slow_fail="$slow_fail"$'\n'"  (${slow_tools[si]}) the guard exited $slow_rc on a 25 KB ${slow_names[si]} body, expected 0"
+  [ "${slow_s%%.*}" -lt 5 ] 2>/dev/null || slow_fail="$slow_fail"$'\n'"  (${slow_tools[si]}) the guard took ${slow_s}s on a 25 KB ${slow_names[si]} body, over 5 seconds"
+done
+rm -f "$guard_dir/slow.json"
+  cd "$work"
+}
+
+guard_write() { # guard_write <expected exit> <what> <file_path as sent (JSON-escaped)> [project dir]
+  local out got
+  out="$(printf '{"session_id":"s","tool_name":"Write","tool_input":{"file_path":"%s","content":"x"}}' "$3" \
+    | CLAUDE_PROJECT_DIR="${4:-$game}" bash .claude/hooks/guard-protected.sh 2>&1)"
+  got=$?
+  if [ "$got" -eq "$1" ]; then ok "$([ "$1" -eq 2 ] && echo blocks || echo allows): $2"; else bad "guard-protected exit $got, expected $1: $2" "$out"; fi
+}
+
+user_data_init() { # the example's real user:// folder, in this lane's own APPDATA (or XDG_DATA_HOME)
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) user_data="$(cygpath -u "$APPDATA")/Godot/app_userdata/Market Day" ;;
+    Darwin) user_data="$HOME/Library/Application Support/Godot/app_userdata/Market Day" ;;
+    *) user_data="${XDG_DATA_HOME:-$HOME/.local/share}/godot/app_userdata/Market Day" ;;
+  esac
+}
+
+gen_token() { # gen_token: sets _tok to "ghp_" and 36 generated letters and digits
+  local chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789' i
+  _tok="ghp_"
+  for ((i = 0; i < 36; i++)); do _tok="$_tok${chars:$((RANDOM % 62)):1}"; done
+}
+gitleaks_prelude() { # the gitleaks found here, a PATH without it, and a stand-in (sets _gl_ok, _gl_real, _no_gl_path, _no_gl_ok, _fake_gl)
+_gl_ok=0; _gl_real=""
+if command -v gitleaks >/dev/null 2>&1; then
+  _gl_real="$(gitleaks version 2>/dev/null | tr -d 'v \r\n')"
+  _gl_maj="${_gl_real%%.*}"; _gl_rest="${_gl_real#*.}"; _gl_mnr="${_gl_rest%%.*}"
+  case "$_gl_maj$_gl_mnr" in
+    ''|*[!0-9]*) ;;
+    *) if [ "$_gl_real" != "8.19.0" ] && { [ "$_gl_maj" -gt 8 ] || { [ "$_gl_maj" -eq 8 ] && [ "$_gl_mnr" -ge 18 ]; }; }; then _gl_ok=1; fi ;;
+  esac
+fi
+# A PATH without gitleaks: every directory that holds it is left out (the other tools must remain).
+_no_gl_path=""
+while IFS= read -r _dir; do
+  [ -n "$_dir" ] || continue
+  if [ -x "$_dir/gitleaks" ] || [ -x "$_dir/gitleaks.exe" ]; then continue; fi
+  _no_gl_path="${_no_gl_path:+$_no_gl_path:}$_dir"
+done <<EOF
+$(printf '%s\n' "$PATH" | tr ':' '\n')
+EOF
+_no_gl_ok=1
+for _tool in git bash awk sed tr grep head tail cat mkdir rm find sort; do
+  PATH="$_no_gl_path" command -v "$_tool" >/dev/null 2>&1 || _no_gl_ok=0
+done
+PATH="$_no_gl_path" command -v gitleaks >/dev/null 2>&1 && _no_gl_ok=0
+# A stand-in gitleaks: it reports FAKE_GL_VERSION, logs each call to FAKE_GL_LOG, and a scan finds nothing,
+# or fails with FAKE_GL_ERROR's text and no report (as 8.19.0 does for every command). protect, the staged
+# scan, writes one finding in FAKE_GL_FINDING (a file) when it is set, in the report's own layout.
+_fake_gl="$work/fake-gl"; mkdir -p "$_fake_gl"
+cat > "$_fake_gl/gitleaks" << 'FAKE'
+#!/usr/bin/env bash
+[ -n "${FAKE_GL_LOG:-}" ] && printf '%s\n' "$*" >> "$FAKE_GL_LOG"
+case "$1" in
+  version) echo "v${FAKE_GL_VERSION:-8.30.1}" ;;
+  dir|detect|protect)
+    for a in "$@"; do case "$a" in --report-path=*) report="${a#--report-path=}" ;; esac; done
+    if [ -n "${FAKE_GL_ERROR:-}" ]; then echo "$FAKE_GL_ERROR"; exit 1; fi
+    if [ "$1" = protect ] && [ -n "${FAKE_GL_FINDING:-}" ]; then
+      printf '[\n {\n  "RuleID": "selftest-rule",\n  "StartLine": 7,\n  "Match": "REDACTED",\n  "Secret": "REDACTED",\n  "File": "%s",\n  "Fingerprint": "%s:selftest-rule:7"\n }\n]\n' "$FAKE_GL_FINDING" "$FAKE_GL_FINDING" > "$report"
+      exit 1
+    fi
+    exit 0 ;;
+  *) exit 0 ;;
+esac
+FAKE
+chmod +x "$_fake_gl/gitleaks"
+}
+
+runs=playtesting/autoplay
+latest_run() { ls -d "$runs/$1"-* 2>/dev/null | grep -v -- '-replay' | LC_ALL=C /usr/bin/sort | tail -n 1; }
+after_line() { # after_line <file> <exact line> <lines to add after it>; awk reads \t and \n in both
+  awk -v line="$2" -v text="$3" '{ print } $0 == line { print text }' "$1"
+}
+replace_line() { # replace_line <file> <exact line> <its replacement>
+  awk -v line="$2" -v text="$3" '{ print ($0 == line ? text : $0) }' "$1"
+}
+normalized() { # a run's JSONL without time stamps, run ids and timing lines
+  sed -e 's/^{"t":[0-9]*,/{/' -e 's/[0-9]\{8\}-[0-9]\{6\}\(-[0-9][0-9]*\)\{0,1\}/<id>/g' "$1"/run-*.jsonl \
+    | grep -v -e '"event":"frame.hitch"' -e '"event":"window.focus"'
+}
+
+crash_defs() {
+# A Godot process that exits 139 (a segmentation fault) with a clean log: the check names the process, its
+# status and its log in one line before the FAIL, and the exit code stays 1. crashy <pattern> [silent]: a
+# stand-in for Godot that runs the real one, then exits 139 for a call whose arguments contain the pattern;
+# with "silent" it exits 139 before running anything, so the log stays empty.
+crashy() {
+  if [ "${2:-}" = "silent" ]; then
+    cat > "$work/godot-crash" <<CRASH
+#!/usr/bin/env bash
+case "\$*" in *"$1"*) exit 139 ;; esac
+"$godot" "\$@"
+CRASH
+  else
+    cat > "$work/godot-crash" <<CRASH
+#!/usr/bin/env bash
+"$godot" "\$@"
+status=\$?
+case "\$*" in *"$1"*) exit 139 ;; esac
+exit \$status
+CRASH
+  fi
+  chmod +x "$work/godot-crash"
+}
+line_of() { printf '%s\n' "$1" | grep -n -E -- "$2" | head -n 1 | cut -d: -f1; }
+before() { # before <output> <regex> <regex>: the first line matching the first regex comes before the second's
+  local a b
+  a="$(line_of "$1" "$2")"; b="$(line_of "$1" "$3")"
+  [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]
+}
+}
+
+parallel_prelude() { # the example's [autoplay] left out of tools/check.cfg, and the helpers the parallel-tests lanes share
+logs=".godot/godot-director"
+# These cases count the processes that run the tests, and autoplay in the check takes one of them, so
+# the example's [autoplay] is left out here ("autoplay beside the tests" covers it).
+cp tools/check.cfg "$work/saved-check-cfg-ap"
+awk '/^\[autoplay\]$/ { skip = 1; next } /^\[/ { skip = 0 } !skip' "$work/saved-check-cfg-ap" > tools/check.cfg
+test_order() { for f in "$@"; do tr -d '\r' < "$f"; done | sed -n 's/^GDIR-TEST: \(.*\)::.*$/\1/p' | uniq; }
+deal_of() { printf '%s\n' "$1" | sed -n 's/^check: deal: job \([0-9]*\) [0-9.?]* /\1 /p' | tr '\n' ';'; }
+times="$logs/test-times.tsv"
+}
+
+l_framework() {
+cd "$work" || exit 1
 # --- framework files ----------------------------------------------------------------------------
 echo "framework"
 plugin_version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$src/.claude-plugin/plugin.json")"
@@ -120,7 +462,6 @@ for file in framework/.godot-director/procedures/research.md framework/.godot-di
 done
 [ -z "$missing" ] && ok "the research assistant's files exist" || bad "research assistant files missing:$missing"
 researcher="$src/framework/.claude/agents/researcher.md"
-settings="$src/framework/.claude/settings.json"
 if [ "$(sed -n 's/^tools: //p' "$researcher" | tr -d '\r')" = "Read, Grep, Glob, WebSearch, WebFetch" ] \
     && grep -q '^model: inherit' "$researcher" \
     && grep -Eq '^ *"WebSearch",?[[:space:]]*$' "$settings" && grep -Eq '^ *"WebFetch",?[[:space:]]*$' "$settings"; then
@@ -491,8 +832,6 @@ done
 # the procedures, the settings and the docs name them, each step only with them on; and Market Day
 # uses them, with a Stories: line on every agent item. tools/stories.sh --due is tested under
 # "user stories", with them on, off and unanswered.
-stories_tpl="$src/framework/.godot-director/templates/user-stories.md"
-stories_ex="$src/examples/market-day/design/user-stories.md"
 ex_tasks="$src/examples/market-day/TASKS.md"
 wired=""
 [ -f "$stories_tpl" ] && [ -f "$src/framework/tools/stories.sh" ] && [ -f "$stories_ex" ] || wired="$wired files"
@@ -630,6 +969,81 @@ grep -q '^- \*\*A prototype tries a change before it.s built against the design\
 [ -z "$wired" ] && ok "prototypes: the procedure, the skill and tools/prototype.sh exist, and the rules, the item format, the design procedure, the settings, the hooks and the docs name them" \
   || bad "prototypes aren't wired into:$wired"
 
+# Nothing is written without the human's approval of a summary (Director-Driven-Development T282): rules.md has the
+# bullet right after the design-call bullet; design.md holds the answers in the conversation, has Summary and approval
+# between For each question and Record each decision in one change, and Finish writes what the summary lists; every
+# procedure that records from a conversation carries the pointer (design.md's stories switch, validation and
+# harvest, research.md, next-task.md, drift-reset.md, ui-design.md, playtest.md, function-check.md, export.md,
+# release.md, align.md and ONBOARDING.md); export.md and release.md show their summary between the last round and
+# "Write it down"; align's fixes and the stories' on and off switch are part of a summary.
+wired=""
+_ap_ptr='Write nothing until the human approves a summary of all of it (`design.md` › Summary and approval); a chat message or an "Other" answer before then re-opens the options.'
+_ap_rules="$proc/rules.md"
+_ap_dm="$proc/procedures/design.md"
+_ap_bullet='- **Nothing is written without the human'"'"'s explicit approval.** While a session runs, the answers stay in the conversation. A chat message or an "Other" answer during a session is a scope change or a modification, not an answer to record: it re-opens the options it touches, and the session reassesses, then restarts or continues. Once everything is chosen, show a summary of every file, line, item and story to be written (`design.md` › Summary and approval), and write and commit all of it in one change only after the human approves the summary.'
+_ap_call="$(grep -n '^- A design call is a mechanic' "$_ap_rules" | cut -d: -f1)"
+_ap_rule="$(grep -nxF -- "$_ap_bullet" "$_ap_rules" | cut -d: -f1)"
+[ -n "$_ap_call" ] && [ -n "$_ap_rule" ] && [ "$_ap_rule" -eq $((_ap_call + 1)) ] \
+  || wired="$wired rules.md(the approval bullet right after the design-call bullet)"
+_ap_each="$(grep -n '^## For each question$' "$_ap_dm" | cut -d: -f1)"
+_ap_sum="$(grep -n '^## Summary and approval$' "$_ap_dm" | cut -d: -f1)"
+_ap_rec="$(grep -n '^## Record each decision in one change$' "$_ap_dm" | cut -d: -f1)"
+[ -n "$_ap_each" ] && [ -n "$_ap_sum" ] && [ -n "$_ap_rec" ] && [ "$_ap_each" -lt "$_ap_sum" ] && [ "$_ap_sum" -lt "$_ap_rec" ] \
+  || wired="$wired design.md(Summary and approval between For each question and Record)"
+grep -qF 'Hold the answer in the conversation: nothing is recorded yet, and an answered part is not recorded by itself.' "$_ap_dm" \
+  && ! grep -qF 'record only that part' "$_ap_dm" || wired="$wired design.md(the wait holds the answers)"
+grep -qF 'Nothing is written before the human approves it.' "$_ap_dm" && grep -qF 'Approve this summary, or tell me what to change?' "$_ap_dm" \
+  && grep -qF 'Only a yes to the summary as shown approves it.' "$_ap_dm" && grep -qF 'the research notes and `R<n>` items.' "$_ap_dm" \
+  || wired="$wired design.md(the summary and its list)"
+grep -qF 'Write everything the approved summary lists and commit it as one change, `docs: <summary>`' "$_ap_dm" \
+  && grep -qF 'The approval of the summary is the approval to commit (`rules.md` › Git).' "$_ap_dm" || wired="$wired design.md(Finish)"
+[ "$(grep -cF -- "$_ap_ptr" "$_ap_dm")" -ge 4 ] || wired="$wired design.md(pointers: turning user stories on and off, the validation, the harvest)"
+grep -qF 'The switch is set only after the approval' "$_ap_dm" && grep -qF 'and with it the stories file, the GDD link and the items' "$_ap_dm" \
+  && grep -qF 'The summary lists the `User stories: off` line' "$_ap_dm" || wired="$wired design.md(the stories switch is in the summary)"
+grep -qF "the procedure's summary lists them" "$_ap_dm" || wired="$wired design.md(the Still right? ticks go into a summary)"
+for _ap_f in research next-task ui-design playtest function-check align export release; do
+  grep -qF -- "$_ap_ptr" "$proc/procedures/$_ap_f.md" || wired="$wired $_ap_f.md(pointer)"
+done
+[ "$(grep -cF -- "$_ap_ptr" "$proc/procedures/drift-reset.md")" -ge 2 ] || wired="$wired drift-reset.md(pointers in the reset and the postmortem)"
+grep -qF -- "$_ap_ptr" "$src/ONBOARDING.md" && grep -q '^### Summary and approval$' "$src/ONBOARDING.md" \
+  && grep -qF 'the records below are drafts, until the human approves the summary at the end of this section' "$src/ONBOARDING.md" \
+  && grep -qF 'List the mechanical fixes it finds, and write them after the human approves them' "$src/ONBOARDING.md" \
+  || wired="$wired ONBOARDING.md(pointer, Summary and approval, the align fixes)"
+grep -qF 'Hold the note and the item in the conversation.' "$proc/procedures/research.md" \
+  && grep -qF 'outside a design session shows its own summary of the note and the item' "$proc/procedures/research.md" \
+  && grep -qF '› Research items step 2 describes' "$proc/procedures/research.md" || wired="$wired research.md(holds the note and the item)"
+grep -qF 'the summary lists its records, as `design.md` lists them' "$proc/procedures/next-task.md" || wired="$wired next-task.md(blocked)"
+grep -qF 'the decision lines word for word, the Open Questions removed or added, the design diff' "$proc/procedures/drift-reset.md" \
+  && grep -qF 'each TASKS.md item in full' "$proc/procedures/drift-reset.md" \
+  && grep -qF 'what the postmortem will write: `postmortem.md` as it will read' "$proc/procedures/drift-reset.md" \
+  && grep -qF 'are written as the analysis runs.' "$proc/procedures/drift-reset.md" || wired="$wired drift-reset.md(the summaries)"
+grep -qF 'The summary lists the spec, the decision lines, the open questions and the item' "$proc/procedures/ui-design.md" || wired="$wired ui-design.md(the summary's list)"
+for _ap_f in playtest function-check; do
+  grep -qF 'The summary lists the `B` items, the story rewrites and ticks' "$proc/procedures/$_ap_f.md" || wired="$wired $_ap_f.md(the summary's list)"
+done
+grep -qF 'straight away' "$proc/procedures/playtest.md" "$src/framework/playtesting/README.md" "$src/examples/scenarios.md" && wired="$wired playtest.md(bugs are no longer filed straight away)"
+grep -qF 'during onboarding they are approved where onboarding approves the install commit' "$proc/procedures/align.md" \
+  && grep -qF 'Inside a session the fixes join its summary' "$proc/procedures/align.md" \
+  && grep -qF 'rerunning the installer is a fix: it runs once the human approves the summary' "$proc/procedures/align.md" || wired="$wired align.md(the fixes are part of the summary)"
+for _ap_f in export release; do
+  _ap_p="$proc/procedures/$_ap_f.md"
+  _ap_s="$(grep -n '^3\. \*\*Summary and approval\.\*\*' "$_ap_p" | cut -d: -f1)"
+  _ap_w="$(grep -n '^4\. \*\*Write it down\.\*\*' "$_ap_p" | cut -d: -f1)"
+  _ap_t="$(grep -n '^5\. \*\*Try it\.\*\*' "$_ap_p" | cut -d: -f1)"
+  [ -n "$_ap_s" ] && [ -n "$_ap_w" ] && [ -n "$_ap_t" ] && [ "$_ap_s" -lt "$_ap_w" ] && [ "$_ap_w" -lt "$_ap_t" ] \
+    && grep -qF 'show a summary of everything "Write it down" will write' "$_ap_p" \
+    && grep -qF '"Write it down" starts after the approval, and "Try it" runs on what it wrote.' "$_ap_p" \
+    && grep -qF 'go into the summary (step 3)' "$_ap_p" || wired="$wired $_ap_f.md(a summary between the last round and Write it down)"
+done
+grep -q 'once the human approves a summary of them' "$src/framework/.claude/skills/design/SKILL.md" || wired="$wired skills/design/SKILL.md(description)"
+grep -qF '**Nothing is written until you approve a summary of it.**' "$src/README.md" || wired="$wired README.md"
+grep -q '^- \*\*Nothing is written until the director approves a summary of it\.\*\*' "$src/CHANGELOG.md" || wired="$wired CHANGELOG.md"
+[ -z "$wired" ] && ok "nothing is written until the human approves a summary: the rule, design.md's Summary and approval, and the pointer in each procedure that records from a conversation" \
+  || bad "the approval of a summary isn't wired into:$wired"
+
+}
+
+l_installer_a() {
 # --- installer ----------------------------------------------------------------------------------
 echo "installer"
 game="$work/market-day"
@@ -703,6 +1117,23 @@ if [ -f .godot-director/procedures/prototype.md ] && [ -f .claude/skills/prototy
   ok "installs prototypes: the procedure, the skill, tools/prototype.sh and the pre-push hook"
 else
   bad "installs prototypes: the procedure, the skill, tools/prototype.sh and the pre-push hook" "$out"
+fi
+if [ -x .claude/hooks/session-touched.sh ] && cut -f2 .godot-director/manifest | grep -q '^\.claude/hooks/session-touched\.sh$' \
+    && git check-ignore -q .godot/godot-director/sessions/design.touched && git check-ignore -q .godot/godot-director/sessions/design.before; then
+  ok "installs the session record hook, and git ignores the records it keeps"
+else
+  bad "installs the session record hook, and git ignores the records it keeps" "$(cat .gitignore)"
+fi
+if [ -x .claude/hooks/release-check.sh ] && cut -f2 .godot-director/manifest | grep -q '^\.claude/hooks/release-check\.sh$' \
+    && grep -q 'release-check\.sh' .claude/settings.json && git check-ignore -q .godot/godot-director/latest-release; then
+  ok "installs the release check hook, wires it into settings.json, and git ignores the cache it keeps"
+else
+  bad "installs the release check hook, wires it into settings.json, and git ignores the cache it keeps" "$(cat .gitignore)"
+fi
+if [ -x .claude/hooks/orphan-report.sh ] && cut -f2 .godot-director/manifest | grep -q '^\.claude/hooks/orphan-report\.sh$' && grep -q 'orphan-report\.sh' .claude/settings.json; then
+  ok "installs the orphan report hook and wires it into settings.json"
+else
+  bad "installs the orphan report hook and wires it into settings.json" "$(cat .claude/settings.json)"
 fi
 grep -q "Market Day" AGENTS.md && ok "keeps the project's own files" || bad "keeps the project's own files"
 [ -z "$(git status --porcelain)" ] && ok "adds no duplicate .gitignore/.gitattributes lines" || bad "adds no duplicate lines" "$(git status --porcelain)"
@@ -791,7 +1222,10 @@ grep -q "^# Godot Director: runs" "$(git rev-parse --git-path hooks)/pre-commit"
   && ok "updates the clone's 2.x pre-commit shim and drops the old runtime folder" \
   || bad "updates the clone's 2.x pre-commit shim and drops the old runtime folder" "$out"
 cd "$game" || exit 1
+}
 
+l_installer_b() {
+cd "$work" || exit 1
 # Upgrading from the last release, v3.10.0 (taken from git history; skipped where the tag isn't there):
 # the new files and seeds arrive, the game keeps its own AGENTS.md and check.cfg, the layout lint in
 # the check ends up off, and align lists the screens the catalog doesn't cover without failing.
@@ -852,7 +1286,10 @@ if git -C "$src" rev-parse -q --verify 'v3.10.0^{commit}' >/dev/null 2>&1; then
 else
   echo "  skip  upgrade from v3.10.0: no v3.10.0 tag in this checkout"
 fi
+}
 
+l_installer_c() {
+cd "$work" || exit 1
 core_only="$work/core-only"; new_repo "$core_only"
 out="$(bash "$src/install.sh" --tools none "$core_only" 2>&1)"
 if [ ! -e "$core_only/.claude" ] && [ ! -e "$core_only/CLAUDE.md" ] && [ -f "$core_only/AGENTS.md" ] && [ -f "$core_only/.godot-director/rules.md" ]; then
@@ -1016,20 +1453,12 @@ out="$(bash "$src/install.sh" . 2>&1)"; status=$?
 expect_status "reinstalls in a CRLF clone" 0 "$status" "$out"
 expect_output "reports that clone as reinstalled" "reinstalled" "$out"
 expect_no_output "CRLF line endings don't count as local edits" "CONFLICT|kept your changes" "$out"
-cd "$game" || exit 1
-
-# --- git guard (Claude Code PreToolUse hook) ----------------------------------------------------
-echo "git guard"
-guard() { # guard <expected exit> <command>
-  local escaped="${2//\\/\\\\}"
-  escaped="${escaped//\"/\\\"}"
-  escaped="${escaped//$'\n'/\\n}"
-  escaped="${escaped//$'\t'/\\t}"; escaped="${escaped//$'\r'/\\r}"   # as JSON carries a tab and a carriage return
-  printf '{"session_id":"s","tool_name":"Bash","tool_input":{"command":"%s","description":"run"}}' "$escaped" \
-    | bash .claude/hooks/guard-git.sh >/dev/null 2>&1
-  local got=$?
-  if [ "$got" -eq "$1" ]; then ok "$([ "$1" -eq 2 ] && echo blocks || echo allows): $2"; else bad "guard exit $got, expected $1: $2"; fi
 }
+
+l_guard() {
+lane_game base
+echo "git guard"
+guard_dir="$work/guard-cases"; mkdir -p "$guard_dir"
 for cmd in 'git commit -m x --no-verify' 'git commit -nm "x"' 'git push origin main --force' \
     'git push --force-with-lease=main origin' 'git push origin +main' 'git reset HEAD --hard' \
     'git -c core.hooksPath=/dev/null commit -m x' 'git config core.hooksPath ""' 'cd x && git clean -fd' \
@@ -1050,6 +1479,8 @@ for cmd in $'cd x\n\tgit log --oneline -3' $'cd x\n\t\tgit commit -m "fix a --fo
     $'git status\n\techo done' $'git push origin feature\necho done'; do
   guard 0 "$cmd"
 done
+guard_run
+guard_report "$git_fail" "the guard hook doesn't block every destructive git command, on a later line, after a tab or before a line break, or it blocks a plain form" "the guard hook blocks the destructive git commands, on a later line, after a tab and before a line break, and passes the plain forms"
 # -n and --no-verify skip the hooks, and a spelling that quotes or splits the flag is the flag: the quoted
 # word, the quote inside it, an empty quote between its letters, a short flag inside a cluster, the long flag
 # abbreviated, a backslash and a line break inside it, and the words of a later line. After -- come paths.
@@ -1063,6 +1494,8 @@ for cmd in 'git commit -m x -- -nx.gd' 'git commit -m "a -n b" -- a.gd' 'git com
     "git commit -m 'fix the n handling' -- a.gd" 'git commit -a -m x' 'git commit -F - --no-status'; do
   guard 0 "$cmd"
 done
+guard_run
+guard_report "$git_fail" "the guard hook doesn't block every quoted, split or abbreviated -n and --no-verify, or it blocks a path after --" "the guard hook blocks -n and --no-verify however they are quoted, split or abbreviated, and passes a path after --"
 # A prototype's worktree is removed with `git worktree remove` and its branch deleted by the human
 # (prototype.md), so the ways to discard a worktree's changes or a branch's commits stay with the human in
 # every spelling: forced removal, forced or unmerged deletion, overwrites, an unquoted brace expansion or
@@ -1117,6 +1550,26 @@ for cmd in \
     'bash tools/prototype.sh remove quick-add'; do
   guard 0 "$cmd"
 done
+# The same rules in the PowerShell tool, in a substitution, in a wrapper's script and on a continued line, with
+# --pathspec-from-file beside them.
+for cmd in 'git branch -D x' 'git worktree remove --force x' 'git worktree add -B x ../x' 'git restore --pathspec-from-file=x'; do
+  guard 2 "$cmd" PowerShell
+  guard 2 "Write-Output \$($cmd)" PowerShell
+  guard 2 "echo \$($cmd)"
+  guard 2 "bash -c '$cmd'"
+done
+for cmd in $'git branch `\n-D x' $'git worktree remove `\n--force x' $'git worktree add `\n-B x ../x' $'git restore `\n--pathspec-from-file=x'; do
+  guard 2 "$cmd" PowerShell
+done
+for cmd in $'git branch \\\n-D x' $'git worktree remove \\\n--force x' $'git worktree add \\\n-B x ../x' $'git restore \\\n--pathspec-from-file=x' \
+    $'# note\\\ngit branch -D x'; do
+  guard 2 "$cmd"
+done
+for cmd in 'git branch -d x' 'git worktree remove ../x' 'git worktree add -b x ../x main' 'git restore a.gd'; do
+  guard 0 "$cmd" PowerShell
+done
+guard_run
+guard_report "$git_fail" "the guard hook doesn't block every forced worktree removal, branch deletion or overwrite, in Bash and PowerShell, or it blocks a plain form" "the guard hook blocks forced worktree removal, branch deletion and overwrites in every spelling, in Bash and PowerShell, in a substitution, a wrapper and on a continued line, and passes the plain forms"
 # settings.json no longer asks before `git restore` and `git checkout --`, so the guard keeps every
 # whole-tree form with the human: the pathspecs of the whole tree, quoted or not, --pathspec-from-file,
 # a git restore that names no file, and git on a later line of the command.
@@ -1134,17 +1587,40 @@ for cmd in 'git status --short' 'git commit -m "feat: x (T12)" -- a.gd' 'git com
     'git reset --soft HEAD~1' 'git switch main'; do
   guard 0 "$cmd"
 done
-# The single-file forms run without a prompt now, and a heredoc body is data: a Python body that says
-# "commit" and later " -len (x)" isn't git commit -n (The Guildkeeper hit this).
+# The single-file forms run without a prompt now, and a heredoc body is data: a script body that says
+# "commit" and later " -len (x)" isn't git commit -n (The Guildkeeper hit this). The body goes to node here: the guard blocks a
+# Python that reads its script from a heredoc, whatever the body (the cases for it are with the hang cases below).
 for cmd in 'git restore a.gd' 'git checkout -- scripts/systems/market.gd' 'git restore --source=HEAD~1 scripts/a.gd' \
     'git restore -s HEAD~1 -- scripts/a.gd' 'git restore --staged scripts/a.gd && git checkout -- scripts/a.gd' \
     "git commit -m 'docs: git restore . is blocked' -- a.md" 'git commit -m "docs: git checkout -- * is blocked" -- a.md' \
-    $'python3 - <<\'EOF\'\n# commit totals per day\nx = -len (rows)\nEOF' \
-    $'python3 - <<EOF\n# commit totals per day\nx = -len (rows)\nEOF' \
-    $'cd x && python3 - <<-PY\n\t# commit totals\n\ty = -n + 1\n\tPY\necho done' \
+    $'node - <<\'EOF\'\n# commit totals per day\nx = -len (rows)\nEOF' \
+    $'node - <<EOF\n# commit totals per day\nx = -len (rows)\nEOF' \
+    $'cd x && node - <<-PY\n\t# commit totals\n\ty = -n + 1\n\tPY\necho done' \
     $'git commit -q -F - <<\'EOF\'\nfix: handle -n in the parser\nEOF'; do
   guard 0 "$cmd"
 done
+for cmd in $'python3 - <<\'EOF\'\n# commit totals per day\nx = -len (rows)\nEOF' \
+    $'python3 - <<EOF\n# commit totals per day\nx = -len (rows)\nEOF' \
+    $'cd x && python3 - <<-PY\n\t# commit totals\n\ty = -n + 1\n\tPY\necho done'; do
+  guard 2 "$cmd"
+done
+for cmd in 'git restore ":(top)"' "git checkout -- '*'" 'git restore .' 'git restore'; do
+  guard 2 "$cmd" PowerShell
+done
+guard 0 'git restore README.md' PowerShell
+# Git for Windows reads a backslash in a pathspec as a slash, so .\ is the top folder, as ./ is; ./. and ./* are the whole tree too.
+for cmd in "git restore '.\\'" "git checkout -- '.\\'" 'git restore .\' 'git restore ./.' "git restore './.'" 'git checkout -- ./.' \
+    "git restore '.\\.'" 'git restore "./*"'; do
+  guard 2 "$cmd" PowerShell
+done
+for cmd in "git restore '.\\'" "git checkout -- '.\\'" 'git restore ./.' 'git checkout -- "./."' 'git restore "./*"'; do
+  guard 2 "$cmd"
+done
+for cmd in 'git restore ./a.gd' "git restore '.\\a.gd'" 'git checkout -- ./scripts/x.gd'; do
+  guard 0 "$cmd"; guard 0 "$cmd" PowerShell
+done
+guard_run
+guard_report "$git_fail" "the guard hook doesn't block every whole-tree restore or checkout, or it blocks a single-file form or a heredoc body that is data" "the guard hook blocks the whole-tree restore and checkout forms, quoted or not, and passes the single-file forms and heredoc bodies that are data"
 asks="$(sed -n '/"ask": \[/,/\]/p' .claude/settings.json)"
 if printf '%s' "$asks" | grep -q 'git restore' || printf '%s' "$asks" | grep -q 'git checkout'; then
   bad "settings.json no longer asks before git restore and git checkout --" "$asks"
@@ -1205,6 +1681,8 @@ for cmd in \
     'git worktree list'; do
   guard 0 "$cmd"
 done
+guard_run
+guard_report "$git_fail" "the guard hook doesn't block every git flag that writes a file, reads outside the repository or runs a configured command, or it blocks a plain form" "the guard hook blocks the git flags that write a file, read outside the repository or run a configured command, and passes the plain forms"
 # The settings template has to deny those flags next to its wildcard git rules, since the deny rules
 # are the harness's own layer under the hook. Tested on planted settings, so a change that stops the
 # check flagging a missing rule fails here.
@@ -1236,12 +1714,13 @@ printf '{\n  "permissions": {\n    "allow": [\n      "Bash(git status)",\n      
 [ -z "$git_planted" ] && ok "the git deny check flags each missing deny rule, and passes settings with no wildcard git rule" \
   || bad "the git deny check misses a planted case:$git_planted"
 
-# Hangs: an empty Python heredoc, unbounded waits, a Godot run without a time limit, a long sleep.
+# Hangs: a Python that reads its script from a heredoc, unbounded waits, a Godot run without a time limit, a long sleep.
 out="$(printf '{"tool_name":"Bash","tool_input":{"command":"timeout 600 godot --headless --script run_one.gd"}}' | bash .claude/hooks/guard-git.sh 2>&1)"
 expect_output "the Godot-run refusal points to the supported way to run one test file" 'bash tools/check\.sh --only tests/<file>\.gd' "$out"
 for cmd in $'python3 - <<\'EOF\' 2>/dev/null || echo "no python"\nEOF' $'python - <<EOF\nEOF' \
     $'py.exe - <<-"EOF"\n  EOF  ' $'python3 - <<\'EOF\' 2>/dev/null || python - <<\'EOF2\'\nEOF\nprint(1)\nEOF2' \
     $'cd x && python3 - <<EOF\nEOF\necho done' \
+    $'python3 - <<\'EOF\'\nprint("hi")\nEOF' $'python3 - <<EOF\nimport sys\nEOF' \
     'until grep -q "^exit" /tmp/t/tasks/b1.output; do sleep 5; done' 'until [ -f done ]; do sleep 5; done' \
     'while true; do sleep 10; done' 'timeout 600 bash -c "until [ -f x ]; do sleep 5; done"' \
     'timeout 5m bash -c "until [ -f x ]; do sleep 5; done"' \
@@ -1251,8 +1730,7 @@ for cmd in $'python3 - <<\'EOF\' 2>/dev/null || echo "no python"\nEOF' $'python 
     'timeout 300 "$GODOT_BIN" --headless --script x.gd' 'sleep 300' 'sleep 6m' 'echo wait && sleep 1h'; do
   guard 2 "$cmd"
 done
-for cmd in $'python3 - <<\'EOF\'\nprint("hi")\nEOF' 'python3 --version 2>/dev/null || echo "no python"' \
-    $'python3 - <<EOF\nimport sys\nEOF' \
+for cmd in 'python3 --version 2>/dev/null || echo "no python"' \
     'timeout 240 bash -c "until [ -f x ]; do sleep 5; done"' '(timeout 4m bash -c "while [ ! -f x ]; do sleep 2; done")' \
     'cd x && timeout 280s bash -c "until [ -f x ]; do sleep 5; done"' \
     'until grep -q "exited with code" /tmp/t/tasks/b1.output; do sleep 5; done' \
@@ -1266,6 +1744,295 @@ for cmd in $'python3 - <<\'EOF\'\nprint("hi")\nEOF' 'python3 --version 2>/dev/nu
     'git commit -m "docs: until loops with sleep 600 need a timeout; godot --headless too" -- a.md'; do
   guard 0 "$cmd"
 done
+# A Godot run is read in every reading of the command (Director-Driven-Development T278): behind a quoted path, on a continued
+# line, in a wrapper's script, a substitution or a heredoc body a shell runs, and in the PowerShell tool. A message or a file
+# body that names one is text, and a timeout of 280 seconds or less before the run, or above its wrapper, bounds it. The Godot
+# path that tools/setup-clone.sh saves, G=$(cat tools/godot_bin.local), is read as $GODOT_BIN is (B45 reads any other
+# variable as a command's name), so a git subcommand or a destructive flag after it is still blocked. A global option that takes a
+# value (--git-dir, --work-tree, --namespace) takes the word after it, which is no subcommand, and the subcommand after that is
+# judged (Director-Driven-Development T289).
+for cmd in \
+    'G=$(cat tools/godot_bin.local); $G push --force' \
+    'G=$(cat tools/godot_bin.local); "$G" --force' \
+    'G=$(cat tools/godot_bin.local); "$G" --work-tree . restore .' \
+    'G=$(cat tools/godot_bin.local); "$G" --git-dir .git branch -D x' \
+    'G=$(cat tools/godot_bin.local); "$G" --namespace x restore .' \
+    'G=$(cat tools/godot_bin.local); "$G" --config-env x=Y worktree remove -f x' \
+    'G=$(cat tools/godot_bin.local); timeout 60 "$G" commit -m x' \
+    'G=$(cat x.txt); timeout 120 "$G" --headless --import' \
+    'G=$(cat tools/godot_bin.local); G=$(cat x); timeout 60 "$G" --headless --import' \
+    'G=$(cat tools/godot_bin.local; cat x); timeout 60 "$G" --headless --import' \
+    'G=$(cat tools/godot_bin.local) && "$G" --headless --script x.gd' \
+    'bash -c "G=\$(cat tools/godot_bin.local); timeout 60 \$G --headless --import"' \
+    'timeout 300 godot --headless --import' \
+    'godot --import' \
+    'Godot_v4.7.2-stable_win64_console.exe --headless --script x.gd' \
+    'bash -c "godot --headless --script x.gd"' \
+    'timeout 600 bash -c "godot --headless --script x.gd"' \
+    'eval "godot --headless --import"' \
+    'echo $(godot --headless --script x.gd)' \
+    'timeout 60 echo "$(godot --headless --script x.gd)"' \
+    $'bash <<\'EOF\'\ngodot --headless --import\nEOF' \
+    '"C:/Program Files/Godot/godot.exe" --headless --import' \
+    $'godot \\\n--headless --import' \
+    'cd x && GODOT_BIN=/x/godot "$GODOT_BIN" --headless --import' \
+    'git commit -m x && sleep 600' \
+    'git commit -m "godot --headless" && godot --headless --import'; do
+  guard 2 "$cmd"
+done
+for cmd in \
+    '& "C:\Tools\Godot_v4.7.2-stable_win64_console.exe" --headless --import' \
+    '& $env:GODOT_BIN --headless --script x.gd' \
+    $'godot `\n--headless --import'; do
+  guard 2 "$cmd" PowerShell
+done
+for cmd in \
+    'G="$(cat tools/godot_bin.local)"; timeout 60 "$G" --headless --import' \
+    'G=$(head -n 1 tools/godot_bin.local); timeout 60 "$G" --headless --import' \
+    'G=$(cat tools/godot_bin.local); timeout 2m "$G" --version' \
+    'G=$(cat tools/godot_bin.local); timeout 120 "$G" --headless --script tests/run.gd' \
+    'timeout 240 bash -c "godot --headless --script x.gd"' \
+    'timeout 120 "C:/Program Files/Godot/godot.exe" --headless --import' \
+    'git commit -m "run godot --headless under timeout" -- a.md' \
+    $'git commit -q -F - <<\'EOF\'\nfix: godot --headless --script x.gd needs a timeout\nEOF' \
+    $'cat > notes.md <<\'EOF\'\ngodot --headless --import\nEOF' \
+    'echo "godot --headless --import"' \
+    'grep -n -- --headless README.md' \
+    'bash tools/check.sh --only tests/test_market.gd'; do
+  guard 0 "$cmd"
+done
+guard 0 'Write-Output "godot --headless"' PowerShell
+# Godot's name in any case and as the downloads and packages spell it: Godot, godot.EXE, godot4, the Windows, Linux and macOS
+# builds, the Flatpak, and $GODOT_BIN or $env:godot_bin in any case.
+for cmd in \
+    'Godot --headless --import' \
+    'godot.EXE --headless --import' \
+    'GODOT --headless --script x.gd' \
+    '/Applications/Godot.app/Contents/MacOS/Godot --headless --import' \
+    './Godot_v4.6-stable_linux.x86_64 --headless --import' \
+    'Godot_v4.7.2-stable_win64.exe --headless --script x.gd' \
+    'godot4 --headless --import' \
+    'flatpak run org.godotengine.Godot --headless --import' \
+    '"$godot_bin" --headless --script x.gd'; do
+  guard 2 "$cmd"
+done
+for cmd in \
+    '& $env:godot_bin --headless --script x.gd' \
+    '& $env:GODOT_BIN --headless --script x.gd' \
+    'Godot --headless --import' \
+    '& "C:\Godot\Godot_v4.6-stable_win64_console.exe" --headless --import'; do
+  guard 2 "$cmd" PowerShell
+done
+for cmd in \
+    'timeout 120 /Applications/Godot.app/Contents/MacOS/Godot --headless --import' \
+    'timeout 60 ./Godot_v4.6-stable_linux.x86_64 --headless --import' \
+    'cd framework/.godot-director && grep -n -- --script rules.md' \
+    'git commit -m "Godot --headless needs a timeout"'; do
+  guard 0 "$cmd"
+done
+# A wait loop with a loop nested in it runs to its own done (the do and done of each inner loop are counted), and a sleep
+# count with a fraction is read to the millisecond.
+for cmd in \
+    'while true; do for f in a b; do :; done; sleep 5; done' \
+    'while true; do while read l; do :; done < f; sleep 5; done' \
+    $'until false\ndo\n  for f in a; do echo $f; done\n  sleep 5\ndone' \
+    'while true; do for f in a; do :; done;sleep 9;done' \
+    'for ((;;)); do until true; do :; done; sleep 1; done' \
+    'sleep 600.5' 'sleep 280.5' 'sleep 4.7m' 'echo x; sleep 300.0'; do
+  guard 2 "$cmd"
+done
+for cmd in \
+    'while read l; do for f in a; do :; done; done < x; sleep 5' \
+    'for f in a b; do while read l; do :; done < f; done' \
+    'timeout 240 bash -c "while true; do for f in a; do :; done; sleep 5; done"' \
+    'sleep 0.5' 'sleep 280.0' 'sleep 4.5m' 'sleep 1.'; do
+  guard 0 "$cmd"
+done
+for cmd in 'Start-Sleep -Seconds 600.5' 'Start-Sleep 280.5' 'Start-Sleep -Milliseconds 280000.5'; do guard 2 "$cmd" PowerShell; done
+for cmd in 'Start-Sleep -Seconds 0.5' 'Start-Sleep -Milliseconds 280000.0'; do guard 0 "$cmd" PowerShell; done
+# A loop that polls a background command's tasks/<id>.output waits for its end marker under any timeout and any wrapper:
+# bash with options before -c, and PowerShell's while and do { } while.
+for cmd in \
+    "timeout 240 bash -e -c 'until grep -q x tasks/b1.output; do sleep 5; done'" \
+    "timeout 240 bash --norc -c 'until grep -q x tasks/b1.output; do sleep 5; done'" \
+    "timeout 240 bash -c 'until grep -q x tasks/b1.output; do sleep 5; done'" \
+    'timeout 240 bash -c "until grep -q x \"/tmp/t/tasks/b1.output\"; do sleep 5; done"'; do
+  guard 2 "$cmd"
+done
+for cmd in \
+    'timeout 240 pwsh -c "while (-not (Select-String -Quiet x tasks/b1.output)) { Start-Sleep 5 }"' \
+    'do { Start-Sleep 5 } while (-not (Select-String -Quiet x tasks/b1.output))'; do
+  guard 2 "$cmd" PowerShell
+done
+for cmd in \
+    "timeout 240 bash -c 'until grep -q \"exited with code\" tasks/b1.output; do sleep 5; done'" \
+    'git commit -m "poll tasks/b1.output while you wait" -- a.md' \
+    'cat tasks/b1.output'; do
+  guard 0 "$cmd"
+done
+guard_run
+guard_report "$git_fail" "the guard hook doesn't block every hang (a Python that reads its script from a heredoc, an unbounded wait, a Godot run without a time limit, a long sleep), or it blocks a bounded form" "the guard hook blocks a Python that reads its script from a heredoc, an unbounded wait, a Godot run without a time limit and a long sleep, in every reading of the command, and passes the bounded forms"
+
+# A Python that reads its script from a heredoc (Director-Driven-Development T309, which closes B64): the guard blocks python, python3,
+# python3.13, pythonw and py (with or without .exe, bare or behind a path, quoted or not) when the script comes from a heredoc or a
+# here-string, whatever the body, with a time limit above it or not. The older rule saw only an empty body on the next line, so a quoted
+# multi-line string after the header (B64) hid the form. A script file fed data from a heredoc, -c, -m and --version pass, and so does a
+# message, a quoted echo or grep, or a cat body that names the form. Each blocked case also checks that the refusal names Python, in the
+# Bash and the PowerShell tool both.
+out="$(printf '{"tool_name":"Bash","tool_input":{"command":"python3 - <<EOF\\nprint(1)\\nEOF"}}' | bash .claude/hooks/guard-git.sh 2>&1)"
+expect_output "the refusal of a Python heredoc says why" 'python reading its script from a heredoc can hang: on Windows it can wait for console input and never return\.' "$out"
+expect_output "and names the forms that work" 'Write the script to a file with Write and run it \(python3 script\.py\), use python3 -c for one line, and run python3 --version to test whether Python is there\.' "$out"
+py_msg='python reading its script from a heredoc can hang'
+py_block() { # py_block <command>...: each command is blocked in the Bash and the PowerShell tool, with a refusal that names Python
+  local c t
+  for c in "$@"; do for t in Bash PowerShell; do guard 2 "$c" "$t" "$py_msg"; done; done
+}
+py_pass() { # py_pass <command>...: each command passes in the Bash and the PowerShell tool
+  local c t
+  for c in "$@"; do for t in Bash PowerShell; do guard 0 "$c" "$t"; done; done
+}
+# The interpreter's names: python, python3, any minor version, pythonw and py, with or without .exe, in any case, bare, behind a path
+# with forward or back slashes, or quoted.
+py_block \
+    $'python - <<\'E\'\nprint(1)\nE' $'python3 - <<\'E\'\nprint(1)\nE' $'python3.13 - <<E\nprint(1)\nE' $'pythonw - <<E\nprint(1)\nE' \
+    $'py - <<E\nprint(1)\nE' $'python.exe - <<E\nprint(1)\nE' $'py.exe - <<E\nprint(1)\nE' $'python3.13.exe - <<E\nprint(1)\nE' \
+    $'PYTHON3 - <<E\nprint(1)\nE' $'/usr/bin/python3 - <<E\nprint(1)\nE' $'~/.venv/Scripts/python.exe - <<E\nprint(1)\nE' \
+    $'C:\\Python313\\python.exe - <<E\nprint(1)\nE' $'C:/Python313/python.exe - <<E\nprint(1)\nE' \
+    $'"C:/Program Files/Python313/python.exe" - <<E\nprint(1)\nE' $'\'C:\\Program Files\\Python313\\python.exe\' - <<E\nprint(1)\nE' \
+    $'"python3" - <<E\nprint(1)\nE' $'\'py\' - <<E\nprint(1)\nE'
+# With the - or without it, with interpreter options before it, and an empty body too.
+py_block \
+    $'python <<\'E\'\nprint(1)\nE' $'python3 <<E\nprint(1)\nE' $'python3 -u - <<E\nprint(1)\nE' $'python3 -X utf8 - <<E\nprint(1)\nE' \
+    $'py -3 - <<E\nprint(1)\nE' $'python3 -W ignore - <<E\nprint(1)\nE' $'python3 -u -X utf8 - <<E\nprint(1)\nE' $'python3 -u <<E\nprint(1)\nE' \
+    $'python3 - <<\'EOF\'\nEOF' $'python3 - <<EOF\n\nEOF'
+# Each heredoc form, and a here-string.
+py_block \
+    $'python3 - <<E\nprint(1)\nE' $'python3 - <<\'E\'\nprint(1)\nE' $'python3 - <<"E"\nprint(1)\nE' $'python3 - <<\\E\nprint(1)\nE' \
+    $'python3 - <<-E\n\tprint(1)\n\tE' $'python3 - << E\nprint(1)\nE' \
+    $'python - <<<\'print(1)\'' $'python <<<"print(1)"' $'python3 - <<<$X'
+# Behind a wrapper or in a chain, with a time limit above it (no bound is shown to stop it through the Windows Store alias), and after
+# an assignment, a redirect or a separator.
+py_block \
+    $'timeout 60 python - <<E\nprint(1)\nE' $'timeout 5 "C:/Program Files/Python313/python.exe" - <<E\nprint(1)\nE' \
+    $'env X=1 python - <<E\nprint(1)\nE' $'FOO=1 python3 - <<E\nprint(1)\nE' $'PYTHONPATH="a b" python3 - <<E\nprint(1)\nE' \
+    $'uv run python - <<E\nprint(1)\nE' $'nohup python3 - <<E\nprint(1)\nE' $'cd x && python - <<E\nprint(1)\nE' \
+    $'python3 tool.py && python3 - <<E\nprint(1)\nE' $'if true; then python3 - <<E\nprint(1)\nE\nfi' $'echo hi\npython3 - <<E\nprint(1)\nE' \
+    $'python3 - <<E 2>/dev/null || true\nprint(1)\nE' $'python3 - 2>/dev/null <<E\nprint(1)\nE' $'python3 - <<E 2>&1\nprint(1)\nE' \
+    $'python3 - <<E | tee out.txt\nprint(1)\nE' $'python3 - <<E &\nprint(1)\nE' 'x=$(python3 - <<<"print(1)")'
+# Piped in from a heredoc or a here-string.
+py_block \
+    $'cat <<\'E\' | python -\nprint(1)\nE' $'cat <<E | python3\nprint(1)\nE' $'cat <<E | tr a b | python3 -\nprint(1)\nE' \
+    $'x=1 && cat <<E | python3 -\nprint(1)\nE' 'echo $(cat <<<x | python3)'
+# Inside a heredoc body that a shell runs, and inside a script given to a shell.
+py_block \
+    $'bash <<\'X\'\npython3 - <<\'E\'\nprint(1)\nE\nX' $'bash <<X\npython3 - <<\'E\'\nprint(1)\nE\nX' \
+    $'cat > x.sh <<\'E\'\npython3 - <<\'X\'\nprint(1)\nX\nE\nbash x.sh' $'bash -c "python3 - <<\'E\'\nprint(1)\nE"'
+# B64: the empty body after a quoted multi-line string. The quoted string closes on the second line, so the shell starts the heredoc's
+# body after it and the body is empty; the older rule took the line after the header as the body and never reached the delimiter.
+py_block \
+    $'python3 - <<\'E\' 2>/dev/null || node -e "\nx()"\nE' $'python3 - <<\'E\' 2>/dev/null || node -e "\nconsole.log(1)\n"\nE'
+# A comment with an apostrophe before the header pairs with nothing after its line.
+py_block \
+    $'# what\'s here\npython3 - <<\'E\'\nprint(1)\nE' $'ls  # it\'s\npython3 - <<\'E\'\nprint(1)\nE'
+# A continuation: a backslash joins the lines in Bash, a backtick in PowerShell.
+guard 2 $'python3 \\\n- <<\'EOF\'\nprint(1)\nEOF' Bash "$py_msg"
+guard 2 $'python3 \\\n- <<\'EOF\'\nEOF' Bash "$py_msg"
+guard 2 $'python3 `\n- <<\'EOF\'\nprint(1)\nEOF' PowerShell "$py_msg"
+guard 2 $'python3 `\n- <<\'EOF\'\nEOF' PowerShell "$py_msg"
+# PowerShell's here-string piped in, in the form of a single or a double quote, behind a path, an option or the call operator.
+for cmd in \
+    $'@\'\nprint(1)\n\'@ | python -' $'@"\nprint(1)\n"@ | python' $'@\'\nprint(\'it\')\n\'@ | python -' $'@\'\nprint(1)\n\'@ | py -3 -' \
+    $'@\'\nprint(1)\n\'@ | & "C:\\Program Files\\Python313\\python.exe" -' $'@\'\nprint(1)\n\'@ | python3.13' \
+    $'$s = 1\n@\'\nprint(1)\n\'@ | python -' $'@\'\nprint(1)\n\'@ | python - | Out-File x.txt'; do
+  guard 2 "$cmd" PowerShell "$py_msg"
+done
+# A script file fed data from a heredoc, -c and -m with or without a heredoc of data, and --version pass, and so do the same forms
+# with the interpreter's options, a quoted script name and a pipe.
+py_pass \
+    $'python tool.py <<\'E\'\ndata\nE' $'python3 tool.py --flag <<E\ndata\nE' $'python3 -u tool.py <<E\ndata\nE' $'py -3 tool.py <<E\ndata\nE' \
+    $'python3 "my tool.py" <<E\ndata\nE' $'python3 -X utf8 tool.py <<E\ndata\nE' $'python3 -x tool.py <<E\ndata\nE' \
+    $'python3 -c "import sys; print(sys.stdin.read())" <<\'E\'\ndata\nE' $'python -m json.tool <<E\n{}\nE' $'python3 -Im json.tool <<E\n{}\nE' \
+    $'python3 -c \'print(1)\' <<<"data"' 'python -c "print(1)"' 'python -m pytest -q tests/' 'python3 --version' 'py -3 --version' \
+    'python3 --version 2>/dev/null || echo "no python"' 'python3 tool.py' 'python3 tool.py --flag' $'python3 - < script.py' \
+    $'cat <<\'E\' | python3 tool.py\ndata\nE' $'cat <<E | python -c "import sys"\ndata\nE' $'cat <<E | python -m json.tool\n{}\nE' \
+    $'cat <<E | grep python\ndata\nE' 'cat file | python3' $'python3 tool.py && python3 - < in.py'
+for cmd in \
+    $'@\'\nprint(1)\n\'@ | python -c "import sys"' $'@\'\nprint(1)\n\'@ | python x.py' $'@\'\nprint(1)\n\'@ | python -m json.tool' \
+    $'@\'\nprint(1)\n\'@ | Set-Content x.py; python x.py' $'@\'\nprint(1)\n\'@ | Set-Content x.py\npython x.py' \
+    $'@\'\npython3 - <<\'E\' is blocked\n\'@ | Set-Content doc.md' $'@"\nuse python3 - <<E never\n"@ | Set-Content doc.md'; do
+  guard 0 "$cmd" PowerShell
+done
+# A message, a quoted echo or grep, and a cat or tee body nothing runs may name the form. A heredoc whose delimiter is PY writes a
+# file, and a word py or python that isn't a command (a package, a pattern, a path) is no interpreter.
+py_pass \
+    $'git commit -q -F - <<\'E\'\nfix: python3 - <<\'X\' is blocked\nE' $'git commit -q -F - <<E\nfix: python3 - <<X is blocked\nE' \
+    $'git tag -a v1 -F - <<\'E\'\npython3 - <<\'X\'\nE' $'gh pr create --body-file - <<\'E\'\nUse python3 - <<\'X\' never\nE' \
+    $'gh pr create --title t --body "$(cat <<\'E\'\npython3 - <<\'X\'\nE\n)"' \
+    'git commit -m "docs: python3 - <<\"E\" is blocked" -- a.md' "git commit -m 'docs: python3 - <<\"E\" is blocked' -- a.md" \
+    $'echo "python3 - <<\'E\'"' $'echo \'python3 - <<"E"\'' 'grep -n "python3 - <<" rules.md' "grep -rn 'python - <<' ." 'printf "%s\n" "python <<E"' \
+    $'cat > notes.md <<\'E\'\npython3 - <<\'X\'\nprint(1)\nX\nE' $'tee notes.md <<\'E\'\npython3 - <<X\nprint(1)\nX\nE' \
+    $'cat > run.py <<\'PY\'\nprint(1)\nPY' $'cat > x.py <<PY\nprint(1)\nPY' $'cat > x.py <<-PY\n\tprint(1)\n\tPY' $'cat > x.py << PY\nprint(1)\nPY' \
+    $'cat > x.py <<"PY"\nprint(1)\nPY' $'cat > x.py <<\\PY\nprint(1)\nPY' $'git commit -q -F - <<\'PY\'\nfix\nPY' \
+    'ls tools/*.py' 'pip install python-dotenv' 'cp a.py b.py' 'pytest tests' 'git add tools/usage.py' 'pip list | grep -i python' \
+    'which python3' 'command -v python3' 'docker run python:3.12 --version' \
+    $'# python3 - <<\'E\' is blocked\nls' $'ls # python3 - <<E\nls' 'echo python <<<foo' $'grep python <<<"$x"' $'psql <<\'SQL\'\nselect \'python\'\nSQL'
+guard_run
+guard_report "$git_fail" "the guard hook doesn't block a Python that reads its script from a heredoc or a here-string, or it blocks a script file fed data, -c, -m, a message that names the form, or a heredoc whose delimiter is PY" "the guard hook blocks python, python3, py and pythonw reading their script from a heredoc or a here-string, whatever the body, bounded by a timeout or not (B64's form too), says so, and passes a script file fed data from a heredoc, -c, -m, --version and a message that names the form"
+
+# A command name written as a path (Director-Driven-Development T293): a quoted name with a space in its path, or an unquoted backslash
+# path that starts with a drive, ., .., ~ or two backslashes, is read as its last part (git.exe is git) in the Bash and the PowerShell
+# tool, after an assignment, a wrapper, a separator or a call operator. A quoted path that is an argument, a message or a body nothing
+# runs is text, an escaped name (c\at) is still the shell's name, and the Godot path under a timeout still passes.
+for cmd in \
+    '"C:\Program Files\Git\bin\git.exe" push --force' \
+    "& 'C:\\Program Files\\Git\\bin\\git.exe' push --force" \
+    'C:\Git\bin\git.exe push --force' \
+    '"C:\Program Files\Git\cmd\git.exe" push --force' \
+    'FOO=1 "C:\Program Files\Git\bin\git.exe" push --force' \
+    'env "C:\Program Files\Git\bin\git.exe" push --force' \
+    'cd x && "C:\Program Files\Git\bin\git.exe" push --force' \
+    'true; C:\Git\bin\git.exe push --force' \
+    'echo $("C:\Program Files\Git\bin\git.exe" push --force)' \
+    'timeout 60 "C:\Program Files\Git\bin\git.exe" push --force' \
+    '"C:\Program Files\Git\bin\git.exe" -C x push --force' \
+    '"C:\Program Files\Git\bin\git.exe" reset --hard' \
+    '"C:\Program Files\Git\bin\git.exe" restore .' \
+    '"C:\Program Files\Git\bin\git.exe" branch -D x' \
+    '"C:\Program Files\Git\bin\git.exe" commit -m x --no-verify' \
+    '..\bin\git.exe push --force' '~\bin\git.exe push --force' '\\server\share\git.exe push --force' \
+    "bash -c '\"C:\\Program Files\\Git\\bin\\git.exe\" push --force'" \
+    ". 'C:\\Git\\bin\\git.exe' push --force"; do
+  guard 2 "$cmd"
+  guard 2 "$cmd" PowerShell
+done
+guard 2 $'bash <<\'EOF\'\n"C:\\Program Files\\Git\\bin\\git.exe" push --force\nEOF'
+for cmd in \
+    "& 'C:\\Program Files\\Git\\bin\\git.exe' status" \
+    '"C:\Program Files\Git\bin\git.exe" log -1' \
+    '"C:\Program Files\Git\bin\git.exe" push origin main' \
+    'git commit -q -m "docs: C:\Program Files\Git\bin\git.exe push --force is blocked"' \
+    'echo "C:\Program Files\Git"' \
+    'echo "C:\Program Files\Git\bin\git.exe push --force"' \
+    'git log "C:\Program Files\Git\bin\git.exe"' \
+    'git log --format="C:\Git\bin\git.exe push --force"' \
+    'cp "C:\x y\git.exe" backup' \
+    'c\at README.md' \
+    'timeout 120 "C:\Tools\Godot_v4.7.2-stable_win64_console.exe" --headless --script x.gd' \
+    'git commit -q -m "docs: a quoted C:\Tools\Godot_v4.7.2-stable_win64_console.exe needs a timeout" -- a.md'; do
+  guard 0 "$cmd"
+  guard 0 "$cmd" PowerShell
+done
+guard 0 $'cat > notes.md <<\'EOF\'\n"C:\\Program Files\\Git\\bin\\git.exe" push --force\nEOF\ngit add notes.md'
+guard 0 $'git commit -q -F - <<\'EOF\'\ndocs: "C:\\Program Files\\Git\\bin\\git.exe" push --force is blocked\nEOF'
+for cmd in \
+    '"C:\Tools\Godot_v4.7.2-stable_win64_console.exe" --headless --script x.gd' \
+    '"C:\Tools\Godot_v4.7.2-stable_win64_console.exe" --headless --import' \
+    "& 'C:\\Tools\\Godot_v4.7.2-stable_win64_console.exe' --headless --script x.gd"; do
+  guard 2 "$cmd"
+  guard 2 "$cmd" PowerShell
+done
+guard_run
+guard_report "$git_fail" "the guard hook doesn't read a command name written as a path, quoted with a space or as a backslash path, so git passes behind it, or it blocks a path that is an argument, a message, a body nothing runs or the Godot path under a timeout" "the guard hook blocks git behind a quoted path with a space, a backslash path, an assignment, a wrapper, a separator, a call operator and a substitution, in the Bash and the PowerShell tool, and a heredoc body a shell runs, and passes the paths that are arguments and messages, an escaped name and the Godot path under a timeout"
 
 # The credential stores: shell reads of ~/.ssh, git's credentials files and the gh CLI's config folders,
 # and the commands that print a stored credential. A command that names a store without reading it, or
@@ -1283,6 +2050,24 @@ for cmd in 'cat README.md' 'cat framework/.godot-director/rules.md' 'cat notes/x
     $'cat README.md\necho ~/.ssh'; do
   guard 0 "$cmd"
 done
+# A commit's or gh message, and a cat body nothing runs, may name the commands that print a credential; a body a shell runs, an
+# unquoted message's substitution and a command after a message are read.
+for cmd in \
+    $'git commit -q -F - <<\'EOF\'\nfix: gh auth token is blocked\nEOF' \
+    $'git commit -q -F - <<\'EOF\'\ndocs: git credential fill prints a token\nEOF' \
+    $'gh pr edit 5 --body-file - <<\'EOF\'\nThe guard blocks gh auth token and git credential get.\nEOF' \
+    $'cat > notes.md <<\'EOF\'\ngh auth token\nEOF'; do
+  guard 0 "$cmd"
+done
+for cmd in \
+    $'bash <<\'EOF\'\ngh auth token\nEOF' \
+    $'git commit -q -F - <<EOF\n$(gh auth token)\nEOF' \
+    $'git commit -q -F - <<\'EOF\'\nmsg\nEOF\ngh auth token' \
+    $'cat > x.sh <<\'EOF\'\ngit credential fill\nEOF\nbash x.sh'; do
+  guard 2 "$cmd"
+done
+guard_run
+guard_report "$git_fail" "the guard hook doesn't block every shell read of a credential store or command that prints a stored credential, or it blocks an ordinary read" "the guard hook blocks shell reads of the credential stores and the commands that print a stored credential, and passes ordinary reads"
 # The Read tool is the harness's own layer, and a Read rule doesn't reach a shell command, so the
 # settings template denies the Read tool the same stores. Tested on planted settings, so a check that
 # stops flagging a missing rule fails here.
@@ -1307,17 +2092,1785 @@ else
   ok "settings.json denies the Read tool the SSH folder, git's credentials and the gh CLI's config folders"
 fi
 
+# The hook runs under macOS's bash 3.2 too (CLAUDE.md > Scripts), so it holds no bash 4 form: case conversion (${x,,}, ${x^^}),
+# an associative array, mapfile or readarray, coproc, |&, or a negative substring offset (${x: -1}). Comment lines are skipped.
+bash4=$(grep -nE '^[^#]*(\$\{[A-Za-z_0-9]+(\[[^]]*\])?(,,|\^\^)\}|(declare|local|typeset) +-[a-zA-Z]*A|(^|[;&| ])(mapfile|readarray) +|(^|[;&| ])coproc +[A-Za-z]|[[:space:]]\|&[[:space:]]|\$\{[A-Za-z_0-9@*]+(\[[^]]*\])?: -[0-9])' .claude/hooks/guard-git.sh || true)
+if [ -z "$bash4" ]; then ok "the guard hook uses no bash 4 form, so it runs under bash 3.2"
+else bad "the guard hook uses a bash 4 form (bash 3.2 on macOS has none)" "$bash4"; fi
+# bash 3.2 keeps the quotes of a quoted replacement string (${t//x/"$y"}), so the hook replaces text with str_swap, which quotes none.
+bash43=$(grep -nE '^[^#]*\$\{[A-Za-z_0-9]+(\[[^]]*\])?//?("[^"]*"|[^/"}]+)/"' .claude/hooks/guard-git.sh || true)
+if [ -z "$bash43" ]; then ok "the guard hook quotes no replacement string, which bash 3.2 would keep"
+else bad "the guard hook quotes a replacement string (bash 3.2 keeps the quotes)" "$bash43"; fi
+
+# The guard starts no other process (it runs on every Bash, Monitor and PowerShell call, and a process start is slow on Windows). With no
+# PATH only a builtin can run, so "command not found" in its output names a process it tried to start. A spread of the cases that
+# reach most of its rules (credential reads, wrappers, substitutions, loops, a Godot run, heredocs, git flags) is run that way.
+nopath_fail=""
+for cmd in \
+    'git push origin main --force' 'git commit -m x --no-verify' $'git commit -q -F - <<\'EOF\'\nmsg\nEOF' 'git log --output=/tmp/x' \
+    'git -c core.pager=x log' 'git branch -df x' 'git worktree remove --force x' 'GIT=git; $GIT push --force' 'git restore' \
+    'cat ~/.git-credentials' 'cat ~/.ssh/id_rsa' 'Get-Content ~/.ssh/id_rsa' 'gh auth token' 'bash -c "git push --force"' 'eval "cat ~/.ssh/id_rsa"' \
+    'echo $(git push --force)' 'git push "$(echo --force)"' $'git commit \\\n-n -m x' $'# note\\\ngit push --force' \
+    'until test -f x; do sleep 1; done' 'sleep 300' 'for ((i=0;i<9;i++)); do sleep 1; done' $'python3 - <<\'EOF\'\nEOF' \
+    $'python3 -X utf8 - <<EOF\nprint(1)\nEOF' $'cat <<E | python -\nx\nE' $'@\'\nprint(1)\n\'@ | python -' $'python3 tool.py <<EOF\ndata\nEOF' \
+    'godot --headless --script x.gd' 'G=$(cat tools/godot_bin.local); timeout 60 "$G" --headless --import' \
+    'Invoke-Expression "git push --force"' $'cat <<EOF | bash\ngit push --force\nEOF' 'git status' 'ls'; do
+  json_str "$cmd"
+  for tool in Bash PowerShell; do
+    printf '{"session_id":"s","tool_name":"%s","tool_input":{"command":"%s","description":"run"}}' "$tool" "$JSON_STR" > "$guard_dir/nopath.json"
+    err=$(PATH=/nonexistent "$BASH" .claude/hooks/guard-git.sh < "$guard_dir/nopath.json" 2>&1 >/dev/null)
+    case $err in *"command not found"*) nopath_fail="$nopath_fail"$'\n'"  ($tool) ${cmd//$'\n'/ NL }: ${err//$'\n'/ | }" ;; esac
+  done
+done
+rm -f "$guard_dir/nopath.json"
+guard_report "$nopath_fail" "the guard starts another process" "the guard starts no other process"
+
+# The guard reads a long file body in time (the hook's timeout in settings.json is 10 seconds): a 25 KB GDScript of $Node.method()
+# lines, written from a Bash heredoc and from a PowerShell here-string, in a UTF-8 locale, each under 5 seconds (about 0.4 and 1.2
+# seconds in Git Bash on Windows). A third body, 25 KB of text that spells py on two lines in three, is data fed to a Python script
+# (python3 tool.py <<'EOF'): the guard keeps that body, since a script may run it, and reads only the lines that hold a <<.
+# Bash's time keyword reads the clock, so the measurement starts no process of its own.
+guard_report "$slow_fail" "the guard is too slow on a long file body" "the guard reads a 25 KB GDScript heredoc and here-string, and 25 KB of data fed to a Python script, in under 5 seconds each:${slow_times%,}"
+
+# A variable in the hook's environment named like a per-view array (vhang, vcov, vdep, vpx, vps) changes nothing: the arrays start
+# empty, so an exported vhang=1 doesn't skip the git rules.
+env_fail=""
+printf '%s' '{"session_id":"s","tool_name":"Bash","tool_input":{"command":"git push --force","description":"run"}}' > "$guard_dir/env.json"
+for v in vhang vcov vdep vpx vps; do
+  env "$v=1" bash .claude/hooks/guard-git.sh < "$guard_dir/env.json" >/dev/null 2>&1
+  [ $? -eq 2 ] || env_fail="$env_fail"$'\n'"  with $v=1 in the environment the guard passes git push --force"
+done
+rm -f "$guard_dir/env.json"
+guard_report "$env_fail" "a variable in the hook's environment changes what the guard blocks" "a variable in the hook's environment named like the guard's per-view arrays changes nothing"
+
+# The guard's reading of a command, case by case (Director-Driven-Development T278; the B numbers are its bug IDs): the PowerShell
+# tool, the readers of the credential stores, continuations (a backslash in Bash, a backtick in PowerShell, and the comments
+# that end in one), tabs, command substitutions, variables, shell wrappers, wait loops, heredoc bodies, git configuration
+# and program flags, quoted and capitalised names, and Invoke-Expression.
+if [ ! -f .claude/settings.json ]; then
+  bad ".claude/settings.json is missing, so the guard's wiring can't be checked"
+else
+  git_fail=""
+  perm_allow=$(sed -n '/"allow": *\[/,/\]/p' .claude/settings.json)
+  if [ ! -f .claude/hooks/guard-git.sh ]; then
+    git_fail="$git_fail"$'\n'"  .claude/hooks/guard-git.sh is missing"
+  else
+    for cmd in \
+        'git log -1 --format=probe --output=/tmp/probe.txt' \
+        'git log --output /tmp/probe.txt' \
+        'git show --output /tmp/probe.txt HEAD' \
+        'git diff --output=probe.txt' \
+        'git stash show --output=/tmp/probe.txt' \
+        "git log '--output=/tmp/probe.txt'" \
+        'git log "--no-index"' \
+        'git log --out\put=/tmp/probe.txt' \
+        'git log --output="/tmp/my probe.txt"' \
+        'git diff --no-index a b' \
+        'git diff --no-index /dev/null /etc/hosts' \
+        'git log -p --ext-diff' \
+        'git diff --ext-diff' \
+        'git diff /etc/hosts README.md' \
+        'git diff ../other.txt README.md' \
+        'git commit -F /tmp/msg.txt' \
+        'git commit -F/tmp/msg.txt' \
+        'git commit -aF /tmp/msg.txt' \
+        'git commit -F "/tmp/my msg.txt"' \
+        'git commit --file /tmp/msg.txt' \
+        'git commit --file=/tmp/msg.txt' \
+        'git commit -F - -F /tmp/msg.txt' \
+        'git add -A && git commit -F /tmp/msg.txt' \
+        'git -C work/Godot-Director log --output=/tmp/probe.txt' \
+        $'git commit -q -F - <<\'EOF\'\nmsg\nEOF\ngit log --output=/tmp/probe.txt' \
+        'cat ~/.ssh/id_ed25519' \
+        'head "$HOME/.git-credentials"' \
+        'cat ~/.config/gh/hosts.yml' \
+        'less "/c/Users/V/AppData/Roaming/GitHub CLI/hosts.yml"' \
+        'cat "C:\Users\V\.ssh\id_rsa"' \
+        'cat "~/.ssh/id_rsa"' \
+        "head '.git-credentials'" \
+        'cat .git-credentials' \
+        'head ./.config/gh/hosts.yml' \
+        'cat "config/.config/gh/hosts.yml"' \
+        'less .config/git/credentials' \
+        "tail '.git-credentials'" \
+        'tail -n 20 .git-credentials' \
+        'cat README.md; cat .git-credentials' \
+        'cat README.md .git-credentials' \
+        'tail -n 20 .git-credentials' \
+        'head -5 ~/.ssh/id_rsa' \
+        'cat docs/a.md "~/.ssh/id_ed25519"' \
+        'less -R .config/gh/hosts.yml' \
+        'gh auth token' \
+        'gh auth status -t' \
+        "printf 'protocol=https\\nhost=github.com\\n' | git credential fill" \
+        "printf 'protocol=https\\nhost=github.com\\n' | git credential get" \
+        $'cd x\ngit branch -D y' \
+        $'cd x\ngit commit --no-verify -m x' \
+        $'cd x\n\tgit log --output=/tmp/x' \
+        $'echo a\ngit push --force' \
+        $'cd x\ngit commit -F /tmp/msg.txt' \
+        $'cd x\ngit credential fill' \
+        "git commit '-n' -m x" \
+        'git commit "-n" -m x' \
+        'git commit -""n -m x' \
+        "git commit --no-ve''rify -m x" \
+        "git commit -m -- '-n'" \
+        $'git commit \\\n-n -m x' \
+        $'git push \\\n--force' \
+        $'git push origin \\\n+main' \
+        $'git reset \\\n--hard' \
+        $'git credential \\\nfill' \
+        $'git log \\\n--output=/tmp/probe.txt' \
+        $'cat \\\n.git-credentials' \
+        $'cat README.md \\\n.git-credentials' \
+        $'cat\t.git-credentials' \
+        $'head\t-n\t20\t.git-credentials' \
+        $'git\tpush --force' \
+        $'git\tcommit -n -m x' \
+        $'git\tlog --output=/tmp/probe.txt' \
+        $'echo a\\\\\ngit push --force' \
+        $'echo a\\\\\ngit commit -F /tmp/msg.txt' \
+        $'sleep \\\n300'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'git log --oneline -5' \
+        'git diff HEAD' \
+        'git diff --cached --stat' \
+        'git diff origin/main..HEAD -- docs/index.md' \
+        'git show HEAD:README.md' \
+        'git commit -m "fix the --output handling"' \
+        'git commit -m x -- docs/index.md' \
+        "git commit -m x -- '-n'" \
+        'git commit -F -' \
+        'git commit --file=-' \
+        $'git commit -q -F - <<\'EOF\'\nfix the --output and --no-index handling, not -F /tmp/x\nEOF' \
+        'git stash list' \
+        'git worktree list' \
+        'git log --grep -O' \
+        'bash tools/check.sh' \
+        'bash tools/prototype.sh start quick-add' \
+        'bash tools/check.sh && git log origin/main..HEAD' \
+        'cat README.md' \
+        'cat docs/how-to/where.md' \
+        'cat README.md' \
+        'cat docs/notes.md' \
+        'head project.godot' \
+        'cat export_presets.cfg' \
+        'cat README.md docs/x.md' \
+        'tail -n 20 README.md' \
+        'head -5 notes.txt' \
+        'cat README.md docs/notes.md' \
+        'grep -n ssh docs/how-to/trouble.md' \
+        'git log --oneline -3' \
+        'ls ~/.ssh' \
+        'gh auth status' \
+        $'git status\ngit log --oneline -3' \
+        $'git status\ngit commit -q -F - <<\'EOF\'\nfix the --output and --no-index handling, not -F /tmp/x\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nfix the -n flag, not a flag\nEOF' \
+        'echo x\\ngit branch -D y' \
+        $'git log \\\n--oneline -3' \
+        $'git status \\\n-s' \
+        $'git diff \\\nHEAD' \
+        $'echo a\\\\\nls' \
+        $'cat README.md \\\ndocs/x.md' \
+        $'cat\tREADME.md' \
+        $'git\tstatus'; do
+      guard 0 "$cmd"
+    done
+    # PowerShell (B24): its input carries the command as tool_input.command, like Bash's, so the hook must
+    # exit the same way on a PowerShell payload. These are the git flags the deny rules and the guard block.
+    for cmd in \
+        'git push --force' \
+        'git commit --no-verify -m x' \
+        'git reset --hard HEAD~1' \
+        'git log --output=/tmp/probe.txt' \
+        'git diff --no-index a b' \
+        'git commit -F /tmp/msg.txt' \
+        'cat .git-credentials'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in 'git status' 'git log --oneline -5' 'git diff HEAD'; do
+      guard 0 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "git's file-writing, file-reading and external-command flags, or the credential stores, are not all blocked when a continuation, a tab or a later line splits them, or a plain form is blocked (B24, B25)" "the guard hook blocks git's file-writing, file-reading and external-command flags and the credential-store reads on a later line, a continued line or after a tab, in Bash and PowerShell, and passes the plain forms (B24, B25)"
+
+  # The PowerShell readers of credential stores (B27): Get-Content and its aliases gc and type, Select-String
+  # and sls, and [IO.File]::ReadAll... block a credential store in any case, as cat does, and so does a reader
+  # inside a -Command or -c string. The same readers of ordinary files pass, and the checks run for the Bash
+  # tool too, since the hook reads every tool's command the same way.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for reader in 'Get-Content' 'gc' 'type' 'GET-CONTENT' 'Select-String -Pattern x' 'sls x' \
+        'Get-Content -Path' 'Get-Content -LiteralPath'; do
+      for target in '.git-credentials' '.git-credentials' '.git-credentials*' '~/.ssh/id_rsa' '~/.ssh/id_ed25519' \
+          '$HOME\.ssh\id_rsa' '~/.config/gh/hosts.yml' '"$env:APPDATA\GitHub CLI\hosts.yml"'; do
+        guard 2 "$reader $target" PowerShell
+      done
+    done
+    for cmd in \
+        "[IO.File]::ReadAllText('.git-credentials')" \
+        '[System.IO.File]::ReadAllLines(".git-credentials")' \
+        '[io.file]::readallbytes("~/.ssh/id_rsa")' \
+        '[IO.File]::ReadLines("$HOME\.ssh\id_rsa")' \
+        'Get-Content README.md; Get-Content .git-credentials' \
+        'powershell -NoProfile -Command "Get-Content .git-credentials"' \
+        'powershell -c "gc .git-credentials"' \
+        'cmd /c "type .git-credentials"' \
+        "bash -c 'cat .git-credentials'" \
+        'bash -c "cat .git-credentials"' \
+        'cat .git-credentials*' \
+        '\cat .git-credentials' \
+        'echo `cat .git-credentials`' \
+        'type .git-credentials' \
+        'gc .git-credentials'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'Get-Content README.md' \
+        'gc docs/index.md' \
+        'Get-Content -Path docs/index.md' \
+        'Get-Content -LiteralPath README.md' \
+        'Select-String -Path docs/index.md -Pattern title' \
+        'Get-Content README.md' \
+        'gc docs/notes.md' \
+        '[IO.File]::ReadAllText("docs/index.md")' \
+        'Get-ChildItem ~/.ssh' \
+        'powershell -NoProfile -Command "Get-Content README.md"' \
+        'type git'; do
+      guard 0 "$cmd" PowerShell
+    done
+    guard 0 'type git'
+    guard 0 'type README.md'
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't block every read of a credential store, or blocks a read of an ordinary file (B27)" "the guard hook blocks the PowerShell and Bash readers of credential stores, in any case, and passes the readers of ordinary files"
+
+  # PowerShell's backtick (B28): a backtick that ends a line continues it, so a flag or a read it splits is
+  # blocked as the plain form is, and a benign continuation passes. An escaped backtick (``) and a backtick
+  # followed by spaces don't continue. In Bash a backtick is command substitution, so the same text passes
+  # there. A comment that ends in a backtick still shows the next line, which the joined text would hide.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        $'git push `\n--force' \
+        $'git commit `\n-n -m x' \
+        $'cat `\n.git-credentials' \
+        $'cat README.md `\n.git-credentials' \
+        $'git push `\r\n--force' \
+        $'git push `\r--force' \
+        $'git log `\n--output=/tmp/probe.txt' \
+        $'git pu`\nsh --force' \
+        $'cat .git-cre`\ndentials' \
+        $'# note`\ngit push --force'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        $'git log `\n--oneline -3' \
+        $'git status `\n-s' \
+        $'cat ``\n.git-credentials' \
+        $'git push ``\n--force' \
+        $'git push ` \n--force'; do
+      guard 0 "$cmd" PowerShell
+    done
+    guard 0 $'cat README.md `\n.git-credentials'
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't treat a PowerShell backtick at a line's end as a continuation, or treats a Bash or an escaped one as one (B28)" "the guard hook blocks a flag or a read that a PowerShell backtick continuation splits, and passes the benign continuations and the escaped and Bash backticks (B28)"
+
+  # A Bash comment that ends in a backslash (B31): Bash ends the comment at the line break, so the line after it is a
+  # command of its own, and the guard reads it as written. A continued command after such a comment is read from its
+  # own line on. A # inside a word (a#b) is no comment, so its continuation is joined, as Bash joins it. The hang
+  # check reads a heredoc header joined to its interpreter (B29): python3 with - <<'EOF' on the next line, with a body or not.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        $'# note\\\ngit push --force' \
+        $'# note\\\ngit commit --no-verify -m x' \
+        $'git status # note\\\ngit push --force' \
+        $'# a\\\ngit commit \\\n-F /tmp/msg.txt' \
+        $'# a\\\ngit push \\\n--force' \
+        $'# a\\\n# b\\\ngit push \\\n--force' \
+        $'git push origin main#\\\n  --force' \
+        $'python3 \\\n- <<\'EOF\'\nEOF' \
+        $'python3 \\\n- <<\'EOF\'\nprint(1)\nEOF'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        $'# note\\\ngit status' \
+        $'git status # note\\\n-s' \
+        $'echo a#b\\\n--force' \
+        $'python3 \\\ntool.py <<\'EOF\'\ndata\nEOF'; do
+      guard 0 "$cmd"
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook reads a command after a Bash comment that ends in a backslash as hidden, or blocks a benign one (B31, B29)" "the guard hook reads the line after a Bash comment that ends in a backslash, and the command continued after it, as Bash does (B31, B29)"
+
+  # A PowerShell comment that ends in a backtick (B35): PowerShell ends the comment at the line break too, so the line after it
+  # is a command of its own, and a continued command after it is read from its own line on, as for a Bash comment (B31). A CRLF
+  # break is the same. A comment that ends in a backtick, followed by a plain command, passes.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        $'# note`\ngit commit `\n-F x' \
+        $'# note`\r\ngit commit `\r\n-F x'; do
+      guard 2 "$cmd" PowerShell
+    done
+    guard 0 $'# note`\ngit status' PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't read a command after a PowerShell comment that ends in a backtick, or blocks a plain one (B35)" "the guard hook reads the command after a PowerShell comment that ends in a backtick, and the command continued after it, as PowerShell does (B35)"
+
+  # A quoted or path-qualified reader, a backtick inside a word and a StreamReader (B30): the call operator with a
+  # quoted name (& 'Get-Content' .git-credentials), a reader by its path (/bin/cat, cat.exe, the Management module's
+  # Get-Content), a backtick escape that leaves a letter or a dot in a reader or a name (Get-Con`tent, .git-cre`dentials),
+  # and the StreamReader constructors are read as the plain forms are. A reader in a string with a backtick-escaped
+  # quote and an ordinary file pass. In PowerShell the escape also reaches the git flag rules (--fo`rce).
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        "& 'Get-Content' .git-credentials" \
+        '& "gc" .git-credentials' \
+        ". 'type' .git-credentials" \
+        "& 'Get-Content' -Path '.git-credentials'" \
+        "Get-Content '.git-credentials'" \
+        'Get-Con`tent .git-credentials' \
+        'gc .git-cre`dentials' \
+        'type `.git-credentials' \
+        'C:\Git\usr\bin\cat.exe .git-credentials' \
+        'Microsoft.PowerShell.Management\Get-Content .git-credentials' \
+        '[System.IO.StreamReader]::new(".git-credentials")' \
+        "[IO.StreamReader]::new('.git-credentials')" \
+        "New-Object System.IO.StreamReader('.git-credentials')" \
+        'New-Object -TypeName System.IO.StreamReader -ArgumentList .git-credentials' \
+        'git push --fo`rce' \
+        'Write-Output x; & "gc" .git-credentials'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        '/bin/cat .git-credentials' \
+        '/usr/bin/head -n 5 .git-credentials' \
+        "'/bin/cat' .git-credentials" \
+        '/usr/bin/tail -n 20 .config/gh/hosts.yml'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        "& 'Get-Content' README.md" \
+        "& 'Get-Content' 'README.md'" \
+        'Write-Output "say `"hi`" now"' \
+        'Write-Output "run `"gc README.md`" next"' \
+        "[System.IO.StreamReader]::new('docs/index.md')" \
+        "New-Object System.IO.StreamReader('README.md')" \
+        'Get-Con`tent README.md' \
+        'cat.exe README.md'; do
+      guard 0 "$cmd" PowerShell
+    done
+    for cmd in \
+        '/bin/cat README.md' \
+        '/usr/bin/head -n 5 README.md' \
+        "'/bin/cat' README.md"; do
+      guard 0 "$cmd"
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook misses a quoted or path-qualified reader, a backtick inside a word or a StreamReader of a credential store (B30)" "the guard hook blocks a quoted or path-qualified reader, a backtick-escaped word and a StreamReader of a credential store, and passes the same readers of ordinary files (B30)"
+
+  # The common file readers (B36): grep, sed, awk, sort, base64, xxd and the rest of the list in the hook print a
+  # credential store as cat does, in Bash and in a PowerShell payload; a reader or a name split by quotes (ca''t, c"a"t)
+  # is read as the shell runs it; [IO.File]::OpenText, OpenRead and Open read one. A pattern is an argument as well
+  # (B27), so grep "\.git-credentials" and git grep .git-credentials are blocked, and ordinary files pass. A commit message
+  # that names a reader, with no credential store after it, passes.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'grep x .git-credentials' \
+        'awk 1 .git-credentials' \
+        'sed -n p .git-credentials' \
+        'base64 .git-credentials' \
+        'xxd .git-credentials' \
+        'egrep x .git-credentials' \
+        'fgrep -i x .config/gh/hosts.yml' \
+        'rg x .git-credentials' \
+        'gawk "{print}" .config/gh/hosts.yml' \
+        'sort .git-credentials' \
+        'uniq .git-credentials' \
+        'cut -d= -f2 .git-credentials' \
+        'nl .git-credentials' \
+        'tac .git-credentials' \
+        'rev .git-credentials' \
+        'od -c .git-credentials' \
+        'hexdump -C .git-credentials' \
+        'diff .git-credentials README.md' \
+        'cmp .git-credentials README.md' \
+        '/usr/bin/grep x .git-credentials' \
+        'grep -rn "\.git-credentials" docs/' \
+        'git grep .git-credentials' \
+        "ca''t .git-credentials" \
+        'c"a"t .git-credentials' \
+        "'ca'\"t\" .git-credentials" \
+        'g""rep x .git-credentials' \
+        'ba"se"64 .git-credentials' \
+        'cat .git-cre'"''"'dentials' \
+        'c'"'"'a'"'"'t .git-credentials'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        "[System.IO.File]::OpenText('.git-credentials')" \
+        '[IO.File]::OpenRead(".git-credentials")' \
+        "[System.IO.File]::Open('.git-credentials', 'Open', 'Read')" \
+        '[io.file]::opentext("~/.ssh/id_rsa")' \
+        '[IO.File]::OpenRead("$HOME\.ssh\id_rsa")' \
+        '& "Get-Content" .git-credentials' \
+        'Select-String -Path .git-credentials -Pattern x'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        'grep x README.md' \
+        'sed -n p docs/notes.md' \
+        'awk 1 project.godot' \
+        'base64 export_presets.cfg' \
+        'xxd README.md' \
+        'ca""t README.md' \
+        'c"a"t docs/notes.md' \
+        'grep -n "DATABASE_URL" src/' \
+        'sed -n 1,5p docs/index.md' \
+        'awk 1 docs/index.md' \
+        'sort README.md' \
+        'cut -c1-3 README.md' \
+        'diff README.md docs/index.md' \
+        'git grep TODO' \
+        'git diff README.md' \
+        'git commit -m "fix: sort the docs and grep notes"' \
+        'git commit -m "docs: sed, awk and diff notes" -- docs/index.md' \
+        'rev-parse --show-toplevel'; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        "[System.IO.File]::OpenText('docs/index.md')" \
+        '[IO.File]::OpenRead("README.md")' \
+        "[System.IO.File]::Open('docs/index.md', 'Open')" \
+        "[IO.File]::OpenText('README.md')"; do
+      guard 0 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook misses a common file reader, a reader or a name split by quotes, or an IO.File Open method of a credential store, or blocks an ordinary read (B36)" "the guard hook blocks grep, sed, awk, sort, base64, xxd and the other common readers, a reader or name split by quotes, and [IO.File]::OpenText, OpenRead and Open of a credential store, and passes the same readers of ordinary files (B36)"
+
+  # A backslash that escapes an ordinary character in a Bash command is removed by the shell (B44): c\at is cat, and .git-cre\dentials
+  # is .git-credentials, so the reader and the name are read as the shell runs them. An escaped backslash (\\) is one backslash, and a
+  # backslash before a space stays, as the shell keeps the name one word. Windows paths and ordinary files pass, and PowerShell's
+  # escape is the backtick (B30), so a backslash in a PowerShell payload is a path separator, not an escape.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'c\at .git-credentials' \
+        'he\ad .git-credentials' \
+        'cat .git-cre\dentials' \
+        'cat .git\-credentials' \
+        'cat .git-c\redentials' \
+        'c\a\t .git-credentials' \
+        'ca\t .git-cre\dentials' \
+        'sed -n p .git-cre\dentials' \
+        'C\AT .git-credentials' \
+        'c\at "config/.git-cre\dentials"' \
+        'cat ~/.s\sh/id_rsa' \
+        'cat C:\Users\V\.git-credentials' \
+        'cat ~/.\ssh/id_rsa'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'c\\at .git-credentials' \
+        'cat .git-cre\\dentials' \
+        'c\at README.md' \
+        'cat C:\Users\V\README.md' \
+        'cat C:\Users\V\docs\index.md' \
+        'cat C:\repo\README.md' \
+        'git commit -m "docs: c\at notes"'; do
+      guard 0 "$cmd"
+    done
+    guard 0 'c\at .git-credentials' PowerShell
+    guard 0 "bash -c 'c\at README.md'" PowerShell
+    guard 0 "powershell -c \"c\at .git-credentials\"" PowerShell
+    guard 2 "bash -c 'c\at .git-credentials'" PowerShell
+    guard 2 'bash -c "cat .git-cre\dentials"' PowerShell
+    guard 2 'type C:\x\.git-credentials' PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook misses a backslash that escapes a character in a Bash credential read, or blocks an ordinary read or a PowerShell backslash (B44)" "the guard hook blocks a Bash credential read whose reader or name has a backslash that escapes a character (c\\at, .git-cre\\dentials), and passes ordinary files, Windows paths and a PowerShell backslash (B44)"
+
+  # The credential-read check (B52): an escaped space in a store path (GitHub\ CLI is the gh CLI's folder, and the backslash-space is
+  # the space in it); an ANSI-C string ($'...') in a reader's or a file's name, which is read as the shell reads it (\xHH, \NNN and the
+  # common escapes), with an escape the guard can't decode (\u, \0) blocked as unjudgeable; and a PowerShell command's $(...), read as
+  # a command of its own, so a Bash command in it that reads through a backslash (c\at) is blocked. PowerShell's backslash is no
+  # escape (its escape is the backtick), so its store path passes as written (B44).
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'cat ~/AppData/Roaming/GitHub\ CLI/hosts.yml' \
+        'cat ~/AppData/Roaming/GitHub\ CLI' \
+        'cat "~/AppData/Roaming/GitHub\ CLI/hosts.yml"' \
+        'cat ~/AppData/Roaming/Git\Hub\ CLI/hosts.yml' \
+        "\$'\\x63at' .git-credentials" \
+        "\$'\\143at' .git-credentials" \
+        "cat \$'.git-cre\\x64entials'" \
+        "cat \$'\\x2egit-credentials'" \
+        "cat \$'\\x2e\\x67it\\x2dcredentials'" \
+        "cat \$'\\x2egit-'\$'credentials'" \
+        "cat \$'.git\\x2dcredentials' docs/index.md" \
+        "cat ~/\$'\\x2essh'/id_rsa" \
+        "cat \$'\\u0063at' .git-credentials" \
+        "cat \$'\\0' README.md" \
+        "echo \$(bash -c \$'c\\x61t .git-credentials')" \
+        "echo \$(bash -c 'c\\at .git-credentials')" \
+        "git log \$(bash -c 'c\\at .git-credentials')"; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        "echo \$(bash -c 'c\\at .git-credentials')" \
+        "echo \"\$(bash -c 'c\\at .git-credentials')\"" \
+        "Write-Output \$(bash -c \"c\\at ~/.ssh/id_rsa\")"; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        'cat README.md docs/index.md' \
+        "printf '%s' \$'\\e[31mred\\e[0m'" \
+        "tr -d \$'\\r' < docs/index.md" \
+        "cat \$'README\\56md'" \
+        "cat \$'\\101\\x42C.md'" \
+        "cat \$'README.md'" \
+        "echo \"\$(bash -c 'c\\at README.md')\"" \
+        "echo \$(bash -c 'echo hi')"; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        'cat ~/AppData/Roaming/GitHub\ CLI/hosts.yml' \
+        'Write-Output "$(Get-Content README.md)"' \
+        'Write-Output "$(Get-Content README.md)"' \
+        "Write-Output \"\$(bash -c 'c\\at README.md')\""; do
+      guard 0 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook misses an escaped space in a store path, an ANSI-C string in a reader's or a file's name, or a PowerShell command's substitution that reads a credential store, or blocks an ordinary read (B52)" "the guard hook blocks a credential read through an escaped space in a store path, an ANSI-C string in a name, and a PowerShell command's substitution, and passes an ANSI-C string that names no credential and the substitutions that read none (B52)"
+
+  # A command substitution in a git command's words (B32): what it prints can be a flag, and the text it runs is a command
+  # the guard can't see. The repro (git push $(echo --force) and its backtick form) is blocked as the plain flag is, in Bash
+  # and PowerShell, and so is a substitution as the command name, or one that runs a non-reading command. A double-quoted
+  # value that starts with fixed text, a commit's or tag's -m value and a read (git, date, cat, echo, printf) pass, as the
+  # procedures use them. The text of a substitution is judged as a command of its own.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'git push $(echo --force)' \
+        'git push `echo --force`' \
+        'git push "$(echo --force)"' \
+        'git log $(echo --output=/tmp/x)' \
+        'git log "$(echo --output=/tmp/x)"' \
+        'git log "--output=$(echo /tmp/x)"' \
+        'git log "--since=$(rm -rf x)"' \
+        'git log -1 "$(date +%F)"' \
+        'git log "x$(git push --force)"' \
+        'git push $(git push --force)' \
+        'git status && echo $(git push --force)' \
+        'echo "$(git push --force)"' \
+        'git log > >(git push --force)' \
+        '$(echo git) push --force' \
+        'git log $(echo git) push' \
+        'git commit -m x "$(cat x)"' \
+        'git commit -m "$(echo $(rm -rf x))"' \
+        $'git commit -c -m "$(cat <<\'EOF\'\n--file=/tmp/x\nEOF\n)"' \
+        $'git commit -m -m "$(cat <<\'EOF\'\n--file=/tmp/x\nEOF\n)"' \
+        $'git commit -m "$(cat <<EOF\n$(git push --force)\nEOF\n)"' \
+        $'git commit -m "$(cat x; git push --force)"' \
+        $'git log \\\n$(echo --output=/tmp/x)' \
+        'git push "--force"$(echo x)'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'git push $(echo --force)' \
+        'git push `echo --force`' \
+        'git push "$(echo --force)"' \
+        'git push (echo --force)' \
+        'git push @(echo --force)' \
+        '$(echo git) push --force' \
+        'git log -- $(echo --output=/tmp/x)' \
+        'git log "$(git push --force)"'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        $'git commit -m "$(cat <<\'EOF\'\nfix the --output handling, and -F /tmp/x\nEOF\n)"' \
+        $'git commit -a -m "$(cat <<\'EOF\'\nmsg one\n\nBody with `ticks` and $(vars) text\nEOF\n)" -- docs/index.md' \
+        $'git commit -m "$(cat <<\'EOF\'\nmsg `git push --force` in a quoted heredoc\nEOF\n)" -- x' \
+        $'git commit -m "$(cat <<EOF\nplain body\nEOF\n)"' \
+        'git commit -m "$(git log -1 --format=%s)"' \
+        'git commit -m "$(echo --file=/tmp/x)"' \
+        'git tag -a "v$(cat VERSION)" -m "release"' \
+        'git checkout -q -b "ddd/bundle-$(date +%F)" origin/main' \
+        'git ls-remote --heads origin "ddd/bundle-$(date +%F)*"' \
+        "git log --since=\"\$(date -d '7 days ago' +%F)\" --oneline" \
+        'git log --format=%h -n 1 -- "docs/$(echo index).md"' \
+        'test -z "$(git status --porcelain)"' \
+        'echo "$r $(git -C work/$r describe --tags)"' \
+        'for f in $(git diff --name-only); do echo "$f"; done' \
+        'K=$(git rev-parse HEAD); echo $K' \
+        'cd "$(git rev-parse --show-toplevel)" && git status' \
+        'git status; echo $(date)' \
+        'git log -1 --format=%h \$(echo --output)' \
+        'echo `date`'; do
+      guard 0 "$cmd"
+    done
+    guard 0 'Write-Output "$(git status)"' PowerShell
+    guard 0 $'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)" && git push origin main' PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook reads a command substitution in a git command's words, or as its name, as harmless, or blocks a plain read (B32)" "the guard hook blocks a command substitution that can print a git flag or run a command the guard can't read, in git's words or as a command name, and passes the quoted values, messages and reads the procedures use (B32)"
+
+  # A Bash comment holds no substitution and opens no quoted string (B43): a backtick, $( or quote in it is text, so the
+  # command after the comment is read as Bash reads it. A substitution after a comment, a tab, ; or & is still read, and so is
+  # one after a # inside a word (a#b) or after an escaped blank, since neither starts a comment. A ) in a comment doesn't close a
+  # substitution, so its text runs to the next line and is blocked. A blank before a # inside ${...} is part of the expansion,
+  # not a comment. An unquoted heredoc body's substitutions are read whole, as the shell expands them, so a comment in one is
+  # read too; a quoted body is text.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        $'git push # x\n`echo --force`' \
+        $'git push # x\ngit push `echo --force`' \
+        $'git status # note\ngit push $(echo --force)' \
+        $'# it\'s\ngit push `echo --force`' \
+        $'git status a#b `echo --force`' \
+        $'git status a\\ #`echo --force`' \
+        $'git status ${x:- #a} $(echo --force)' \
+        $'git push origin ":${y:- #}$(echo main)"' \
+        $'git push `# x`' \
+        $'git push `echo --force` # x' \
+        $'git push $(echo --force) # `' \
+        $'git status $(echo a # `)' \
+        $'git log "--format=$(echo a # )\nprintf x)"' \
+        $'git commit -q -F - <<EOF\n# note `\nmsg\nEOF' \
+        $'git log <<EOF\n# $(git push --force)\nEOF' \
+        $'git status <<EOF\n# `git push --force`\nEOF' \
+        $'# note `\\\ngit push `echo --force`'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        $'# note `\ngit status' \
+        $'# note `echo --force`\ngit status' \
+        $'# note $(echo --force)\ngit status' \
+        $'git status\t# note `\ngit log -1' \
+        $'git status;# note `\ngit log -1' \
+        $'# it\'s\ngit status' \
+        $'git status # $(echo --force)' \
+        $'git status # `echo --force`' \
+        $'git status ${x:-y} # $(echo --force)' \
+        $'# note `\\\ngit status' \
+        $'git commit -q -F - <<\'EOF\'\n# note `echo --force`\nmsg\nEOF'; do
+      guard 0 "$cmd"
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook reads a backtick, \$( or quote in a Bash comment as a substitution or a string, or misses a substitution after one (B43)" "the guard hook reads a Bash comment as text, so a backtick, \$( or quote in it starts no substitution or string, and a substitution after a comment, an escaped blank or a # in a word is still read (B43)"
+
+  # The word decoder (B51) reads a comment on its own line: a quote in it pairs with nothing after the line break, so the
+  # quoted flag, refspec or credential command after it is seen, in Bash, in a heredoc body a shell runs and in PowerShell
+  # (whose # starts a comment the same way). A quote in a comment that never closes is text, so the flags it names pass,
+  # and a quoted command in a comment passes as it did; a # inside a quoted string, an escaped #, ${#x} or $# starts no
+  # comment, so a flag after one is blocked.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        $'# it\'s\ngit push origin \':main\'' \
+        $'# it\'s\ngit push "--force" \'x\'' \
+        $'# say "hi\ngit push "--force" "x"' \
+        $'# it\'s\ngit commit -q "-n" -m \'x\'' \
+        $'# it\'s\ngit push origin "+main" \'x\'' \
+        $'# say "hi\ngit push origin \':main\'' \
+        $'# say "hi\ngit commit -q "-n" -m "x"' \
+        $'git status\n# it\'s\ngit push "--force" \'x\'' \
+        $'echo \'a\'  # it\'s\ngit push "--force" \'x\'' \
+        $'# it\'s\n# don\'t\ngit push origin \':main\' \'x\'' \
+        $'bash <<\'EOF\'\n# it\'s\ngit push origin \':main\'\nEOF' \
+        $'bash <<\'EOF\'\n# it\'s\ngit push "--force" \'x\'\nEOF' \
+        $'# it\'s\ngit credential fill \'x\'' \
+        $'# note\\\ngit push --force' \
+        $'echo a\\ #b ; git push --force' \
+        $'echo "#" ; git push --force' \
+        $'git status ${x:- #} ; git push --force' \
+        $'echo "$(echo "a #") # b" ; git push --force'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        $'# it\'s\ngit status' \
+        $'# it\'s --force\ngit status' \
+        $'# it\'s "--force" -n :main\ngit status' \
+        $'# it\'s \':main\'\ngit log -1' \
+        $'# it\'s "git push --force"\ngit status' \
+        $'# say "--force" and "-n" and ":main"\ngit status' \
+        $'git status # it\'s --force\ngit log -1' \
+        $'git status\n# it\'s\ngit log --oneline -3' \
+        $'# it\'s -n\ngit push origin main' \
+        $'git commit -q -F - <<\'EOF\'\n# it\'s git push origin \':main\'\nEOF' \
+        $'bash <<\'EOF\'\n# it\'s --force\necho done\nEOF' \
+        $'git commit -m "fix #12 it\'s" -m "x"' \
+        $'git status "#" \'it\'' \
+        $'echo ;#x'; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        $'# it\'s\ngit push "--force" \'x\'' \
+        $'# it\'s\ngit commit -q "-n" -m \'x\'' \
+        $'echo "a""b # " ; git push --force' \
+        'git push `#x --force'; do
+      guard 2 "$cmd" PowerShell
+    done
+    guard 0 $'# it\'s --force\ngit status' PowerShell
+    guard 0 $'# it\'s\ngit log -1' PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook reads a quote in a comment as pairing with a quote after its line break, or blocks a comment that names a flag or quotes a command (B51)" "the guard hook reads a quote in a Bash or PowerShell comment as pairing with nothing after its line break, so a quoted flag, refspec or credential command after it is blocked, and a comment that names a flag or quotes a command passes (B51)"
+
+  # A destructive git rule (B33) reads the words as the shell hands them over: a quoted flag, refspec or path is seen, a flag
+  # ends at ; & | ) or a line break as it does at a space, and a heredoc body a shell runs is read too. The rules are a force
+  # push, a +refspec, reset --hard, clean -f, checkout or switch -f, checkout or restore of ".", stash drop or clear, and
+  # branch -D. A quoted message that names one passes, and so does a quoted word that isn't a flag.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+      $'git push --force\necho done' \
+      'git push --force;echo done' \
+      'git push --force&&echo done' \
+      'git push --force|cat' \
+      '(git push --force)' \
+      'git push "--force"' \
+      "git push '--force'" \
+      'git push "--force-with-lease=origin/main"' \
+      'git push --fo"rce"' \
+      'git push -f;echo done' \
+      'git push origin "+main"' \
+      "git push origin '+main'" \
+      'git pu"sh" --force' \
+      'git status && git push --force' \
+      $'git status\ngit push "--force"' \
+      'git checkout "."' \
+      'git checkout -- "."' \
+      'git restore "."' \
+      'git checkout .;echo done' \
+      'git checkout -f;echo done' \
+      'git checkout "-f" main' \
+      'git checkout -qf main' \
+      'git switch "--discard-changes" main' \
+      'git reset "--hard"' \
+      'git reset --hard;echo done' \
+      'git clean "-f"' \
+      'git stash "drop"' \
+      'git stash drop;echo done' \
+      'git branch "-D" x' \
+      'git branch -D x;echo done' \
+      'git branch -vD x' \
+      'git commit -n;echo done' \
+      'git commit -m "-x;y" -F /tmp/msg.txt' \
+      'git diff "/etc/passwd"' \
+      $'bash <<\'EOF\'\ngit push --force\nEOF' \
+      $'bash <<\'EOF\'\ngit push "--force"\nEOF' \
+      $'bash <<\'EOF\'\ngit push origin "+main"\nEOF' \
+      $'bash <<\'EOF\'\ngit checkout "."\nEOF' \
+      $'bash <<\'EOF\'\ngit commit -n -m x\nEOF' \
+      $'sh <<EOF\ngit reset --hard\nEOF'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+      'git push origin main' \
+      'git push origin "HEAD:refs/heads/main"' \
+      'git push "origin" main' \
+      'git push origin main;git status' \
+      'git push -u origin "ddd/bundle-$(date +%F)"' \
+      'git commit -m "stop git push --force;"' \
+      'git commit -m "reset --hard" -m "checkout ."' \
+      'git commit -m "stash drop"' \
+      'git commit -m "-x" -F -' \
+      'git checkout -b "feature/x"' \
+      'git checkout "main"' \
+      'git branch -d x' \
+      'git branch -vv' \
+      'git log --grep "push --force"' \
+      'git log --oneline "--grep=push"' \
+      'git stash show "drop"' \
+      'git tag -a v1 -m "push --force note"' \
+      'echo "git push --force"' \
+      'git status && echo "reset --hard"' \
+      $'git status\ngit log --oneline -3' \
+      $'git commit -q -F - <<\'EOF\'\nStop "git push --force" in the hook, and "git reset --hard".\nEOF' \
+      $'git commit -q -F - <<\'EOF\'\nfix the --output and --no-index handling, not -F /tmp/x\nEOF'; do
+      guard 0 "$cmd"
+    done
+    for cmd in 'git push "--force"' 'git push origin "+main"' 'git checkout "."' 'git push --force;echo done' 'git reset "--hard"'; do
+      guard 2 "$cmd" PowerShell
+    done
+    guard 0 'Write-Output "git push --force"' PowerShell
+    guard 0 'git push origin "HEAD:main"' PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't read a destructive git rule's flag, refspec or path as the shell does, or blocks a message that names one (B33)" "the guard hook blocks a force push, a +refspec, reset, clean, checkout, stash drop and branch -D that a quote, a line break, ; & | ) or a heredoc body hides, and passes the quoted messages (B33)"
+
+  # A script a shell or an interpreter runs is a command of its own (B34): a quoted string given to bash -c, sh -c or
+  # zsh -c (with options before -c), eval, powershell -Command, pwsh -c or cmd /c is read by the same rules, to four levels
+  # of nesting, whatever the name is quoted or prefixed with. A comment, a heredoc body or a message in quotes that names
+  # one is text, and a read or a benign script passes. A command whose quoting the guard can't close, and PowerShell's
+  # -EncodedCommand, whose text is hidden, are blocked.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        "bash -c 'git push --force'" \
+        'sh -c "git commit --no-verify -m x"' \
+        "eval 'git log --output=x'" \
+        'sh -c "git push $(echo --force)"' \
+        "sh -c 'git commit -n -m x'" \
+        "zsh -c 'git branch -D x'" \
+        "bash -lc 'git reset --hard'" \
+        "bash -o pipefail -c 'git push --force'" \
+        'eval "git push" --force' \
+        "bash -c \"git push '--force'\"" \
+        "timeout 240 bash -c 'git push --force'" \
+        "bash -c 'bash -c \"git push --force\"'" \
+        'sh -c "git commit -m \"x\" -n"' \
+        'powershell -NoProfile -Command "git push --force"' \
+        'cmd /c "git push --force"' \
+        '"bash" -c "git push --force"' \
+        "ba''sh -c 'git push --force'" \
+        "nice -n 5 bash -c 'git push --force'" \
+        "sudo sh -c 'git push --force'" \
+        "eval 'bash -c \"git push --force\"'" \
+        "bash -c \"\$(echo git push --force)\"" \
+        "bash -c 'git checkout .'" \
+        'bash -c "git push origin +main"' \
+        "/bin/bash -c 'git push --force'" \
+        "bash -c \$'git push --force'" \
+        "bash -c 'git commit -F /tmp/msg.txt'" \
+        "bash -c 'sleep 300'" \
+        'sh -c "git status' \
+        'powershell -EncodedCommand ZwBpAHQAIABwAHUAcwBoAA==' \
+        $'# don\'t\nbash -c \'git push --force\'' \
+        $'cat <<\'EOF\'\nit\'s\nEOF\nbash -c \'git push --force\'' \
+        $'bash -c \'echo hi\' ; sh -c "git status\nbash -c \'git push --force\'"'; do
+      guard 2 "$cmd"
+    done
+    # Four wrappers nested (bash -c inside sh -c inside zsh -c inside bash -c) reach the git inside; a fifth is blocked.
+    wrap_esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; printf '%s' "$s"; }
+    nest="bash -c 'git push --force'"
+    for _ in 1 2 3; do nest="sh -c \"$(wrap_esc "$nest")\""; done
+    guard 2 "$nest"
+    nest="bash -c 'echo hi'"
+    for _ in 1 2 3; do nest="sh -c \"$(wrap_esc "$nest")\""; done
+    guard 0 "$nest"
+    nest="sh -c \"$(wrap_esc "$nest")\""
+    guard 2 "$nest"
+    for cmd in \
+        "bash -c 'git status'" \
+        'sh -c "echo hi"' \
+        "bash -c 'git log --oneline -3'" \
+        "sh -c \"git commit -m 'fix the --output handling'\"" \
+        'echo "bash -c '"'"'git push --force'"'"'"' \
+        'git commit -m "fix: sh -c '"'"'git push --force'"'"' now blocked"' \
+        $'git commit -q -F - <<\'EOF\'\nthe sh -c \'git push --force\' guard\nEOF' \
+        "timeout 240 bash -c 'until test -f x; do sleep 5; done'" \
+        '(timeout 4m bash -c "while true; do sleep 1; done")' \
+        'bash -c "echo $(date)"' \
+        'powershell -NoProfile -Command "Write-Output '"'"'hi'"'"'"' \
+        "bash -c 'cat README.md'" \
+        'eval "echo hi"' \
+        'git log --grep "bash -c git push --force"' \
+        "bash -c 'echo hi' git status" \
+        'echo sh -c' \
+        'git commit -m "run cmd /c later"' \
+        $'bash -c "git commit -F - <<\'EOF\'\nmsg\nEOF"' \
+        $'git commit -m "$(cat <<\'EOF\'\nmsg with sh -c \'git push --force\'\nEOF\n)"' \
+        'bash tools/check.sh'; do
+      guard 0 "$cmd"
+    done
+    # PowerShell (B34): the same wrappers in the PowerShell tool's payload, and a backtick that joins a flag.
+    for cmd in \
+        "pwsh -c 'git reset --hard'" \
+        'powershell -Command "git push --force"' \
+        'bash -c "git push --force"' \
+        'cmd /c "git push --force"' \
+        'powershell -EncodedCommand ZwBpAHQAIABwAHUAcwBoAA==' \
+        'powershell -c "git push --fo`rce"'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        "pwsh -c 'git status'" \
+        'powershell -NoProfile -Command "Write-Output '"'"'hi'"'"'"' \
+        'cmd /c "echo hi"' \
+        'powershell -File tools/x.ps1 "git push --force"' \
+        'pwsh -c "Get-ChildItem | Select-Object Name"'; do
+      guard 0 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't read a script a shell or an interpreter runs as a command of its own, or blocks a message that names one (B34)" "the guard hook reads a script given to bash -c, sh -c, zsh -c, eval, powershell -Command, pwsh -c or cmd /c as a command, to four levels, and passes the messages, heredocs and reads that name one (B34)"
+
+  # A wait loop in a script a shell or an interpreter runs (B42): the hang check reads each such script as it reads the command,
+  # so an until, while true or while : loop with sleep is blocked under eval, bash -c, sh -c, powershell -Command and cmd /c.
+  # A timeout of 280 seconds or less above the wrapper bounds the whole script, as it bounds a loop the command runs itself,
+  # and a loop with no sleep, or in a message that names one, passes.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        "eval 'until false; do sleep 1; done'" \
+        "eval 'while true; do sleep 1; done'" \
+        "eval 'while :; do sleep 1; done'" \
+        "sh -c 'until false; do sleep 1; done'" \
+        "eval \"until false; do sleep 1; done\"" \
+        "eval 'bash -c \"until false; do sleep 1; done\"'" \
+        "eval 'eval \"while true; do sleep 1; done\"'" \
+        "sh -c \"eval 'while : ; do sleep 1; done'\"" \
+        "timeout 9999 eval 'until false; do sleep 1; done'" \
+        "timeout 0 eval 'until false; do sleep 1; done'" \
+        "timeout 5m eval 'until false; do sleep 1; done'" \
+        'cmd /c "until false; do sleep 1; done"' \
+        'cmd /c "while true; do sleep 1; done"' \
+        'powershell -Command "while ($true) { Start-Sleep 1 }"' \
+        'powershell -NoProfile -Command "while ($true) { sleep 1 }"'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'while ($true) { Start-Sleep 1 }' \
+        'While ($true) { Start-Sleep -Seconds 5 }' \
+        'WHILE ($true) { start-sleep 2 }'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        "timeout 60 eval 'until false; do sleep 1; done'" \
+        "timeout 4m eval 'until false; do sleep 1; done'" \
+        "timeout 240s eval 'until false; do sleep 1; done'" \
+        'timeout 60 cmd /c "until false; do sleep 1; done"' \
+        "timeout 60 bash -c \"eval 'until false; do sleep 1; done'\"" \
+        "sh -c \"timeout 60 eval 'until false; do sleep 1; done'\"" \
+        "eval 'timeout 60 bash -c \"until false; do sleep 1; done\"'" \
+        "eval 'until false; do echo hi; done'" \
+        "eval 'sleep 1'" \
+        "eval 'git commit -m \"until false; do sleep 1; done\"'" \
+        'cmd /c "echo until"' \
+        'powershell -Command "Write-Output (Get-Date)"'; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        'while ($true) { Get-Date }' \
+        'timeout 60 powershell -Command "while ($true) { Start-Sleep 1 }"'; do
+      guard 0 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't block a wait loop in a script a shell or an interpreter runs, or blocks one a timeout bounds (B42)" "the guard hook blocks an until or while loop with sleep in a script given to eval, bash -c, sh -c, powershell -Command or cmd /c, and passes one under a timeout of 280 seconds or less (B42)"
+
+  # The hang check's other forms (B49): a C-style for (( loop with sleep and no time limit; a PowerShell do { } while or until with a
+  # sleep in its body; Start-Sleep and its alias sleep with -Seconds, -s or -Milliseconds over 280 seconds; cmd's timeout /t N over 280
+  # seconds, or -1, which waits for a key press for ever (cmd's timeout is a wait, not a time limit); and a Bash substitution, which
+  # runs before a timeout above it starts, so the timeout doesn't bound it. A substitution in single quotes, or escaped, is the
+  # script's own, so a timeout above a script bounds it. A message that names one of these passes (the quoted text is blanked).
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'for ((;;)); do sleep 1; done' \
+        'for (( ; ; )); do sleep 1; done' \
+        'for ((i = 0; i < 3; i++)); do sleep 1; done' \
+        'timeout 60 echo "$(until false; do sleep 1; done)"' \
+        'timeout 60 echo $(until false; do sleep 1; done)' \
+        'timeout 60 bash -c "echo $(until false; do sleep 1; done)"' \
+        'timeout 60 echo "$(bash -c "until false; do sleep 1; done")"' \
+        'echo "$(sleep 600)"' \
+        'echo "$(cmd /c "timeout /t 600")"' \
+        'powershell -Command "Start-Sleep -Seconds 600"' \
+        'powershell -Command "Start-Sleep -Milliseconds 300001"' \
+        'cmd /c "timeout /t 300"' \
+        'cmd /c "timeout /t -1"' \
+        'timeout 60 cmd /c "timeout /t 600"' \
+        'timeout 60 echo $(cat <<'"'"'EOF'"'"'
+x
+EOF
+) ; while true; do sleep 1; done'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'do { Start-Sleep 1 } while ($true)' \
+        'do { Start-Sleep 1 } until ($false)' \
+        'DO { START-SLEEP -S 600 } WHILE ($true)' \
+        'Start-Sleep -Seconds 600' \
+        'Start-Sleep -s 600' \
+        'Start-Sleep -Milliseconds 280001' \
+        'sleep -Seconds 300' \
+        'timeout 60 Write-Output $(while ($true) { Start-Sleep 1 })' \
+        'powershell -Command "do { Start-Sleep 1 } while ($true)"'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        "timeout 60 bash -c 'echo \$(until false; do sleep 1; done)'" \
+        'timeout 240 bash -c "echo \$(until test -f x; do sleep 5; done)"' \
+        "timeout 240 bash -c 'for ((i = 0; i < 3; i++)); do sleep 1; done'" \
+        'echo "$(date +%s)"' \
+        'echo $(sleep 280)' \
+        'bash -c "echo $(date)"' \
+        'timeout 60 cmd /c "timeout /t 60"' \
+        'cmd /c "timeout /t 280"' \
+        "echo '\$(until false; do sleep 1; done)'" \
+        'git commit -m "wait: Start-Sleep 600 and for ((;;)) and do { x } while (y)"' \
+        'git log --format="%h $(date +%F)" -3' \
+        'echo "$(git log --oneline -3)"' \
+        'for i in 1 2 3; do echo $i; done' \
+        'for ((i = 0; i < 3; i++)); do echo $i; done'; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        'timeout 60 powershell -Command "do { Start-Sleep 1 } while ($true)"' \
+        'timeout 240 powershell -Command "Start-Sleep -Seconds 240"' \
+        'Start-Sleep -Seconds 280' \
+        'Start-Sleep -Milliseconds 280000' \
+        'Start-Sleep 5' \
+        'do { Get-Date } while ($false)' \
+        "Write-Output 'do { Start-Sleep 1 } while (\$true)'"; do
+      guard 0 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't block a for (( loop, a do ... while, Start-Sleep or timeout /t over 280 seconds, or a substitution before a timeout, or blocks a message or a bounded script that names one (B49)" "the guard hook blocks a for (( loop with sleep, a do ... while with sleep, Start-Sleep and timeout /t over 280 seconds, and a substitution that runs before a timeout, and passes a bounded script and a message that names them (B49)"
+
+  # The hang check reads the command without the bodies no shell runs (B50): a commit's, tag's or gh message, and a cat or tee body
+  # nothing runs (the classification's reading, B40 and B48). So a message can name a loop, a pause or a timed wait, as plain text,
+  # in a C-style or a PowerShell loop, with a pause or a wait over five minutes. A body a shell, an interpreter or a runner executes
+  # is still read, and so is the empty-heredoc probe and a command after a message. An unquoted message's substitution is run, so it
+  # is read; a quoted one is text, and so are its backticks.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        $'git commit -q -F - -- a <<\'EOF\'\nPowerShell\'s While loop with Start-Sleep is now seen.\nEOF' \
+        $'gh pr edit 5 --body-file - <<\'EOF\'\nPowerShell\'s While loop with Start-Sleep is now seen.\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nfix: for ((i = 0; i < 3; i++)); do sleep 600; done\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nwait: Start-Sleep -Seconds 600 before retry\nEOF' \
+        $'gh pr create --body-file - <<\'EOF\'\nUse cmd\'s timeout /t 600 to wait\nEOF' \
+        $'gh pr create --body-file - <<\'EOF\'\ndo { Start-Sleep 600 } while ($true)\nEOF' \
+        $'gh pr create --body-file - <<\'EOF\'\nuse `sleep 600` and `timeout /t 600` as examples\nEOF' \
+        $'gh pr create --body-file - <<\'EOF\'\n$(until false; do sleep 1; done)\nEOF' \
+        $'git commit -q -F - <<EOF\nwhile you wait, Start-Sleep 600 $(date +%F)\nEOF' \
+        $'git tag -a v1 -F - <<\'EOF\'\nwhile true; do sleep 600; done\nEOF' \
+        $'gh issue comment 5 -F - <<\'EOF\'\nfor ((;;)); do sleep 1; done\nEOF' \
+        $'gh release create v1 --notes-file - <<\'EOF\'\ndo { Start-Sleep 600 } until ($false)\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nfix: sleep 600\nEOF\ngit status' \
+        $'cat > notes.md <<\'EOF\'\nuntil false; do sleep 600; done\nEOF' \
+        $'cat > notes.md <<EOF\nuntil false; do sleep 600; done\nEOF' \
+        $'tee notes.md <<\'EOF\'\nStart-Sleep -Seconds 600\nEOF'; do
+      guard 0 "$cmd"
+    done
+    guard 0 'git commit -q -m "wait: Start-Sleep -Seconds 600"' PowerShell
+    for cmd in \
+        $'python3 - <<\'EOF\'\nEOF' \
+        $'bash <<\'EOF\'\nuntil false; do sleep 600; done\nEOF' \
+        $'cat > x.sh <<\'EOF\'\nwhile true; do sleep 1; done\nEOF\nbash x.sh' \
+        $'cat > x.sh <<\'EOF\'\nStart-Sleep -Seconds 600\nEOF\nsh x.sh' \
+        $'cat > x.sh <<\'EOF\'\nuntil false; do sleep 1; done\nEOF\n. ./x.sh' \
+        $'echo start; cat > x.sh <<\'EOF\'\nuntil false; do sleep 1; done\nEOF\nbash x.sh' \
+        $'git commit -q -F - <<\'EOF\'\nmsg\nEOF\nwhile true; do sleep 1; done' \
+        $'gh pr create --body-file - <<\'EOF\'\nmsg\nEOF\nsleep 600' \
+        $'git commit -q -F - <<EOF\n$(until false; do sleep 1; done)\nEOF' \
+        $'gh pr create --body-file - <<EOF\n$(sleep 600)\nEOF' \
+        $'git commit -q -F - <<EOF\n`until false; do sleep 1; done`\nEOF' \
+        $'cat > notes.md <<\'EOF\'\nmsg\nEOF\nbash -c "until false; do sleep 600; done"'; do
+      guard 2 "$cmd"
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook blocks a message or an unrun cat body that names a loop, a pause or a timed wait, or passes a body a shell, an interpreter or a runner executes (B50)" "the guard hook passes a commit's, tag's or gh message, and a cat or tee body nothing runs, that names a loop, a pause or a timed wait, and blocks a body a shell, an interpreter or a runner executes (B50)"
+
+  # A variable in a git command's words (B37): the guard can't read what it holds. A variable that the command assigns once,
+  # to a plain value, is read as that value, so FLAG=--force; git push $FLAG is the force push it is. Any other unquoted
+  # variable in the words of a git subcommand the rules read is blocked, and so is a quoted one that a flag or a path could
+  # be, a fixed text that starts a flag (--$X), a variable as the subcommand, and a variable as a command's name followed by
+  # -c or -Command. The everyday forms pass: a quoted variable as the value of -m, -e, -b or -C, after --, after fixed text
+  # that doesn't start a flag, as a push's branch after its remote, and in a subcommand the rules don't read (git status).
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'FLAG=--force; git push $FLAG' \
+        'FLAG=-f; git push ${FLAG} origin' \
+        'export ST=-f && git push $ST origin' \
+        'FLAG=--force; git push "$FLAG"' \
+        'FLAG=ok; FLAG=--force; git push $FLAG' \
+        'FLAG=ok; read FLAG; git push $FLAG' \
+        'NV=--no-verify; git commit $NV -m x' \
+        'git commit $NV -m x' \
+        "git commit \"\$NV\" -m x" \
+        'git push $FLAG' \
+        'git push "$FLAG"' \
+        'git push origin $BR' \
+        'git push --$X' \
+        'git push "--$X"' \
+        'git push -$F origin' \
+        'git log $X' \
+        'git log --output="$X"' \
+        'git diff "$f"' \
+        'git -C $d log' \
+        'git $CMD --force' \
+        'git commit -nm"$x" -- a' \
+        'git commit -m$msg' \
+        'git checkout -b $name' \
+        'git reset --hard $REF' \
+        'git branch -D "$b"' \
+        'git grep "$p"' \
+        $'bash <<\'EOF\'\ngit push $FLAG\nEOF' \
+        "\$X -c 'git push --force'" \
+        '"$SHELL" -c "git push --force"' \
+        'sudo "$X" -c "git push --force"' \
+        'env FOO=1 $X -c x' \
+        'timeout 240 "$X" -c x' \
+        'echo ok && $X -c x' \
+        '"$EDITOR" -c x'; do
+      guard 2 "$cmd"
+    done
+    for cmd in 'git commit $NV -m x' 'git push "$FLAG"' 'git push -u origin $BR' '$X -c "git push --force"' \
+        '& $X -c "git push --force"'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        'for r in A B C; do git -C work/$r status --short; done' \
+        'git -C "work/$r" log --oneline -1' \
+        'git -C "$repo" fetch' \
+        'git -C $d status' \
+        'git status $X' \
+        'git add $FILE' \
+        'git log --since="$since"' \
+        'git commit -m "$msg" -- a' \
+        'git commit -m"$msg" -- a' \
+        'git commit -am "$msg"' \
+        'git commit -C "$c"' \
+        'git push -u origin "$branch"' \
+        'git push origin "$a" "$b"' \
+        'git checkout -b "ddd/bundle-$day"' \
+        'git checkout -b "ddd/bundle-$day" origin/main' \
+        'git switch -c "$b"' \
+        'git grep -e "$p"' \
+        'git tag -a "v$VER" -m "release"' \
+        'git log --format="%h $X"' \
+        'git log -- $X' \
+        'git commit -m "$msg" -- $X' \
+        'git log > "$out"' \
+        'git log >"$out" --oneline' \
+        'FLAG=ok; git push $FLAG' \
+        'FLAG=--force; echo $FLAG' \
+        'MSG=--force; git commit -m "$MSG"' \
+        'a=1; git push $a' \
+        'echo $X -c x' \
+        'echo -n $X -c x' \
+        'echo "$X -c y"' \
+        '"$EDITOR" notes.txt' \
+        'git commit -m "& $X -c y" -- a' \
+        $'git commit -q -F - <<\'EOF\'\nfix the $X handling\nEOF'; do
+      guard 0 "$cmd"
+    done
+    guard 0 'git push -u origin "$branch"' PowerShell
+    guard 0 'git commit -m "$msg" -- a' PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook reads a variable in a git command's words as a value it can't see, or blocks a plain form (B37)" "the guard hook reads a variable a git command assigns once as its value, blocks an unquoted or flag-capable variable in a git command's words, a variable as a subcommand or as a shell's name followed by -c, and passes the everyday forms (B37)"
+
+  # A variable as a command's name, and a variable a shell's script holds (B45): the name a command assigns is the name it runs
+  # (G=git; $G push --force is git), and an unresolved name that the command sets another way, or that a git subcommand or a
+  # destructive flag follows, is blocked. A variable a shell's script (bash -c, eval, -Command) holds is blocked too. The
+  # everyday forms pass: "$PY" -I script.py, a loop that runs "$PY" "$f", a variable as an argument, and a single-quoted
+  # script's own variable (its shell reads it, and it can't name a command here). The Godot path cases are with the hangs above.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'G=git; $G push --force' \
+        '$G push --force' \
+        '"$G" push --force' \
+        'G=git; ${G} push --force' \
+        'G=git; "$G" push --force' \
+        '$G --force' \
+        'if true; then $G push --force; fi' \
+        'for f in x; do $G push --force; done' \
+        '{ $G push --force; }' \
+        'xargs $G push --force' \
+        'find . -exec $G push --force \;' \
+        'if true; then "$X" -c x; fi' \
+        'CMD="git push --force"; $CMD' \
+        'read CMD <<< "git push --force"; $CMD' \
+        'FOO=$(echo git); $FOO push --force' \
+        'bash -c "$CMD"' \
+        'eval "$CMD"' \
+        'eval $CMD' \
+        "bash -c '\$CMD'" \
+        'CMD="git push --force" bash -c '"'"'$CMD'"'"'' \
+        'sh -c "echo $HOME"' \
+        $'G=git; bash <<\'EOF\'\n$G push --force\nEOF' \
+        $'bash <<\'EOF\'\n$G push --force\nEOF' \
+        $'CMD="git push --force" bash <<\'EOF\'\n$CMD\nEOF'; do
+      guard 2 "$cmd"
+    done
+    for cmd in "\$G = 'git'; & \$G push --force" '& $G push --force'; do
+      guard 2 "$cmd" PowerShell
+    done
+    guard 2 'powershell -Command "$P"' PowerShell
+    for cmd in \
+        'G=git; $G status' \
+        'G=ls; $G push --force' \
+        'echo $G push --force' \
+        '"$PY" -I script.py' \
+        'PY=python3; "$PY" -I script.py' \
+        'FOO="a b" "$PY" -I x.py' \
+        'for f in tools/*.py; do "$PY" "$f"; done' \
+        'for f in a b; do echo "$f"; done' \
+        'if true; then "$PY" -I x.py; fi' \
+        'find . -name x -exec "$PY" -I y {} \;' \
+        'xargs -I{} echo {}' \
+        '"$PY" tools/usage.py status' \
+        'bash "$script"' \
+        'bash tools/check.sh "$X"' \
+        'cd "$dir" && git status' \
+        'bash -c "echo \$HOME"' \
+        "bash -c 'echo \$HOME'" \
+        $'git commit -q -F - <<\'EOF\'\n$G push --force\nEOF'; do
+      guard 0 "$cmd"
+    done
+    guard 0 "powershell -Command 'Get-ChildItem | % { \$_.Name }'" PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't read a variable as a command's name, or a script that a variable holds, or blocks an everyday form (B45)" "the guard hook reads a variable as a command's name as the value it assigns, blocks an unresolved one that the command sets another way or a git subcommand follows, blocks a shell's script, eval or -Command that a variable holds, and passes the everyday forms (B45)"
+
+  # An assignment is not a command, so it isn't read as a variable command name (B55): a PowerShell $x = 1, $x += 1 or $env:X = 'y',
+  # and a PowerShell constant or automatic value that no call operator runs ($true, $null, $args), pass in a PowerShell payload and in
+  # a PowerShell script a shell runs. A Bash NAME+=value is an assignment prefix, as NAME=value is. A call operator still runs
+  # what its name holds, and a git subcommand after any name is still read: & $x, & $args[0], $args push --force and $G push
+  # --force block, and so does out+=x $G push --force.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        '$x = 1' \
+        '$files = Get-ChildItem docs' \
+        '$x=1' \
+        '$x += 1' \
+        '$x ??= 1' \
+        "\$env:X = 'y'" \
+        '$x[0] = 1' \
+        '$null = Get-Date' \
+        '$true' \
+        '$false' \
+        '$null' \
+        'while ($true) { Get-Date }' \
+        '$args' \
+        '$_.Name' \
+        '$input | Out-Null'; do
+      guard 0 "$cmd" PowerShell
+    done
+    for cmd in \
+        "\$x = 1; & \$x" \
+        "\$x = 'git'; & \$x push --force" \
+        '$args push --force' \
+        '& $args[0] push --force' \
+        '$input | ForEach-Object { & $_ push --force }' \
+        '& $env:COMSPEC push --force'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        "powershell -Command 'while (\$true) { Get-Date }'" \
+        "powershell -Command '\$x = 1'" \
+        'c="${x:0:1}"; out+="$c"; echo hi' \
+        'out+=x; echo hi'; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        'out+=x $G push --force' \
+        'out+=x; $G push --force' \
+        'c+=y; "$c" push --force' \
+        "powershell -Command '\$args push --force'" \
+        "powershell -Command '\$G = \"git\"; & \$G status'"; do
+      guard 2 "$cmd"
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook reads an assignment or a constant as a variable command name, or passes a call operator or a NAME+=value prefix that runs a git command (B55)" "the guard hook passes a PowerShell assignment, a constant and an automatic value that runs nothing, and a Bash NAME+=value assignment, and blocks a call operator or a prefixed variable that runs git (B55)"
+
+  # PowerShell's Invoke-Expression and iex (B60) run their one string argument as a script, as eval does. A literal argument is read as
+  # a script of its own, and a variable the command assigns once to a plain literal before the call is read as its value. A pipeline into
+  # the call, no argument, an argument that isn't one string (a concatenation, a second argument, a double-quoted $( the caller expands),
+  # and a variable that can't be resolved (one set another way, in a branch, or after the call) are blocked. The benign forms pass.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        "iex 'git push --force'" \
+        "Invoke-Expression 'git push --force'" \
+        "Invoke-Expression -Command 'git push --force'" \
+        "iex -Command:'git push --force'" \
+        "IEX \"git push --force\"" \
+        "iex 'git push --force' -Verbose" \
+        "iex -Verbose 'git push --force'" \
+        "iex '-Verbose git push --force'" \
+        "Microsoft.PowerShell.Utility\\Invoke-Expression 'git push --force'" \
+        "& iex 'git push --force'" \
+        "ForEach-Object { iex 'git push --force' }" \
+        "ForEach-Object {iex 'git push --force'}" \
+        "\$x = 'git push --force'; iex \$x" \
+        "\$x='git push --force'; iex \$x" \
+        "\$x = 'git push --force'; Invoke-Expression \$x" \
+        "\$x = 'git push --force'; iex \"\$x\"" \
+        "\$x = \"git push --force\"; iex \$x" \
+        "\$x = 'git push --force'; iex \${x}" \
+        "\$x = 'git push --force'; iex \$x -Verbose" \
+        "\$x = 'git push --force'; iex \$x | Out-Null" \
+        "\$x = 'git'; iex \"\$x push --force\"" \
+        "iex \$x" \
+        "iex \"\$x\"" \
+        "iex" \
+        "iex \$x; \$x = 'git push --force'" \
+        "\$x = 'git push --force' | Out-Null; iex \$x" \
+        "\$x = 'ls'; iex \"\$x\" \"--force\"" \
+        "\$x = 'ls'; iex \"\$x\"-f ''" \
+        "\$x = 'ls'; iex \$x \$y" \
+        "\$x = 'ls'; Set-Variable x 'git push --force'; iex \$x" \
+        "\$x = 'ls'; . ./evil.ps1; iex \$x" \
+        "\$x = 'ls'; Import-Module ./m.psm1; iex \$x" \
+        "if (\$true) { \$x = 'ls' }; iex \$x" \
+        "\$x = 'git push --force'; iex \$x[0]" \
+        "\$x = 'ls'; \$x[0] = 'git push --force'; iex \$x" \
+        "\$x = 'ls'; \$x += 'git push --force'; iex \$x" \
+        "\$y = '\$x = ''git push --force'''; iex \$y; iex \$x" \
+        "\$x = 'ls'; \$y = '\$x = ''git push --force'''; iex \$y; iex \$x" \
+        "\$x = 'git push --force'; \$y = \$x; iex \$y" \
+        "iex \"\$(Get-Content x.txt)\"" \
+        "iex @args" \
+        "\$x = 'Get-Date'; iex @x" \
+        "iex ('git push' + ' --force')" \
+        "iex 'git pu' + 'sh --force'" \
+        "iex \"git push\" + \" --force\"" \
+        "'git push --force' | iex" \
+        "Get-Content x.ps1 | iex"; do
+      guard 2 "$cmd" PowerShell
+    done
+    guard 2 "powershell -Command \"iex 'git push --force'\"" PowerShell
+    for cmd in \
+        "\$x = 'Get-Date'; iex \$x" \
+        "\$x = 'Get-Date'; iex \"\$x\"" \
+        "\$x = 'git status'; iex \$x" \
+        "\$x = 'Get-Date'; \$y = 'git status'; iex \$x; iex \$y" \
+        "\$x = 'git push --force'" \
+        "\$x = 'git push --force'; iex 'Get-Date'" \
+        "iex 'Get-Date'" \
+        "iex 'Get-Date' -Verbose" \
+        "Invoke-Expression -Command 'Get-Date' -Verbose" \
+        "iex 'Write-Output \$x'" \
+        "iex '\$x = 1'" \
+        "iex \$true" \
+        "iex 'Get-Date' | Out-Null" \
+        "ForEach-Object { iex 'Get-Date' }" \
+        "Get-Help Invoke-Expression" \
+        "Get-Command iex" \
+        "Write-Output 'iex git push --force'"; do
+      guard 0 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't read an Invoke-Expression or iex script as a command, or passes one it can't read (B60)" "the guard hook reads the string argument of Invoke-Expression and iex as a script, resolves a variable the command assigns once to a plain literal, blocks a pipeline into it, an argument that isn't one string and an unresolved variable, and passes the benign forms (B60)"
+
+  # A git command name in another case (B46): PowerShell finds a command case-insensitively, and Windows finds GIT too, so GIT and
+  # Git are git in every git rule. Only the name is matched so: git's subcommands and flags stay case-sensitive, as git reads them.
+  # The git rules, the credential prints, a substitution in the words and a shell body that runs GIT block as their lowercase
+  # forms do, and the everyday forms and a quoted or heredoc message that names git in another case pass.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'GIT push --force origin main' \
+        'Git commit --no-verify -m x' \
+        'GIT reset --hard HEAD~1' \
+        'GIT log --output=/tmp/probe.txt' \
+        'Git diff --no-index a b' \
+        'GIT commit -F /tmp/msg.txt' \
+        'GIT log --ext-diff' \
+        'GIT push origin :main' \
+        'GIT branch -D x' \
+        'GIT credential fill' \
+        'Git credential get' \
+        'GIT -c core.pager=calc log' \
+        'Git push "$(echo --force)" origin main' \
+        $'bash <<\'EOF\'\nGIT push --force\nEOF'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in 'GIT push --force origin main' 'Git commit --no-verify -m x'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'GIT status' \
+        'Git log --oneline -5' \
+        'GIT diff HEAD' \
+        'GIT grep -n foo' \
+        'GIT tag -a v1 -m "see --force and -F"' \
+        'echo "Git push --force is blocked"' \
+        'echo "Git credential fill is blocked"' \
+        $'Git commit -q -F - <<\'EOF\'\nfix the --output and --no-index handling, not -F /tmp/x\nEOF'; do
+      guard 0 "$cmd" PowerShell
+    done
+    guard 0 'GIT status'
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook passes a git command name in another case, or blocks a message that names git in another case (B46)" "the guard hook blocks a git command name in any case (GIT, Git) as it blocks git, and passes the everyday forms and the messages that name git in another case (B46)"
+
+  # Git's configuration keys and program flags (B38). A -c key, or --config-env, that names a program git runs (an alias that
+  # starts with !, the pager, the editor, the ssh command, a diff or credential helper, an include) is blocked, and so is a key a
+  # variable holds; the keys that run nothing pass (core.quotepath, color.*, advice.*, log.*, user.name, pager.<cmd>=false). The
+  # flags that name a program for a remote (--upload-pack, --receive-pack, --exec, and clone's -u), abbreviations included, are
+  # blocked on fetch, pull, push, clone, ls-remote and archive, and a plain fetch, push -u and clone -b pass. A variable that names
+  # a program git runs (GIT_CONFIG_*, GIT_SSH_COMMAND, GIT_PAGER, GIT_EDITOR, EDITOR) set on a git command is blocked too.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        'git -c alias.x="!echo hi" x' \
+        "git -c 'alias.x=!echo hi' x" \
+        'git -c "alias.x=!echo hi" x' \
+        'git -c core.pager="sh -c x" log' \
+        'git -c core.sshCommand=x fetch' \
+        'git -c diff.external=x diff' \
+        'git -c "$k=v" log' \
+        'git -c Alias.X=y x' \
+        'git -c core.quotepath=false -c alias.x=y x' \
+        'git -c color.ui=always -c core.pager=x log' \
+        'git -c sequence.editor=x rebase -i HEAD~2' \
+        "git -c credential.helper='!x' fetch origin" \
+        'git -c protocol.ext.allow=always fetch origin' \
+        'git -c include.path=/tmp/x log' \
+        'git -c "core.$(echo pager)=x" log' \
+        'git -c pager.log=less log' \
+        'git --config-env=core.pager=PAGER_VAR log' \
+        'git --git-dir .git -c alias.x=y x' \
+        "git -c \$'alias.x=!echo hi' x" \
+        "git -c 'alias.x=y' x" \
+        'git -c "alias.x" x' \
+        'git -c "a""lias.x=!echo" x' \
+        'git -c "core.pager"=sh x' \
+        'k=core.pager; git -c "$k=sh" log' \
+        $'git \\\n-c core.pager=x log' \
+        'git clone -c core.sshCommand=x https://example.com/r.git d' \
+        'git clone --config=alias.x=y https://example.com/r.git d' \
+        'git clone --config alias.x=y https://example.com/r.git d' \
+        'git clone -c alias.x=y https://example.com/r.git d' \
+        'git clone -u "sh -c x" https://example.com/r.git d' \
+        'git clone --upload-pack="sh -c x" https://example.com/r.git d' \
+        'git clone -qu "sh -c x" https://example.com/r.git d' \
+        'git fetch --upload-pack x origin' \
+        'git fetch --upl=x origin' \
+        'git fetch --upload-pack="$(echo x)" origin' \
+        'git fetch "--$(echo upload-pack)=x" origin' \
+        'git pull --upload-pack=x' \
+        'git push --receive-pack=x origin main' \
+        'git push --receive-pack x origin main' \
+        'git push --exec=x origin main' \
+        'git push origin main --receive=x' \
+        'git ls-remote --upload-pack=x origin' \
+        'git archive --remote=origin --exec=x HEAD' \
+        'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0=x git log' \
+        'GIT_SSH_COMMAND=x git fetch' \
+        'GIT_PAGER=x git log' \
+        'GIT_EXTERNAL_DIFF=x git log -p' \
+        'env GIT_EDITOR=x git commit' \
+        'export GIT_PAGER=x; git log' \
+        'EDITOR=x git commit -a'; do
+      guard 2 "$cmd"
+    done
+    for cmd in 'git -c core.pager=x log' 'git -c "$k=v" log' 'git fetch --upload-pack=x' 'git -c alias.x=!echo x' \
+        '$env:GIT_PAGER="x"; git log'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in \
+        'git -c core.quotePath=false status --porcelain --untracked-files=all' \
+        'git -c core.quotepath=off log --oneline -3' \
+        'git -c color.ui=never log --oneline' \
+        'git -c user.name=selftest -c user.email=selftest@localhost commit -m x' \
+        "git -c 'user.name=A B' commit -m x" \
+        'git -c advice.detachedHead=false checkout HEAD~1' \
+        'git -c log.showSignature=false log -1' \
+        'git -c pager.log=false log --oneline' \
+        'git -c "color.ui=always" diff --stat' \
+        'k=color.ui; git -c "$k=always" log --oneline' \
+        'git -C work/Godot-Director fetch' \
+        'git -c core.quotepath=false -C work/Godot-Director status' \
+        'git clone -b main https://example.com/r.git d' \
+        'git clone -q --depth 1 https://example.com/r.git d' \
+        'git clone -c core.quotepath=false https://example.com/r.git d' \
+        'git fetch origin' \
+        'git fetch --unshallow origin' \
+        'git push -u origin "$branch"' \
+        'git push origin main' \
+        'git push --recurse-submodules=check origin main' \
+        'git ls-remote origin' \
+        'git archive --format=tar HEAD' \
+        'git pull --rebase origin main' \
+        'git log -c' \
+        'git commit -c HEAD' \
+        'git commit -m "--upload-pack=x fix"' \
+        'git commit -m "alias.x=!echo hi"' \
+        'git tag -a v1 -m "-c alias.x=y"' \
+        'git commit -m "set EDITOR=vim and GIT_PAGER=x"' \
+        'GIT_AUTHOR_NAME=x git commit -m y' \
+        'FOO=1 git status' \
+        'EDITORCONFIG=x git status' \
+        $'git commit -q -F - <<\'EOF\'\nGIT_PAGER=x and EDITOR=vim in a message\nEOF' \
+        $'git \\\n-c core.quotepath=false status'; do
+      guard 0 "$cmd"
+    done
+    guard 0 'git -c user.email=a@b.c commit -m x' PowerShell
+    guard 0 'git -c color.ui=always status' PowerShell
+    guard 0 'git push -u origin main' PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook passes a git -c key or a program flag that runs a command, or a variable that names one, or blocks a plain form (B38)" "the guard hook blocks a git -c key that names a program (an alias, the pager, the ssh command, a diff or credential helper), a key a variable holds, a program flag for a remote (--upload-pack, --receive-pack, --exec, clone's -u), and a GIT_CONFIG_*, GIT_PAGER or EDITOR variable on a git command; the keys that run nothing and the plain forms pass (B38)"
+
+  # A quoted git name, a heredoc body a shell runs, the long forms and a credential subcommand in quotes (B39). The git name is
+  # read as the shell reads it, quotes removed, so "git", 'git' and g"it" are git. A heredoc body a shell runs (any body but a
+  # commit's or tag's message) is read by the file-writing flag rules, and a backtick ends a flag in it. git branch with --delete
+  # and --force (-d -f, -df, --del --forc), git push --mirror, --delete and -d (abbreviations too) and a :ref refspec are blocked,
+  # as their plain forms are, and the credential-print rules read the decoded words. A message that names them, and a read that
+  # names none, pass: a commit's or tag's message is text no shell runs.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        '"git" push --force' \
+        "'git' push --force" \
+        'g"it" push --force' \
+        '"git" log --output=/tmp/x' \
+        $'bash <<\'EOF\'\ngit log --output=/tmp/x\nEOF' \
+        $'sh <<EOF\ngit diff --no-index a b\nEOF' \
+        $'bash <<\'EOF\'\ngit commit -F /tmp/msg.txt\nEOF' \
+        $'cat <<\'EOF\' | bash\ngit log --output=/tmp/x\nEOF' \
+        $'bash <<\'EOF\'\ngit branch --delete --force x\nEOF' \
+        $'bash <<\'EOF\'\ngit push --mirror\nEOF' \
+        $'bash <<\'EOF\'\ngit credential "fill"\nEOF' \
+        $'bash <<\'EOF\'\ngit push `echo --force`\nEOF' \
+        $'bash <<\'EOF\'\ngit push --force`echo x`\nEOF' \
+        $'ssh host <<\'EOF\'\ngit push `echo --force`\nEOF' \
+        $'git status && bash <<\'EOF\'\ngit push `echo --force`\nEOF' \
+        $'"bash" <<\'EOF\'\ngit push --mirror\nEOF' \
+        $'git commit -m "$(source /dev/stdin <<\'EOF\'\ngit push `echo --force`\nEOF\n)"' \
+        'sh -c "git push --mirror"' \
+        'git branch --delete --force x' \
+        'git branch --delete -f x' \
+        'git branch -d -f x' \
+        'git branch -df x' \
+        'git branch -fd x' \
+        'git branch --del --forc x' \
+        'git push --mirror' \
+        'git push --mirror origin' \
+        'git push --mi origin' \
+        'git push --delete origin x' \
+        'git push --de origin x' \
+        'git push -d origin x' \
+        'git push -fd origin x' \
+        'git push origin :x' \
+        'git push origin ":x"' \
+        'git push origin :refs/heads/x' \
+        'git credential "fill"' \
+        "git credential 'get'" \
+        'git credential fi"ll"' \
+        'gh "auth" "token"' \
+        'g"h" auth token'; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'git branch -d x' \
+        'git branch -vv' \
+        'git branch -m old new' \
+        'git branch --list "*f*"' \
+        'git push origin main:main' \
+        'git push origin HEAD:refs/heads/x' \
+        'git push --dry-run origin main' \
+        'git push --set-upstream origin x' \
+        'echo "git push --mirror"' \
+        'echo "git credential fill"' \
+        'git log --grep "push --mirror"' \
+        'git status && echo "git credential fill"' \
+        $'git commit -q -F - <<\'EOF\'\nfix: git push --mirror and git branch -d x\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nfix: git log --output=x in the docs\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nmsg with `git push --force` in it\nEOF' \
+        $'git tag -a v1 -F - <<\'EOF\'\nfix: git push --delete origin x\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nfix the --mirror and --delete flags, not -d\nEOF' \
+        $'bash <<\'EOF\'\necho hi\nEOF' \
+        $'bash <<\'EOF\'\ngit status\nEOF' \
+        $'bash <<\'EOF\'\ngit branch -d x\nEOF' \
+        $'git status && bash <<\'EOF\'\necho x\nEOF'; do
+      guard 0 "$cmd"
+    done
+    for cmd in '"git" push --force' 'git branch --delete --force x' 'git push --mirror' 'git push origin :x' \
+        'git credential "fill"' 'gh "auth" "token"'; do
+      guard 2 "$cmd" PowerShell
+    done
+    for cmd in 'git branch -d x' 'git push origin main'; do
+      guard 0 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook doesn't read a quoted git name, a heredoc body a shell runs, a long-form branch or push flag, a push refspec that deletes, or a quoted credential subcommand as the shell does, or blocks a message that names a plain form (B39)" "the guard hook blocks a quoted git name, a heredoc body a shell runs with a file-writing flag, a backtick flag or a destructive command, git branch --delete --force, git push --mirror, --delete or a :ref refspec, and a quoted credential subcommand, and passes the messages and reads that name them (B39)"
+
+  # A heredoc body no shell runs is text (B40): a commit's or tag's message, and a cat or tee body that the command doesn't run (no
+  # shell, interpreter, ssh, chmod, make, a ./ path, a dot-source or the .git folder). The destructive rules and the file-writing flag
+  # rules skip such a body, so a message or a written file that names a destructive git command passes, and its substitutions are
+  # still read. A body written to a file and run in the same command (cat > x.sh, then bash x.sh, ./x.sh or . x.sh) is a script a
+  # shell runs, and is read as before. The guard reads command text, so a file written by an earlier command isn't judged.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        $'git commit -q -F - <<\'EOF\'\nfix: git push --force; done\nEOF' \
+        $'git tag -a v1 -F - <<\'EOF\'\nfix: git push --delete origin x\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nmsg with `git push --force` in it\nEOF' \
+        $'git commit -m "$(cat <<\'EOF\'\nfix: git reset --hard\nEOF\n)"' \
+        $'git commit -q -F - <<\'EOF\'\nfix: git log --output=x in the docs\nEOF\nbash x.sh' \
+        $'cat > notes.md <<\'EOF\'\nsee git log --output=x\nEOF' \
+        $'cat > notes.md <<\'EOF\'\na backticked `git push --force` here\nEOF' \
+        $'tee notes.md <<\'EOF\'\ngit push --mirror\nEOF' \
+        $'cat <<\'EOF\' > notes.md\ngit reset --hard\nEOF' \
+        $'cat >> notes.md <<\'EOF\'\ngit branch -D x\nEOF' \
+        $'cat > notes.md <<\'EOF\'\ngit push --force\nEOF\ngit add notes.md && git status' \
+        $'cat > ./notes.md <<\'EOF\'\ngit diff --ext-diff\nEOF' \
+        $'cat > notes.md <<\'EOF\'\nbash -c \'git push --force\'\nEOF' \
+        $'cat > notes.md <<EOF\nplain text, no git here\nEOF' \
+        $'cat > notes.md <<\'EOF\'\ngit push --force\nEOF\necho "run bash later"' \
+        $'cat > notes.md <<\'EOF\'\ngit push --force\nEOF\ngit commit -q -F - <<\'EOF2\'\nfix: git push --force\nEOF2'; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        $'cat > x.sh <<EOF\ngit push --force\nEOF\nbash x.sh' \
+        $'cat > x.sh <<\'EOF\'\ngit push --force\nEOF\nbash x.sh' \
+        $'cat > x.sh <<\'EOF\'\ngit push --force\nEOF\nchmod +x x.sh && ./x.sh' \
+        $'cat > x.sh <<\'EOF\'\ngit reset --hard\nEOF && sh x.sh' \
+        $'cat > x.sh <<\'EOF\'\ngit log --output=/tmp/x\nEOF\nbash x.sh' \
+        $'cat > x.sh <<\'EOF\'\ngit push --force\nEOF\nsource x.sh' \
+        $'tee x.sh <<\'EOF\'\ngit push --force\nEOF\n. ./x.sh' \
+        $'cat > x.sh <<\'EOF\'\ngit push --force\nEOF\n"bash" x.sh' \
+        $'cat > x.sh <<\'EOF\'\ngit push --force\nEOF\npython3 x.sh' \
+        $'cat > x.sh <<\'EOF\'\ngit push --force\nEOF\nenv bash x.sh' \
+        $'cat > Makefile <<\'EOF\'\npush:\n\tgit push --force\nEOF\nmake push' \
+        $'cat > .git/hooks/pre-commit <<\'EOF\'\ngit push --force\nEOF\ngit commit -q -m x' \
+        $'cat > notes.md <<EOF\n$(git push --force)\nEOF' \
+        $'cat > notes.md <<EOF\n`git push --force`\nEOF' \
+        $'git commit -q -F - <<EOF\nfix `git push --force`\nEOF' \
+        $'cat <<\'EOF\' | bash\ngit push --force\nEOF' \
+        $'bash <<\'EOF\'\ngit push --force\nEOF'; do
+      guard 2 "$cmd"
+    done
+    guard 2 $'cat > x.ps1 <<\'EOF\'\ngit push --force\nEOF\n& ./x.ps1' PowerShell
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook reads a commit's or tag's message, or a cat or tee body that nothing in the command runs, as a script (B40), or passes a body a shell runs" "the guard hook passes a commit's or tag's message and a cat or tee body that the command doesn't run, and blocks a body written to a file and run in the same command (B40)"
+
+  # A gh message with a quoted delimiter (B48): gh pr create and edit, issue create, edit and comment, and release create and edit
+  # take the body from stdin (--body-file -, -F -, --notes-file -) or from a $(cat <<'EOF') given to --body, -b, --notes or -n. That
+  # body is text no shell runs, as a commit's message is (B40), so the destructive rules skip it, and the variable rules (B37)
+  # skip it and a cat body nothing runs. A body a shell runs, an unquoted body with a substitution, a git command that goes on past
+  # the body, or a body piped to a shell is still read.
+  git_fail=""
+  if [ -f .claude/hooks/guard-git.sh ]; then
+    for cmd in \
+        $'gh pr edit 5 --body-file - <<\'EOF\'\nfix: git push --force; done\nEOF' \
+        $'gh pr create --body "$(cat <<\'EOF\'\nfix: git push --force\nEOF\n)"' \
+        $'gh pr create --title t --body-file - <<\'EOF\'\nDo not run git push --force\nEOF' \
+        $'gh issue comment 5 -F - <<\'EOF\'\ngit reset --hard\nEOF' \
+        $'gh issue create -b "$(cat <<\'EOF\'\ngit branch -D x\nEOF\n)"' \
+        $'gh release create v1 --notes-file - <<\'EOF\'\ngit push --mirror\nEOF' \
+        $'gh release edit v1 -n "$(cat <<\'EOF\'\ngit push --delete origin x\nEOF\n)"' \
+        $'gh pr create --body-file=- <<\'EOF\'\ngit push --force\nEOF' \
+        $'GH pr create -F- <<\'EOF\'\ngit push --force\nEOF' \
+        $'gh pr create --body="$(cat <<\'EOF\'\ngit push --force\nEOF\n)"' \
+        $'gh pr edit 5 --body-file - <<\'EOF\'\ngit push --force\nEOF' \
+        $'gh pr create --body-file - <<\'EOF\'\nbash -c \'git push --force\'\nEOF' \
+        $'gh pr create --body-file - <<\'EOF\'\necho cmd /c "git push --force"\nEOF' \
+        $'gh pr edit 5 --body-file - <<\'EOF\'\nfix: git push $X handling\nEOF' \
+        $'git commit -q -F - <<\'EOF\'\nfix: git push $X handling\nEOF' \
+        $'git tag -a v1 -F - <<\'EOF\'\nfix: git push $X handling\nEOF' \
+        $'cat > notes.md <<\'EOF\'\nfix: git push $X handling\nEOF'; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        $'gh pr edit 5 --body-file - <<\'EOF\' && git push --force\nmsg\nEOF' \
+        $'gh pr create --body-file - <<\'EOF\'\nmsg\nEOF\ngit push --force' \
+        $'gh pr create --body-file - <<\'EOF\' | bash\ngit push --force\nEOF' \
+        $'gh pr create --body-file - <<EOF\nfix: git push --force\nEOF' \
+        $'gh pr create --body "$(cat <<EOF\n$(git push --force)\nEOF\n)"' \
+        $'gh pr create --body "$(cat <<\'EOF\'\nmsg\nEOF\n)" --title "$(git push --force)"' \
+        $'bash <<\'EOF\'\ngit push $X\nEOF' \
+        $'cat > x.sh <<\'EOF\'\ngit push $X\nEOF\nbash x.sh'; do
+      guard 2 "$cmd"
+    done
+    # A shell or PowerShell name right after a word that only prints its words (echo, printf, Write-Output, Write-Host, write) is
+    # text (B48). Anywhere else it may run a script, so a launcher's argument stays read: ssh, find -exec, docker exec, Start-Process.
+    for cmd in \
+        "echo PowerShell 'git push --force'" \
+        "echo pwsh 'git push --force'" \
+        "echo bash -c 'git push --force'" \
+        'echo sh -c "git push --force"' \
+        $'printf sh -c \'git push --force\'' \
+        $'echo eval \'git push --force\'' \
+        'echo PowerShell -Command "git push --force"'; do
+      guard 0 "$cmd"
+    done
+    for cmd in \
+        'ssh host pwsh -c "git push --force"' \
+        'find . -exec pwsh -c "git push --force" \;' \
+        'docker exec ctr pwsh -c "git push --force"' \
+        'ssh host sh -c "git push --force"' \
+        'find . -exec sh -c "git push --force" \;' \
+        $'docker exec ctr bash -c \'git push --force\''; do
+      guard 2 "$cmd"
+    done
+    for cmd in \
+        'Write-Output PowerShell -Command "git push --force"' \
+        "Write-Output powershell 'git push --force'" \
+        "echo pwsh 'git push --force'" \
+        "Write-Host Pwsh.exe 'git push --force'"; do
+      guard 0 "$cmd" PowerShell
+    done
+    for cmd in \
+        "Start-Process powershell -ArgumentList 'git push --force'" \
+        'ssh host pwsh -c "git push --force"' \
+        'timeout 60 powershell -c "git push --force"'; do
+      guard 2 "$cmd" PowerShell
+    done
+  fi
+  guard_run
+  guard_report "$git_fail" "the guard hook reads a gh message's body, or a variable in a message or a cat body nothing runs, as a command, passes a body a shell runs, or reads a word after echo, printf, Write-Output, Write-Host or write, or a launcher's argument, wrongly (B48)" "the guard hook passes a gh pr, issue or release message with a quoted delimiter, and a variable in a message or in a cat body nothing runs, and blocks a git command after a message, an unquoted message, a message piped to a shell, and a variable in a body a shell runs; a shell or PowerShell name after echo, printf, Write-Output, Write-Host or write is text, and one that a launcher passes a script to is read (B48)"
+  # The PowerShell tool (B24) has its own name. The guard runs for it only when a PreToolUse matcher that runs guard-git.sh
+  # names it (settings.json has one entry each for Bash, Monitor and PowerShell), and a Bash(...) deny or ask rule stops the
+  # same command in PowerShell only through its PowerShell(...) twin, in the same list. The allow list names no PowerShell
+  # command, so nothing PowerShell runs is allowed without a prompt. Read(...) rules are the Read tool's; PowerShell's own
+  # file reads are the guard's (the credential-store cases above).
+  ps_fail=""
+  guard_matchers=$(awk -F'"' '/"matcher"/ { m = $4 } /guard-git\.sh/ { print m }' .claude/settings.json)
+  for tool in Bash Monitor PowerShell; do
+    hit=0
+    while IFS= read -r m; do
+      case "|$m|" in *"|$tool|"*) hit=1 ;; esac
+    done <<< "$guard_matchers"
+    [ "$hit" -eq 1 ] || ps_fail="$ps_fail"$'\n'"  no PreToolUse matcher that runs guard-git.sh names $tool (matchers: ${guard_matchers//$'\n'/, })"
+  done
+  for list in deny ask; do
+    arr=$(sed -n "/\"$list\": *\[/,/\]/p" .claude/settings.json)
+    while IFS= read -r rule; do
+      [ -n "$rule" ] || continue
+      twin="PowerShell(${rule#Bash(}"
+      printf '%s\n' "$arr" | grep -qF "\"$twin\"" \
+        || ps_fail="$ps_fail"$'\n'"  settings.json's $list rules have $rule but no $twin"
+    done <<< "$(printf '%s\n' "$arr" | grep -oE '"Bash\([^"]*\)"' | tr -d '"')"
+  done
+  printf '%s\n' "$perm_allow" | grep -q 'PowerShell(' \
+    && ps_fail="$ps_fail"$'\n'"  settings.json's allow list names a PowerShell command, so PowerShell would run it without a prompt"
+  guard_report "$ps_fail" "the PowerShell tool isn't wired to the guard and the deny and ask rules (B24)" "a matcher that runs the guard hook names Bash, Monitor and PowerShell, every Bash deny and ask rule has a PowerShell twin, and the allow list names no PowerShell command"
+fi
+
+}
+
+l_guard2() {
+lane_game base
+guard_dir="$work/guard-cases"; mkdir -p "$guard_dir"; git_fail=""
 # --- protected-space guard (Claude Code PreToolUse hook) ----------------------------------------
 # Claude Code sends the path as given: relative, absolute POSIX, or Windows (JSON-escaped). The
 # project root is $CLAUDE_PROJECT_DIR (the Windows cases pass a made-up root; the hook only reads text).
 echo "protected-space guard"
-guard_write() { # guard_write <expected exit> <what> <file_path as sent (JSON-escaped)> [project dir]
-  local out got
-  out="$(printf '{"session_id":"s","tool_name":"Write","tool_input":{"file_path":"%s","content":"x"}}' "$3" \
-    | CLAUDE_PROJECT_DIR="${4:-$game}" bash .claude/hooks/guard-protected.sh 2>&1)"
-  got=$?
-  if [ "$got" -eq "$1" ]; then ok "$([ "$1" -eq 2 ] && echo blocks || echo allows): $2"; else bad "guard-protected exit $got, expected $1: $2" "$out"; fi
-}
 guard_write 2 "relative director/x" 'director/x'
 guard_write 2 "./director/x" './director/x'
 guard_write 2 "x/../director/y" 'x/../director/y'
@@ -1345,6 +3898,8 @@ echo "user stories"
 # commit on the stories file's Last validated line (by its date when that commit isn't in the history),
 # and is due when the stories were never validated. The template stands in for a game's file.
 guard 0 'bash tools/stories.sh --due'
+guard_run
+guard_report "$git_fail" "the guard hook blocks bash tools/stories.sh --due" "the guard hook allows bash tools/stories.sh --due"
 out="$(bash tools/stories.sh --due 2>&1)"; status=$?
 expect_status "stories --due exits 0 in Market Day, which uses them" 0 "$status" "$out"
 expect_output "and counts by the date of its Last validated line, whose commit isn't in this history" \
@@ -1427,11 +3982,10 @@ printf -- '- User stories: off\n' > "$_st_nogit/AGENTS.md"
 out="$(cd "$_st_nogit" && GIT_CEILING_DIRECTORIES="$work" bash tools/stories.sh --due 2>&1)"; status=$?
 expect_status "with the stories off it exits 0 there, needing no repository" 0 "$status" "$out"
 
-if [ -z "$godot" ]; then
-  echo "check and hooks: skipped (pass the path to Godot 4.5+ to test them)"
-  finish
-fi
+}
 
+l_setup() {
+lane_game base
 # --- per-clone setup ----------------------------------------------------------------------------
 echo "setup-clone"
 out="$(GODOT_BIN=/nonexistent/godot bash tools/check.sh 2>&1)"; expect_status "the check exits 3 without Godot" 3 $? "$out"
@@ -1448,7 +4002,10 @@ grep -qs "Godot Director" "$(git rev-parse --git-path hooks)/pre-commit" && ok "
 [ -z "$(git config --get core.hooksPath)" ] && ok "leaves core.hooksPath alone (Git LFS keeps working)" || bad "leaves core.hooksPath alone"
 # A path saved by PowerShell: UTF-8 BOM, trailing spaces, CRLF.
 printf '\357\273\277%s  \r\n' "$godot" > tools/godot_bin.local
+}
 
+l_check_import_a() {
+lane_game ready
 # --- the check ----------------------------------------------------------------------------------
 echo "check"
 out="$(bash tools/check.sh 2>&1)"; status=$?
@@ -1465,6 +4022,10 @@ expect_output "and skips the import pass when no imported file changed" "check: 
 out="$(bash tools/check.sh --import 2>&1)"; status=$?
 expect_status "--import runs the import pass and passes" 0 "$status" "$out"
 expect_no_output "and doesn't skip it" "import pass skipped" "$out"
+}
+
+l_check_import_b() {
+lane_game warm
 rm -rf .godot/imported
 out="$(bash tools/check.sh 2>&1)"; status=$?
 expect_status "a check without an import cache passes" 0 "$status" "$out"
@@ -1488,6 +4049,10 @@ expect_status "a body-only edit passes the check" 0 "$status" "$out"
 expect_output "and the check skips the import pass for it" "import pass skipped" "$out"
 rm -f scripts/selftest_helper.gd scripts/selftest_helper.gd.uid scripts/selftest_user.gd scripts/selftest_user.gd.uid
 
+}
+
+l_check_faults_a() {
+lane_game warm
 fault() { # fault <what> <file> <text to append> <regex the output must contain>
   cp "$2" "$work/saved"
   printf '%s\n' "$3" >> "$2"
@@ -1500,6 +4065,18 @@ fault "a parse error" scripts/systems/market.gd 'func broken( -> void:' 'market\
 fault "an untyped declaration" scripts/systems/market.gd "$(printf '\nfunc untyped(value):\n\treturn value')" 'market\.gd'
 fault "randomness in a screen" scripts/ui/shop_screen.gd "$(printf '\nfunc _roll() -> int:\n\treturn randi()')" 'screen script does .randi'
 fault "a screen assigning to an autoload" scripts/ui/shop_screen.gd "$(printf '\nfunc _cheat() -> void:\n\tRunState.gold = 999')" 'RunState\.gold'
+}
+
+l_check_faults_b() {
+lane_game warm
+fault() { # fault <what> <file> <text to append> <regex the output must contain>
+  cp "$2" "$work/saved"
+  printf '%s\n' "$3" >> "$2"
+  out="$(bash tools/check.sh 2>&1)"; status=$?
+  expect_status "fails on $1" 1 "$status" "$out"
+  expect_output "names the cause of $1" "$4" "$out"
+  cp "$work/saved" "$2"
+}
 fault "a failing test" tests/test_market.gd "$(printf '\nfunc test_selftest_failure() -> void:\n\texpect_eq(1, 2)')" 'expected 2, got 1'
 fault "an async test" tests/test_market.gd "$(printf '\nfunc test_selftest_async() -> void:\n\tawait Engine.get_main_loop().process_frame\n\texpect(true)')" 'must be synchronous'
 fault "a runtime error in a test" tests/test_market.gd "$(printf '\nfunc test_selftest_crash() -> void:\n\tvar node: Node = null\n\tnode.get_name()')" 'SCRIPT ERROR'
@@ -1515,6 +4092,10 @@ sed 's|scripts/resources/market_config\.gd|scripts/resources/renamed.gd|' "$work
 out="$(bash tools/check.sh 2>&1)"; expect_status "fails on a resource whose script was renamed" 1 $? "$out"
 cp "$work/saved" data/market_config.tres
 
+}
+
+l_check_misc_a() {
+lane_game warm
 # Known screen violations pass with a note; other frameworks' tests are skipped.
 cp scripts/ui/shop_screen.gd "$work/saved-screen"; cp tools/check.cfg "$work/saved-cfg"
 printf '\nfunc _roll() -> int:\n\treturn randi()\n' >> scripts/ui/shop_screen.gd
@@ -1544,9 +4125,13 @@ expect_status "accepts expected errors marked GDIR-IGNORE, or C4G-IGNORE as in 2
 expect_output "sets the check meta under the new and the deprecated 2.x name" "14 tests passed" "$out"
 rm -f tests/test_selftest_meta.gd tests/test_selftest_meta.gd.uid
 
+}
+
+l_check_misc_b() {
+lane_game warm
 out="$(bash tools/check.sh 2>&1)"; expect_status "passes again after the faults are removed" 0 $? "$out"
 
-# --only: one test file, the supported way to run it (the Bash guard refuses a direct Godot run past
+# --only: one test file, the supported way to run it (the guard refuses a direct Godot run past
 # 280 s, and builders wrote runner scripts). It never records a result for --if-changed.
 echo "one test file (--only)"
 last_pass_before="$(cat .godot/godot-director/last-pass 2>/dev/null)"
@@ -1575,14 +4160,13 @@ grep -q 'check\.sh --only' .godot-director/procedures/build.md && grep -q 'check
   && ok "the build procedure, the rules, the builder agent and the guard's refusal name --only" \
   || bad "the build procedure, the rules, the builder agent and the guard's refusal name --only"
 
+}
+
+l_par_a() {
+lane_game warm
 # --- parallel tests, per-file times, timeout ----------------------------------------------------
 echo "parallel tests"
-logs=".godot/godot-director"
-# These cases count the processes that run the tests, and autoplay in the check takes one of them, so
-# the example's [autoplay] is left out here ("autoplay beside the tests" covers it).
-cp tools/check.cfg "$work/saved-check-cfg-ap"
-awk '/^\[autoplay\]$/ { skip = 1; next } /^\[/ { skip = 0 } !skip' "$work/saved-check-cfg-ap" > tools/check.cfg
-test_order() { for f in "$@"; do tr -d '\r' < "$f"; done | sed -n 's/^GDIR-TEST: \(.*\)::.*$/\1/p' | uniq; }
+parallel_prelude
 out="$(bash tools/check.sh --jobs 1 2>&1)"; expect_status "--jobs 1 runs the tests in one process" 0 $? "$out"
 expect_output "and runs all of the example's tests" "12 tests passed" "$out"
 expect_no_output "with no group processes" "running the tests in" "$out"
@@ -1612,34 +4196,12 @@ cp "$work/saved" tests/test_market.gd
 times="$logs/test-times.tsv"
 [ -f "$times" ] && grep -qE '^res://tests/test_market\.gd	([0-9]+\.[0-9]{3})	1	[0-9]+\.[0-9]{3}$' "$times" \
   && ok "a whole run stores each test file's time, one shard and its time as the longest" || bad "a whole run stores each test file's time, one shard and its time as the longest" "$(cat "$times" 2>/dev/null)"
-# A Godot process that exits 139 (a segmentation fault) with a clean log: the check names the process, its
-# status and its log in one line before the FAIL, and the exit code stays 1. crashy <pattern> [silent]: a
-# stand-in for Godot that runs the real one, then exits 139 for a call whose arguments contain the pattern;
-# with "silent" it exits 139 before running anything, so the log stays empty.
-crashy() {
-  if [ "${2:-}" = "silent" ]; then
-    cat > "$work/godot-crash" <<CRASH
-#!/usr/bin/env bash
-case "\$*" in *"$1"*) exit 139 ;; esac
-"$godot" "\$@"
-CRASH
-  else
-    cat > "$work/godot-crash" <<CRASH
-#!/usr/bin/env bash
-"$godot" "\$@"
-status=\$?
-case "\$*" in *"$1"*) exit 139 ;; esac
-exit \$status
-CRASH
-  fi
-  chmod +x "$work/godot-crash"
 }
-line_of() { printf '%s\n' "$1" | grep -n -E -- "$2" | head -n 1 | cut -d: -f1; }
-before() { # before <output> <regex> <regex>: the first line matching the first regex comes before the second's
-  local a b
-  a="$(line_of "$1" "$2")"; b="$(line_of "$1" "$3")"
-  [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]
-}
+
+l_par_b1() {
+lane_game warm
+parallel_prelude
+crash_defs
 crashy "--import"
 out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --import --jobs 2 2>&1)"; expect_status "an import pass that crashes with a clean log fails the check" 1 $? "$out"
 expect_output "names the import pass, its status and its log" "check: the import pass exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/import\.log" "$out"
@@ -1652,6 +4214,12 @@ crashy "--tests 2 2"
 out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --jobs 2 2>&1)"; expect_status "a test group that crashes after its report fails the check" 1 $? "$out"
 expect_output "names the group, its status and its log" "check: test group 2 of 2 exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/tests-2\.log" "$out"
 before "$out" "printed no error" "^check: FAIL" && ok "and the FAIL follows it" || bad "and the FAIL follows it" "$out"
+}
+
+l_par_b2() {
+lane_game warm
+parallel_prelude
+crash_defs
 crashy "--tests 2 2" silent
 out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --jobs 2 2>&1)"; expect_status "a test group that crashes before its report fails the check" 1 $? "$out"
 expect_output "names the group, its status and its log" "check: test group 2 of 2 exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/tests-2\.log" "$out"
@@ -1663,7 +4231,11 @@ before "$out" "printed no error" "^check: FAIL" && ok "and the FAIL follows it" 
 crashy "tools/check.gd"
 out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --jobs 1 2>&1)"; expect_status "a serial run whose check crashes with a clean log fails the check" 1 $? "$out"
 expect_output "names the check, its status and its log" "check: tools/check\.gd exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/check\.log" "$out"
-deal_of() { printf '%s\n' "$1" | sed -n 's/^check: deal: job \([0-9]*\) [0-9.?]* /\1 /p' | tr '\n' ';'; }
+}
+
+l_par_c1() {
+lane_game warm
+parallel_prelude
 printf 'res://tests/test_dev_menu.gd\t5\nres://tests/test_market.gd\t200\nres://tests/test_play_log.gd\t30\n' > "$times"
 out="$(GDIR_CHECK_DEAL=1 bash tools/check.sh --jobs 3 2>&1)"; expect_status "with no balance setting, --jobs 3 passes" 0 $? "$out"
 [ "$(deal_of "$out")" = "1 res://tests/test_dev_menu.gd;2 res://tests/test_market.gd;3 res://tests/test_play_log.gd;" ] \
@@ -1711,6 +4283,12 @@ out="$(GDIR_CHECK_DEAL=1 bash tools/check.sh --jobs 3 2>&1)"; expect_status "a s
 grep -qE "^res://tests/test_market\.gd	0\.010	2	0\.[0-9]{3}\$" "$times" && expect_output "and splits in two" "deal: job [0-9]+ [0-9.]+ res://tests/test_market\.gd shard 2/2" "$out" \
   && ok "a higher sum leaves the stored whole time alone" || bad "a higher sum leaves the stored whole time alone" "$out$nl$(cat "$times")"
 cp "$work/saved" tests/test_market.gd
+}
+
+l_par_c2() {
+lane_game warm
+parallel_prelude
+cp tools/check.cfg "$work/saved-cfg"
 cp "$work/saved-cfg" tools/check.cfg; printf '\n[tests]\nbalance=true\nsplit_over=60\n' >> tools/check.cfg
 # A file marked no-split runs whole.
 cp tests/test_market.gd "$work/saved"
@@ -1751,6 +4329,12 @@ out="$(bash tools/check.sh 2>&1)"; expect_status "[tests] jobs=1 in check.cfg ru
 expect_no_output "with no group processes" "running the tests in" "$out"
 cp "$work/saved-cfg" tools/check.cfg; printf '\n[tests]\njobs="2"\n' >> tools/check.cfg
 out="$(bash tools/check.sh 2>&1)"; expect_output "[tests] jobs=\"2\" in check.cfg runs two" "running the tests in 2 processes" "$out"
+}
+
+l_par_d() {
+lane_game warm
+parallel_prelude
+cp tools/check.cfg "$work/saved-cfg"; cp tests/test_market.gd "$work/saved"
 # A run that hits its timeout exits 3 and names the file it was in.
 if timeout --version 2>/dev/null | grep -qi coreutils || gtimeout --version 2>/dev/null | grep -qi coreutils; then
   printf 'extends "res://tools/test_case.gd"\n\nfunc test_hang() -> void:\n\tOS.delay_msec(120000)\n\texpect(true)\n' > tests/test_zz_hang.gd
@@ -1774,17 +4358,16 @@ else
   echo "  (no GNU timeout: the timeout cases are skipped)"
 fi
 cp "$work/saved-check-cfg-ap" tools/check.cfg
+}
 
+l_playlog() {
+lane_game warm
 # --- play log -----------------------------------------------------------------------------------
 # The example's PlayLog runs under the check and writes nothing; tests/play-log/selftest_play_log.gd
 # runs the base outside the check, into a folder of its own, and checks the files it writes.
 echo "play log"
 # The example's real user:// folder.
-case "$(uname -s)" in
-  MINGW*|MSYS*|CYGWIN*) user_data="$(cygpath -u "$APPDATA")/Godot/app_userdata/Market Day" ;;
-  Darwin) user_data="$HOME/Library/Application Support/Godot/app_userdata/Market Day" ;;
-  *) user_data="${XDG_DATA_HOME:-$HOME/.local/share}/godot/app_userdata/Market Day" ;;
-esac
+user_data_init
 mkdir -p "$user_data" && : > "$work/before-play-log" && sleep 1
 rm -f .godot/godot-director/last-pass
 out="$(bash tools/check.sh 2>&1)"; expect_status "the check passes with the example's PlayLog" 0 $? "$out"
@@ -1825,6 +4408,10 @@ printf '%s\n' "$out" | grep -q '^DONE$' && ok "the dev menu's own test ran to th
 expect_no_output "and raised no script error" "SCRIPT ERROR|Parse Error" "$out"
 rm -f tools/selftest_dev_menu.gd tools/selftest_dev_menu.gd.uid
 
+}
+
+l_stop_hook() {
+lane_game warm
 # --- Stop hook ----------------------------------------------------------------------------------
 echo "stop hook"
 git add -A && { git_q commit -qm "state for the hook tests" >/dev/null 2>&1 || true; }
@@ -1853,6 +4440,610 @@ cp "$work/failing" scripts/systems/market.gd
 out="$(hook)"; expect_status "blocks the failing state again after it was fixed once" 2 $? "$out"
 git checkout -q -- scripts/systems/market.gd
 
+}
+
+l_stop_hook_session() {
+cd "$work" || exit 1
+# --- Stop hook, per session ---------------------------------------------------------------------
+# Two sessions can share one working folder (a design session and a build session, no worktree). The Stop hook runs the
+# check only for a session that wrote or edited a code, scene or data file itself: session-touched.sh keeps that record by
+# the session_id in the hook input (a file tool's PostToolUse; for Bash and PowerShell the git status before and after the
+# command). So a design session that edits only Markdown never waits for, or is blocked by, another session's uncommitted
+# code. A throwaway repository holds it, with a stand-in check that records that it ran and fails while
+# .godot/godot-director/fail exists, and scripted hook inputs. It needs no Godot, so it is a lane of its own that needs no game.
+echo "stop hook, per session"
+sr="$work/session-stop"; new_repo "$sr"
+sr_hooks="$src/framework/.claude/hooks"
+mkdir -p "$sr/tools" "$sr/scripts"
+cat > "$sr/tools/check.sh" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in --fingerprint) cat scripts/*.gd 2>/dev/null | git hash-object --stdin; exit 0 ;; esac
+mkdir -p .godot/godot-director
+: > .godot/godot-director/check-ran
+if [ -f .godot/godot-director/fail ]; then echo "scripts/hero.gd:3 parse error: unexpected token"; exit 1; fi
+exit 0
+EOF
+printf '/.godot/\n' > "$sr/.gitignore"
+git -C "$sr" add -A >/dev/null 2>&1; git_q -C "$sr" commit -qm "a stand-in check" >/dev/null 2>&1
+sr_state="$sr/.godot/godot-director"
+sr_nl=$'\n'
+sr_put() { [ -d "${1%/*}" ] || mkdir -p "${1%/*}"; printf '%s\n' "$2" > "$1"; }   # sr_put <file> <content>
+_sr_wrote() { # _sr_wrote <session> <tool> <path> [path key] [event]: a file tool's PostToolUse input, through the recorder
+  printf '{"session_id":"%s","cwd":"%s","hook_event_name":"%s","tool_name":"%s","tool_input":{"%s":"%s","content":"x"},"tool_response":{"success":true}}' \
+    "$1" "$sr" "${5:-PostToolUse}" "$2" "${4:-file_path}" "$3" | CLAUDE_PROJECT_DIR="$sr" bash "$sr_hooks/session-touched.sh" after 2>&1
+}
+_sr_cmd() { # _sr_cmd <session> before|after <tool> [event]: a Bash or PowerShell command's PreToolUse or PostToolUse input
+  printf '{"session_id":"%s","cwd":"%s","hook_event_name":"%s","tool_name":"%s","tool_input":{"command":"make"}}' \
+    "$1" "$sr" "${4:-PostToolUse}" "$3" | CLAUDE_PROJECT_DIR="$sr" bash "$sr_hooks/session-touched.sh" "$2" 2>&1
+}
+_sr_stop() { # _sr_stop <hook input>: the Stop hook's output; the exit status is the hook's
+  printf '%s' "$1" | CLAUDE_PROJECT_DIR="$sr" bash "$sr_hooks/stop-check.sh" 2>&1
+}
+_sr_stop_as() { _sr_stop "{\"session_id\":\"$1\",\"transcript_path\":\"/x/y.jsonl\",\"hook_event_name\":\"Stop\",\"stop_hook_active\":false}"; }
+_sr_rec() { cat "$sr_state/sessions/$1.touched" 2>/dev/null; }
+_sr_ran() { [ -e "$sr_state/check-ran" ]; }
+
+# 1. A design session that edits only Markdown and assets, while a build session has uncommitted code in the same folder.
+sr_put "$sr/scripts/hero.gd" 'extends Node'
+_sr_wrote build Write "$sr/scripts/hero.gd" >/dev/null
+_sr_wrote design Write "$sr/design/gdd.md" >/dev/null
+_sr_wrote design Edit "$sr/TASKS.md" >/dev/null
+_sr_wrote design MultiEdit "$sr/docs/notes.md" >/dev/null
+_sr_wrote design Write "$sr/art/hero.png" >/dev/null
+out="$(_sr_rec build)"; expect_output "records the code file a session wrote, from the project root" '^scripts/hero\.gd$' "$out"
+if [ ! -e "$sr_state/sessions/design.touched" ]; then ok "records nothing for a session that edited only Markdown and an asset"; else bad "records nothing for a session that edited only Markdown and an asset" "$(_sr_rec design)"; fi
+: > "$sr_state/fail"   # a check that would fail, as the other session's unfinished code makes it
+out="$(_sr_stop_as design)"; status=$?
+expect_status "the Stop hook exits 0 for a design session while another session has uncommitted code in the folder" 0 "$status" "$out"
+if _sr_ran; then bad "the check doesn't run for the session that edited only Markdown"; else ok "the check doesn't run for the session that edited only Markdown"; fi
+_sr_wrote kinds Write "$sr/scripts/a.gd" >/dev/null
+_sr_wrote kinds Edit "$sr/scenes/main.tscn" >/dev/null
+_sr_wrote kinds Write "$sr/scenes/packed.scn" >/dev/null
+_sr_wrote kinds MultiEdit "$sr/data/items.tres" >/dev/null
+_sr_wrote kinds Write "$sr/data/theme.res" >/dev/null
+_sr_wrote kinds Write "$sr/shaders/water.gdshader" >/dev/null
+_sr_wrote kinds NotebookEdit "$sr/shaders/noise.gdshaderinc" notebook_path >/dev/null
+_sr_wrote kinds Edit "$sr/project.godot" >/dev/null
+_sr_wrote kinds Write "$sr/scripts/a.gd.uid" >/dev/null
+_sr_wrote kinds Write "$sr/README.md" >/dev/null
+_sr_wrote kinds Write "$sr/.godot/godot-director/building" >/dev/null
+_sr_wrote kinds Write "/elsewhere/outside.gd" >/dev/null
+out="$(_sr_rec kinds)"
+[ "$out" = "scripts/a.gd${sr_nl}scenes/main.tscn${sr_nl}scenes/packed.scn${sr_nl}data/items.tres${sr_nl}data/theme.res${sr_nl}shaders/water.gdshader${sr_nl}shaders/noise.gdshaderinc${sr_nl}project.godot" ] \
+  && ok "records .gd, .tscn, .scn, .tres, .res, .gdshader, .gdshaderinc and project.godot as code, and skips a .gd.uid, Markdown, the state folder and a file outside the project" \
+  || bad "records .gd, .tscn, .scn, .tres, .res, .gdshader, .gdshaderinc and project.godot as code, and skips a .gd.uid, Markdown, the state folder and a file outside the project" "$out"
+if command -v cygpath >/dev/null 2>&1; then
+  # Claude Code on Windows sends the path with JSON-escaped backslashes (two for each separator), and the project folder as C:\...
+  sr_bs2='\\'                                                      # two backslash characters: one separator, JSON-escaped
+  sr_winroot="$(cygpath -w "$sr")"                                 # C:\...\session-stop, backslashes as Windows writes them
+  sr_winjson="$(printf '%s' "$sr_winroot" | sed 's/\\/\\\\/g')"    # the same, each backslash doubled as JSON writes it
+  printf '{"session_id":"winpath","cwd":"%s","hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"%s","content":"x"}}' \
+    "$sr_winjson" "${sr_winjson}${sr_bs2}scripts${sr_bs2}Win.gd" | CLAUDE_PROJECT_DIR="$sr_winroot" bash "$sr_hooks/session-touched.sh" after >/dev/null 2>&1
+  out="$(_sr_rec winpath)"
+  [ "$out" = "scripts/Win.gd" ] && ok "reads a Windows path with JSON-escaped backslashes against a project folder written as C:\\..." \
+    || bad "reads a Windows path with JSON-escaped backslashes against a project folder written as C:\\..." "$out"
+fi
+
+# 2. The build session that wrote code gets the check, is blocked once for a failure, and not twice for the same one.
+: > "$sr_state/fail"
+out="$(_sr_stop_as build)"; status=$?
+expect_status "the session that wrote code gets the check, and is blocked when it fails" 2 "$status" "$out"
+expect_output "and is given the check's output" 'parse error' "$out"
+if _sr_ran; then ok "the check ran for it"; else bad "the check ran for it"; fi
+rm -f "$sr_state/check-ran"
+out="$(_sr_stop_as build)"; status=$?
+expect_status "the same failure isn't reported twice" 0 "$status" "$out"
+if _sr_ran; then bad "and the check isn't run again for it"; else ok "and the check isn't run again for it"; fi
+
+# 3. A Bash or PowerShell command is read from git's list of changed files before and after it.
+_sr_cmd shell before Bash >/dev/null
+sleep 1
+sr_put "$sr/scripts/made.gd" 'extends Node'
+sr_put "$sr/notes.md" '# notes'
+sr_put "$sr/art/new.png" 'png'
+_sr_cmd shell after Bash >/dev/null
+out="$(_sr_rec shell)"
+[ "$out" = "scripts/made.gd" ] && ok "a Bash command that creates a .gd file is recorded, and a Markdown file, an asset and a file already changed before it are not" \
+  || bad "a Bash command that creates a .gd file is recorded, and a Markdown file, an asset and a file already changed before it are not" "$out"
+_sr_cmd shell2 before PowerShell PreToolUse >/dev/null
+sleep 1
+printf '# edited by a command\n' >> "$sr/scripts/hero.gd"
+_sr_cmd shell2 after PowerShell PostToolUseFailure >/dev/null
+out="$(_sr_rec shell2)"
+[ "$out" = "scripts/hero.gd" ] && ok "a PowerShell command that modifies a file changed before it is recorded, one that fails too" \
+  || bad "a PowerShell command that modifies a file changed before it is recorded, one that fails too" "$out"
+_sr_cmd shell3 before Bash >/dev/null; _sr_cmd shell3 after Bash >/dev/null
+if [ ! -e "$sr_state/sessions/shell3.touched" ]; then ok "a command that changes nothing records nothing"; else bad "a command that changes nothing records nothing" "$(_sr_rec shell3)"; fi
+_sr_cmd shell4 after Bash >/dev/null
+if [ ! -e "$sr_state/sessions/shell4.touched" ]; then ok "a command with no snapshot before it records nothing"; else bad "a command with no snapshot before it records nothing" "$(_sr_rec shell4)"; fi
+
+# 4. A passing check removes the session's record, and not another session's.
+rm -f "$sr_state/fail" "$sr_state/check-ran"
+_sr_cmd build before Bash >/dev/null
+printf '# the fix\n' >> "$sr/scripts/hero.gd"
+out="$(_sr_stop_as build)"; status=$?
+expect_status "a session whose code passes the check ends its turn" 0 "$status" "$out"
+if _sr_ran; then ok "the check ran for it"; else bad "the check ran for it"; fi
+if [ ! -e "$sr_state/sessions/build.touched" ] && [ ! -e "$sr_state/sessions/build.before" ]; then ok "a passing check removes the session's record"; else bad "a passing check removes the session's record" "$(ls "$sr_state/sessions")"; fi
+if [ -s "$sr_state/sessions/shell.touched" ]; then ok "and leaves another session's"; else bad "and leaves another session's"; fi
+
+# 5. A record older than a day is ignored, and deleted with any other session's that old.
+: > "$sr_state/fail"; rm -f "$sr_state/check-ran" "$sr_state/last-reported"
+_sr_wrote old Write "$sr/scripts/hero.gd" >/dev/null
+_sr_wrote stale Write "$sr/scripts/hero.gd" >/dev/null
+touch -t 202001010000 "$sr_state/sessions/old.touched" "$sr_state/sessions/stale.touched"
+out="$(_sr_stop_as old)"; status=$?
+expect_status "a record older than a day is ignored" 0 "$status" "$out"
+if _sr_ran; then bad "and the check doesn't run for it"; else ok "and the check doesn't run for it"; fi
+if [ ! -e "$sr_state/sessions/old.touched" ] && [ ! -e "$sr_state/sessions/stale.touched" ]; then ok "and it is deleted, as is another session's that old"; else bad "and it is deleted, as is another session's that old" "$(ls "$sr_state/sessions")"; fi
+
+# 6. No session_id, or one that can't be a file name, behaves as before: uncommitted code runs the check once.
+out="$(_sr_stop '{"hook_event_name":"Stop"}')"; status=$?
+expect_status "with no session_id the hook decides from git alone: uncommitted code runs the check, and a failure blocks" 2 "$status" "$out"
+if _sr_ran; then ok "and the check ran"; else bad "and the check ran"; fi
+out="$(_sr_stop '{"hook_event_name":"Stop"}')"; expect_status "and the same failure isn't reported twice" 0 $? "$out"
+printf '# another change\n' >> "$sr/scripts/hero.gd"; rm -f "$sr_state/check-ran"
+out="$(_sr_stop_as '../../escape')"; status=$?
+expect_status "a session_id that isn't a plain name behaves the same" 2 "$status" "$out"
+printf '# and another\n' >> "$sr/scripts/hero.gd"
+out="$(_sr_stop '{"session_id":"","hook_event_name":"Stop"}')"; expect_status "so does an empty one" 2 $? "$out"
+
+# 7. What stays as it was: the builder marker, the prototype exit, GODOT_DIRECTOR_STOP_CHECK=0 and a project with no tools/check.sh.
+printf '# once more\n' >> "$sr/scripts/hero.gd"; rm -f "$sr_state/check-ran"
+_sr_wrote marked Write "$sr/scripts/hero.gd" >/dev/null
+: > "$sr_state/building"
+out="$(_sr_stop_as marked)"; status=$?
+expect_status "a session with a record leaves a builder's half-built files alone" 0 "$status" "$out"
+rm -f "$sr_state/building"
+printf '# a prototype\n' > "$sr/PROTOTYPE.md"; printf 'exit 0\n' > "$sr/tools/prototype.sh"   # a stand-in for "bash tools/prototype.sh here" saying yes
+out="$(_sr_stop_as marked)"; expect_status "and in a prototype" 0 $? "$out"
+rm -f "$sr/PROTOTYPE.md" "$sr/tools/prototype.sh"
+out="$(GODOT_DIRECTOR_STOP_CHECK=0 _sr_stop_as marked)"; expect_status "GODOT_DIRECTOR_STOP_CHECK=0 turns the Stop hook off for it" 0 $? "$out"
+GODOT_DIRECTOR_STOP_CHECK=0 _sr_wrote off Write "$sr/scripts/hero.gd" >/dev/null
+if [ ! -e "$sr_state/sessions/off.touched" ]; then ok "and the record with it"; else bad "and the record with it"; fi
+mv "$sr/tools/check.sh" "$sr/tools/check.sh.away"
+out="$(_sr_stop_as marked)"; expect_status "a project with no tools/check.sh ends the turn" 0 $? "$out"
+mv "$sr/tools/check.sh.away" "$sr/tools/check.sh"
+if _sr_ran; then bad "the check isn't run while the builder marker, the prototype, the switch or a missing script excuses it"; else ok "the check isn't run while the builder marker, the prototype, the switch or a missing script excuses it"; fi
+out="$(_sr_stop_as marked)"; expect_status "and the record still blocks once those are gone" 2 $? "$out"
+
+# 8. Work that is committed ends the record: the check passed in the commit, and what differs later is another's.
+rm -f "$sr_state/fail" "$sr_state/check-ran"
+git -C "$sr" add -A >/dev/null 2>&1; git_q -C "$sr" commit -qm "the build session's work" >/dev/null 2>&1
+out="$(_sr_stop_as marked)"; status=$?
+expect_status "a session whose code is all committed ends its turn" 0 "$status" "$out"
+if [ ! -e "$sr_state/sessions/marked.touched" ] && ! _sr_ran; then ok "and its record is removed without running the check"; else bad "and its record is removed without running the check" "$(ls "$sr_state/sessions")"; fi
+sr_put "$sr/docs/more.md" '# more'
+out="$(_sr_stop '{"hook_event_name":"Stop"}')"; expect_status "with no session_id, a Markdown-only change ends the turn, as before" 0 $? "$out"
+
+# The hooks are wired in settings.json: the snapshot before a command, the record after a file tool or a command
+# (a failing one too), and the hook runs under macOS's bash 3.2 and BSD tools, so it holds none of the forms they lack.
+wiring="$(awk '/^    "[A-Za-z]+": \[/ { ev = $1; gsub(/[":]/, "", ev) } /"matcher"/ { split($0, a, "\""); m = a[4] }
+  /session-touched\.sh/ { print ev ";" m ";" ($0 ~ / before"/ ? "before" : "after") }' "$settings")"
+[ "$wiring" = "PreToolUse;Bash|PowerShell;before${sr_nl}PostToolUse;Edit|Write|MultiEdit|NotebookEdit;after${sr_nl}PostToolUse;Bash|PowerShell;after${sr_nl}PostToolUseFailure;Bash|PowerShell;after" ] \
+  && ok "settings.json runs the record hook before Bash and PowerShell, after them (a failing one too) and after Edit, Write, MultiEdit and NotebookEdit" \
+  || bad "settings.json runs the record hook before Bash and PowerShell, after them (a failing one too) and after Edit, Write, MultiEdit and NotebookEdit" "$wiring"
+bash4=$(grep -nE '^[^#]*(\$\{[A-Za-z_0-9]+(\[[^]]*\])?(,,|\^\^)\}|(declare|local|typeset) +-[a-zA-Z]*A|(^|[;&| ])(mapfile|readarray) +|(^|[;&| ])coproc +[A-Za-z]|[[:space:]]\|&[[:space:]]|\$\{[A-Za-z_0-9@*]+(\[[^]]*\])?: -[0-9]|stat +-c|date +-d|sed +-i|readlink +-f|-printf|-delete)' \
+  "$sr_hooks/session-touched.sh" "$sr_hooks/stop-check.sh" || true)
+if [ -z "$bash4" ]; then ok "the Stop hook and the record hook use no bash 4 form and no GNU-only tool flag"
+else bad "the Stop hook and the record hook use no bash 4 form and no GNU-only tool flag" "$bash4"; fi
+
+}
+
+l_release_check() {
+cd "$work" || exit 1
+# --- release check hook -------------------------------------------------------------------------
+# release-check.sh runs when a session starts and says when the installed version (the manifest's first line) is below the
+# latest release tag on GitHub. A throwaway project holds the manifest and the cache, and a stand-in git (first on PATH) records
+# each call and answers with the tags a case sets, so no case reaches the network. It needs no Godot, so it is a lane of its own.
+echo "release check hook"
+rc_hook="$src/framework/.claude/hooks/release-check.sh"
+rc_proj="$work/rc-project"; rc_stub="$work/rc-stub"; rc_tstub="$work/rc-tstub"
+rc_cache="$rc_proj/.godot/godot-director/latest-release"
+rc_url="https://github.com/Freakling/Godot-Director.git"
+mkdir -p "$rc_proj/.godot-director" "$rc_stub" "$rc_tstub"
+cat > "$rc_stub/git" <<'EOF'
+#!/bin/bash
+# a stand-in git: it records each call (the prompt setting and the arguments), then fails when git-fails exists, or prints the tags file
+printf '%s|%s\n' "${GIT_TERMINAL_PROMPT:-unset}" "$*" >> "$RC_STUB/calls"
+[ -e "$RC_STUB/git-fails" ] && exit 128
+while IFS= read -r line; do printf '%s\n' "$line"; done < "$RC_STUB/tags"
+exit 0
+EOF
+cat > "$rc_tstub/timeout" <<'EOF'
+#!/bin/bash
+# a stand-in timeout: it records its limit and runs the command
+printf '%s\n' "$1" >> "$RC_STUB/timeouts"
+shift
+exec "$@"
+EOF
+chmod +x "$rc_stub/git" "$rc_tstub/timeout"
+unset GODOT_DIRECTOR_RELEASE_CHECK
+export CLAUDE_PROJECT_DIR="$rc_proj" RC_STUB="$rc_stub"
+rc_sha="0123456789abcdef0123456789abcdef01234567"
+rc_set() { # rc_set <manifest first line> [tag…]: a project at that version, no cache, and a git that lists these tags
+  local t
+  rm -rf "$rc_proj/.godot" "$rc_stub/calls" "$rc_stub/timeouts" "$rc_stub/git-fails"
+  printf '%s\n# tools claude\n%s\t.claude/settings.json\n' "$1" "$rc_sha" > "$rc_proj/.godot-director/manifest"
+  shift
+  : > "$rc_stub/tags"
+  for t in "$@"; do printf '%s\trefs/tags/%s\n' "$rc_sha" "$t" >> "$rc_stub/tags"; done
+}
+rc_cache_is() { # rc_cache_is <version>: write the cache with that value
+  mkdir -p "$rc_proj/.godot/godot-director"; printf '%s\n' "$1" > "$rc_cache"
+}
+rc_run() { # the hook's output, stdout and stderr together; its exit status is the hook's
+  printf '{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}' | PATH="$rc_stub:$PATH" bash "$rc_hook" 2>&1
+}
+rc_calls() { # how many times git was called
+  local n=0 l
+  [ -f "$rc_stub/calls" ] && while IFS= read -r l; do n=$((n + 1)); done < "$rc_stub/calls"
+  echo "$n"
+}
+rc_json() { # rc_json <installed> <latest>: the line the hook prints
+  local t="Godot Director $1 is installed, and the latest release is $2. Ask the agent to upgrade it when it suits you."
+  printf '{"systemMessage":"%s","hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s Tell the human this once, in your first reply."}}' "$t" "$t"
+}
+
+# 1. Behind the latest release: it warns, with the text for the human and for Claude in one line of JSON, and looks the tags up once.
+rc_set "# godot-director 4.10.0" v4.9.0 v4.11.0 v4.10.0
+out="$(rc_run)"; status=$?
+expect_status "a project behind the latest release: the hook exits 0" 0 "$status" "$out"
+[ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && ok "and prints one line of JSON with the message for the human and the same text and the instruction for Claude" \
+  || bad "and prints one line of JSON with the message for the human and the same text and the instruction for Claude" "$out"
+[ "$(rc_calls)" = "1" ] && [ "$(<"$rc_stub/calls")" = "0|ls-remote --tags --refs $rc_url refs/tags/v*" ] \
+  && ok "it asked git once, for the release tags only, with the terminal prompt off" || bad "it asked git once, for the release tags only, with the terminal prompt off" "$(<"$rc_stub/calls")"
+[ "$(<"$rc_cache")" = "4.11.0" ] && ok "and kept the highest version in .godot/godot-director/latest-release" || bad "and kept the highest version in .godot/godot-director/latest-release" "$(<"$rc_cache")"
+rc_set "# godot-director 1.9.0" v1.14.0 v1.9.0
+out="$(rc_run)"; [ "$out" = "$(rc_json 1.9.0 1.14.0)" ] && ok "1.9.0 is below 1.14.0: versions compare field by field as numbers" || bad "1.9.0 is below 1.14.0: versions compare field by field as numbers" "$out"
+rc_set "# godot-director 1.14.0" v1.9.0
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && ok "and 1.14.0 is not below 1.9.0" || bad "and 1.14.0 is not below 1.9.0" "$out"
+rc_set "# godot-director 9.9.9" v10.0.0
+out="$(rc_run)"; [ "$out" = "$(rc_json 9.9.9 10.0.0)" ] && ok "9.9.9 is below 10.0.0" || bad "9.9.9 is below 10.0.0" "$out"
+
+# 2. Up to date, ahead, and nothing found: silent.
+rc_set "# godot-director 4.11.0" v4.10.0 v4.11.0
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && ok "the latest release installed: nothing is printed" || bad "the latest release installed: nothing is printed" "$out"
+rc_set "# godot-director 4.12.0" v4.11.0
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && ok "a newer install than the latest tag: nothing is printed" || bad "a newer install than the latest tag: nothing is printed" "$out"
+rc_set "# godot-director 4.10.0"
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && ok "a lookup that finds no tag: nothing is printed" || bad "a lookup that finds no tag: nothing is printed" "$out"
+
+# 3. A development snapshot's ' + unreleased (...)' tail is read as its version, and a CRLF manifest as the same one.
+rc_set "# godot-director 4.10.0 + unreleased (abc1234)" v4.11.0
+out="$(rc_run)"; [ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && ok "a manifest saying '4.10.0 + unreleased (abc1234)' is read as 4.10.0" || bad "a manifest saying '4.10.0 + unreleased (abc1234)' is read as 4.10.0" "$out"
+rc_set "# godot-director 4.10.0 + unreleased" v4.10.0
+out="$(rc_run)"; [ -z "$out" ] && ok "and a snapshot of the latest release is up to date" || bad "and a snapshot of the latest release is up to date" "$out"
+rc_set "# godot-director 4.10.0" v4.11.0
+printf '# godot-director 4.10.0\r\n# tools claude\r\n' > "$rc_proj/.godot-director/manifest"
+out="$(rc_run)"; [ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && ok "a manifest with CRLF line endings is read too" || bad "a manifest with CRLF line endings is read too" "$out"
+
+# 4. The cache: a fresh one is used without git, a day-old one is refreshed once, and the day's next start doesn't ask again.
+rc_set "# godot-director 4.10.0" v4.12.0
+rc_cache_is 4.11.0
+out="$(rc_run)"; status=$?
+[ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && [ "$(rc_calls)" = "0" ] && [ "$status" -eq 0 ] && ok "a fresh cache is used and git isn't called" || bad "a fresh cache is used and git isn't called" "$out"
+touch -t 202001010000 "$rc_cache"
+out="$(rc_run)"
+[ "$out" = "$(rc_json 4.10.0 4.12.0)" ] && [ "$(rc_calls)" = "1" ] && [ "$(<"$rc_cache")" = "4.12.0" ] \
+  && ok "a cache a day old calls git once and takes the new value" || bad "a cache a day old calls git once and takes the new value" "calls $(rc_calls): $out"
+out="$(rc_run)"; [ "$out" = "$(rc_json 4.10.0 4.12.0)" ] && [ "$(rc_calls)" = "1" ] && ok "and the next start the same day doesn't call it again" || bad "and the next start the same day doesn't call it again" "calls $(rc_calls): $out"
+rc_set "# godot-director 4.10.0" v4.12.0
+rc_cache_is "not a version"
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && [ "$(rc_calls)" = "0" ] && ok "a cache that doesn't hold a version is silent until it is a day old" || bad "a cache that doesn't hold a version is silent until it is a day old" "$out"
+
+# 5. A lookup that fails: nothing printed, exit 0, and the day's one try is spent; an old value is kept.
+rc_set "# godot-director 4.10.0" v4.12.0
+: > "$rc_stub/git-fails"
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && [ "$(rc_calls)" = "1" ] && [ -f "$rc_cache" ] && [ ! -s "$rc_cache" ] \
+  && ok "a failed git prints nothing, exits 0 and leaves an empty cache" || bad "a failed git prints nothing, exits 0 and leaves an empty cache" "exit $status, calls $(rc_calls): $out"
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && [ "$(rc_calls)" = "1" ] && ok "and doesn't call git again that day" || bad "and doesn't call git again that day" "exit $status, calls $(rc_calls): $out"
+rc_set "# godot-director 4.10.0" v4.12.0
+: > "$rc_stub/git-fails"
+rc_cache_is 4.11.0; touch -t 202001010000 "$rc_cache"
+out="$(rc_run)"; status=$?
+[ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && [ "$status" -eq 0 ] && [ "$(rc_calls)" = "1" ] && [ "$(<"$rc_cache")" = "4.11.0" ] \
+  && ok "a failed refresh keeps the old value, and still warns by it" || bad "a failed refresh keeps the old value, and still warns by it" "exit $status, calls $(rc_calls): $out"
+out="$(rc_run)"; [ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && [ "$(rc_calls)" = "1" ] && ok "and the old value's day starts again, so git isn't called a second time that day" || bad "and the old value's day starts again, so git isn't called a second time that day" "calls $(rc_calls): $out"
+rc_set "# godot-director 4.10.0" v4.12.0
+out="$(printf '{}' | PATH="/nonexistent" "$BASH" "$rc_hook" 2>&1)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && ok "a PATH with no git at all prints nothing and exits 0" || bad "a PATH with no git at all prints nothing and exits 0" "exit $status: $out"
+
+# 6. Only v<major>.<minor>.<patch> tags count.
+rc_set "# godot-director 4.10.0" v2.0.0-rc1 latest v4.11.0 v5.0.0-beta v4.12 v4.12.0.1 v4.13.0-rc1 nightly/v9.9.9 V9.0.0
+out="$(rc_run)"
+[ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && [ "$(<"$rc_cache")" = "4.11.0" ] && ok "tags of any other shape (-rc1, a name, two or four fields, a prefix, a capital V) are ignored" \
+  || bad "tags of any other shape (-rc1, a name, two or four fields, a prefix, a capital V) are ignored" "$out"
+rc_set "# godot-director 4.10.0" v2.0.0-rc1 latest
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && [ ! -s "$rc_cache" ] && ok "and with only such tags nothing is printed" || bad "and with only such tags nothing is printed" "$out"
+rc_set "# godot-director 4.10.0" v08.09.0
+out="$(rc_run)"; status=$?
+[ "$out" = "$(rc_json 4.10.0 8.9.0)" ] && [ "$status" -eq 0 ] && ok "a field with a leading zero is a decimal number, not an octal one" || bad "a field with a leading zero is a decimal number, not an octal one" "exit $status: $out"
+
+# 7. The time limit: 5 seconds when timeout exists, and the lookup still runs without it.
+rc_set "# godot-director 4.10.0" v4.11.0
+out="$(printf '{}' | PATH="$rc_tstub:$rc_stub:$PATH" bash "$rc_hook" 2>&1)"
+[ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && [ "$(<"$rc_stub/timeouts")" = "5" ] && ok "the lookup runs under timeout 5 when timeout exists" || bad "the lookup runs under timeout 5 when timeout exists" "$out"
+rc_set "# godot-director 4.10.0" v4.11.0
+out="$(printf '{}' | PATH="$rc_stub:/nonexistent" "$BASH" "$rc_hook" 2>&1)"
+[ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && [ "$(rc_calls)" = "1" ] && [ ! -e "$rc_stub/timeouts" ] && ok "and without timeout on PATH it still looks the tags up" || bad "and without timeout on PATH it still looks the tags up" "calls $(rc_calls): $out"
+
+# 8. Off, and nothing to compare: silent, and git is never called.
+rc_set "# godot-director 4.10.0" v4.11.0
+out="$(printf '{}' | GODOT_DIRECTOR_RELEASE_CHECK=0 PATH="$rc_stub:$PATH" bash "$rc_hook" 2>&1)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && [ "$(rc_calls)" = "0" ] && [ ! -e "$rc_cache" ] && ok "GODOT_DIRECTOR_RELEASE_CHECK=0 turns the hook off: nothing printed, git not called" || bad "GODOT_DIRECTOR_RELEASE_CHECK=0 turns the hook off" "exit $status: $out"
+rc_set "# godot-director 4.10.0" v4.11.0
+rm -f "$rc_proj/.godot-director/manifest"
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && [ "$(rc_calls)" = "0" ] && ok "a project with no manifest: nothing printed, git not called" || bad "a project with no manifest: nothing printed, git not called" "exit $status: $out"
+printf '# tools claude\n%s\t.claude/settings.json\n' "$rc_sha" > "$rc_proj/.godot-director/manifest"
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && [ "$(rc_calls)" = "0" ] && ok "a manifest with no version line: nothing printed, git not called" || bad "a manifest with no version line: nothing printed, git not called" "exit $status: $out"
+rc_set "# godot-director 4.x" v4.11.0
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && [ "$(rc_calls)" = "0" ] && ok "and one whose version isn't three numbers" || bad "and one whose version isn't three numbers" "exit $status: $out"
+out="$(printf '{}' | CLAUDE_PROJECT_DIR="$work/no-such-folder" PATH="$rc_stub:$PATH" bash "$rc_hook" 2>&1)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && ok "a project folder that doesn't exist: nothing printed, exit 0" || bad "a project folder that doesn't exist: nothing printed, exit 0" "exit $status: $out"
+
+# 9. The project check never runs it, so a warning can't fail tools/check.sh; settings.json runs it at session start only.
+if ! grep -rq 'release-check' "$src/framework/tools" "$src/framework/.githooks" "$src/framework/.godot-director"; then ok "the project check and the git hooks don't run the release check, so a warning never fails tools/check.sh"
+else bad "the project check and the git hooks don't run the release check" "$(grep -rn 'release-check' "$src/framework/tools" "$src/framework/.githooks" "$src/framework/.godot-director")"; fi
+wiring="$(awk '/^    "[A-Za-z]+": \[/ { ev = $1; gsub(/[":]/, "", ev) } /"matcher"/ { split($0, a, "\""); m = a[4] }
+  /release-check\.sh/ { hit = ev ";" m; next } hit != "" && /"timeout"/ { t = $2; gsub(/[^0-9]/, "", t); print hit ";" t; hit = "" }' "$settings")"
+[ "$wiring" = "SessionStart;startup|resume;10" ] && ok "settings.json runs the release check at SessionStart, on startup and resume, with a timeout of 10 seconds" \
+  || bad "settings.json runs the release check at SessionStart, on startup and resume, with a timeout of 10 seconds" "$wiring"
+bash4=$(grep -nE '^[^#]*(\$\{[A-Za-z_0-9]+(\[[^]]*\])?(,,|\^\^)\}|(declare|local|typeset) +-[a-zA-Z]*A|(^|[;&| ])(mapfile|readarray) +|(^|[;&| ])coproc +[A-Za-z]|[[:space:]]\|&[[:space:]]|\$\{[A-Za-z_0-9@*]+(\[[^]]*\])?: -[0-9]|stat +-c|date +-d|sed +-i|readlink +-f|-printf|-delete)' \
+  "$rc_hook" || true)
+if [ -z "$bash4" ]; then ok "the release check uses no bash 4 form and no GNU-only tool flag"; else bad "the release check uses no bash 4 form and no GNU-only tool flag" "$bash4"; fi
+
+}
+
+l_orphan_report() {
+cd "$work" || exit 1
+# --- orphan report hook -------------------------------------------------------------------------
+# orphan-report.sh runs when a session starts and lists the Python, node, shell, Godot and headless browser processes that are
+# an hour old or more and whose parent is gone. Stand-ins first on PATH answer for the process list (powershell.exe on Windows, ps
+# elsewhere, and uname to choose between them), and others stand in for every program that stops a process, so no case reads this
+# machine's own processes or could stop one. It needs no Godot, so it is a lane of its own.
+echo "orphan report hook"
+or_hook="$src/framework/.claude/hooks/orphan-report.sh"
+or_stub="$work/or-stub"; or_tstub="$work/or-tstub"; or_t124="$work/or-t124"; or_bare="$work/or-bare"; or_cwd="$work/or-cwd"
+mkdir -p "$or_stub" "$or_tstub" "$or_t124" "$or_bare" "$or_cwd"
+cat > "$or_stub/uname" <<'EOF'
+#!/bin/bash
+# a stand-in uname: the system a case sets in uname-is, Linux when it sets none
+if [ -f "$OR_STUB/uname-is" ]; then IFS= read -r line < "$OR_STUB/uname-is"; echo "$line"; else echo Linux; fi
+EOF
+cat > "$or_stub/ps" <<'EOF'
+#!/bin/bash
+# a stand-in ps: it records its arguments, then fails when ps-fails exists, or prints the rows a case sets
+printf '%s\n' "$*" >> "$OR_STUB/ps-calls"
+[ -e "$OR_STUB/ps-fails" ] && exit 1
+while IFS= read -r line; do printf '%s\n' "$line"; done < "$OR_STUB/ps-rows"
+EOF
+cat > "$or_stub/powershell.exe" <<'EOF'
+#!/bin/bash
+# a stand-in powershell.exe: it records its arguments, then fails when pwsh-fails exists, or prints the rows a case sets, with PowerShell's line ends
+printf '%s\n' "$*" >> "$OR_STUB/pwsh-calls"
+[ -e "$OR_STUB/pwsh-fails" ] && exit 1
+while IFS= read -r line; do printf '%s\r\n' "$line"; done < "$OR_STUB/win-rows"
+EOF
+cat > "$or_stub/kill" <<'EOF'
+#!/bin/bash
+# a stand-in for a program that stops a process: it records the call, and no case should make one
+printf '%s %s\n' "${0##*/}" "$*" >> "$OR_STUB/killed"
+EOF
+cp "$or_stub/kill" "$or_stub/taskkill"; cp "$or_stub/kill" "$or_stub/taskkill.exe"; cp "$or_stub/kill" "$or_stub/pkill"; cp "$or_stub/kill" "$or_stub/killall"
+cat > "$or_tstub/timeout" <<'EOF'
+#!/bin/bash
+# a stand-in timeout: it records its limit and runs the command
+printf '%s\n' "$1" >> "$OR_STUB/timeouts"
+shift
+exec "$@"
+EOF
+cat > "$or_t124/timeout" <<'EOF'
+#!/bin/bash
+# a stand-in timeout that runs out: the command runs, then the status is 124, as when the limit ends it
+shift
+"$@"
+exit 124
+EOF
+cat > "$or_bare/uname" <<'EOF'
+#!/bin/bash
+echo MINGW64_NT-10.0-26300
+EOF
+chmod +x "$or_stub"/* "$or_tstub/timeout" "$or_t124/timeout" "$or_bare/uname"
+# The builtin kill is no program on PATH, so a function stands in for it, exported to reach the hook's own bash.
+kill() { printf 'kill %s\n' "$*" >> "$OR_STUB/killed"; }
+export -f kill
+unset GODOT_DIRECTOR_ORPHAN_REPORT
+export OR_STUB="$or_stub"
+or_ask="Tell the human this once, in your first reply, and don't stop them unless the human asks."
+or_set() { # or_set <win|ps> [<pid> <ppid> <age in seconds> <name>]…: that machine, with these processes, in the shape of its list
+  local shape="$1" f d h m s
+  shift
+  rm -f "$or_stub/ps-calls" "$or_stub/pwsh-calls" "$or_stub/ps-fails" "$or_stub/pwsh-fails" "$or_stub/timeouts" "$or_stub/uname-is" "$or_stub/ps-rows" "$or_stub/win-rows"
+  if [ "$shape" = win ]; then echo MINGW64_NT-10.0-26300 > "$or_stub/uname-is"; f="$or_stub/win-rows"; else f="$or_stub/ps-rows"; fi
+  : > "$f"
+  while [ "$#" -ge 4 ]; do
+    if [ "$shape" = win ]; then
+      printf '%s %s %s %s\n' "$1" "$2" "$3" "$4" >> "$f"
+    else   # etime as ps writes it: dd-hh:mm:ss, hh:mm:ss or mm:ss
+      d=$(($3 / 86400)); h=$(($3 % 86400 / 3600)); m=$(($3 % 3600 / 60)); s=$(($3 % 60))
+      if [ "$d" -gt 0 ]; then printf '%6s %5s %d-%02d:%02d:%02d %s\n' "$1" "$2" "$d" "$h" "$m" "$s" "$4" >> "$f"
+      elif [ "$h" -gt 0 ]; then printf '%6s %5s %02d:%02d:%02d %s\n' "$1" "$2" "$h" "$m" "$s" "$4" >> "$f"
+      else printf '%6s %5s %02d:%02d %s\n' "$1" "$2" "$m" "$s" "$4" >> "$f"; fi
+    fi
+    shift 4
+  done
+}
+or_raw() { # or_raw <win|ps> <line>…: that machine, with these lines as its list, as given
+  local shape="$1" f l
+  or_set "$shape"
+  shift
+  if [ "$shape" = win ]; then f="$or_stub/win-rows"; else f="$or_stub/ps-rows"; fi
+  for l in "$@"; do printf '%s\n' "$l" >> "$f"; done
+}
+or_run() { # the hook's output, stdout and stderr together; its exit status is the hook's
+  printf '{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}' | PATH="$or_stub:$PATH" bash "$or_hook" 2>&1
+}
+or_json() { # or_json <list>: the line the hook prints for this list
+  local t="Processes that outlived the shell that started them (parent gone, over an hour old): $1. They may be left over from an ended session. Stopping them is your call."
+  printf '{"systemMessage":"%s","hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s %s"}}' "$t" "$t" "$or_ask"
+}
+or_expect() { # or_expect <what> [<list>]: the process list was read, the hook exits 0 and prints the line for this list, or nothing without one
+  local out status read_it=no
+  out="$(or_run)"; status=$?
+  { [ -e "$or_stub/ps-calls" ] || [ -e "$or_stub/pwsh-calls" ]; } && read_it=yes
+  if [ -z "${2:-}" ]; then
+    [ -z "$out" ] && [ "$status" -eq 0 ] && [ "$read_it" = yes ] && ok "$1" || bad "$1" "exit $status, list read: $read_it: $out"
+  else
+    [ "$out" = "$(or_json "$2")" ] && [ "$status" -eq 0 ] && [ "$read_it" = yes ] && ok "$1" || bad "$1" "exit $status, list read: $read_it: $out"
+  fi
+}
+
+# 0. The stand-ins are in place: the stop programs are first on PATH, and the builtin kill is a function in the hook's own bash.
+if [ "$(PATH="$or_stub:$PATH" type -P taskkill)" = "$or_stub/taskkill" ] && [ "$(PATH="$or_stub:$PATH" type -P pkill)" = "$or_stub/pkill" ] && [ "$(bash -c 'type -t kill')" = function ]; then
+  ok "stand-ins for kill, taskkill and pkill are in place before every case"
+else bad "stand-ins for kill, taskkill and pkill are in place before every case" "$(PATH="$or_stub:$PATH" type -P taskkill) $(bash -c 'type -t kill')"; fi
+
+# 1. The cases that read the same on both machines, with the rows in the shape of each one's list.
+or_cases() { # or_cases <win|ps> <label>
+  local sh="$1" lb="$2" x="" X="" odd good
+  if [ "$sh" = win ]; then x=".exe"; X=".EXE"; fi
+  or_set "$sh" 4 0 900000 System 500 999 3600 "python3.13$x"
+  or_expect "$lb: an hour-old python3.13 with a dead parent is listed" "pid 500 python3.13 (1 h)"
+  or_set "$sh" 600 700 7200 "python3.13$x" 700 4 9000 "explorer$x"
+  or_expect "$lb: a process with a live parent isn't" ""
+  or_set "$sh" 500 999 3540 "python3.13$x" 501 999 3599 "node$x"
+  or_expect "$lb: processes 59 minutes old aren't" ""
+  or_set "$sh" 500 600 7200 "node$x" 600 4 100 "cmd$x"
+  or_expect "$lb: a process whose parent row is younger is listed (a reused pid)" "pid 500 node (2 h)"
+  or_set "$sh" 500 600 7200 "node$x" 600 4 7200 "cmd$x"
+  or_expect "$lb: and one whose parent is as old is not" ""
+  or_set "$sh" 40 999 7200 "notepad$x" 41 999 7200 "sshd$x" 42 999 7200 "nodejs$x" 43 999 7200 "bashful$x" 44 999 7200 "pythonista$x" 45 999 7200 "python3.x$x" 46 999 7200 "pyw$x" 47 999 7200 "shell$x" 48 999 7200 "godo$x" 49 999 7200 "chrome-headless-shells$x"
+  or_expect "$lb: names that aren't on the list (notepad, sshd, nodejs, bashful, python3.x, godo...) aren't listed" ""
+  or_set "$sh" 25 999 37000 "pythonw$x" 30 999 32000 "Godot_v4.7.2-stable_win64_console$x" 21 999 41000 "python$x" 28 999 34000 "bash$x" 22 999 40000 "python3$x" 26 999 36000 "py$x" 24 999 38000 "PYTHON3.13$X" 29 999 33000 "sh$x" 23 999 39000 "python3.9$x" 27 999 35000 "node$x"
+  or_ten="pid 21 python (11 h), pid 22 python3 (11 h), pid 23 python3.9 (10 h), pid 24 PYTHON3.13 (10 h), pid 25 pythonw (10 h), pid 26 py (10 h), pid 27 node (9 h), pid 28 bash (9 h), pid 29 sh (9 h), pid 30 Godot_v4.7.2-stable_win64_console (8 h)"
+  or_expect "$lb: python, python3, python3.<n>, pythonw, py, node, bash, sh and godot*, in any case, are listed, oldest first" "$or_ten"
+  or_set "$sh" 31 999 31000 "chrome-headless-shell$x" 25 999 37000 "pythonw$x" 30 999 32000 "Godot_v4.7.2-stable_win64_console$x" 21 999 41000 "python$x" 28 999 34000 "bash$x" 22 999 40000 "python3$x" 26 999 36000 "py$x" 24 999 38000 "PYTHON3.13$X" 29 999 33000 "sh$x" 23 999 39000 "python3.9$x" 27 999 35000 "node$x"
+  or_expect "$lb: eleven orphans print the oldest ten and 'and 1 more' (a headless browser is on the list)" "$or_ten, and 1 more"
+  or_set "$sh" 31 999 31000 "chrome-headless-shell$x" 32 999 30000 "node$x" 33 999 29000 "node$x" 25 999 37000 "pythonw$x" 30 999 32000 "Godot_v4.7.2-stable_win64_console$x" 21 999 41000 "python$x" 28 999 34000 "bash$x" 22 999 40000 "python3$x" 26 999 36000 "py$x" 24 999 38000 "PYTHON3.13$X" 29 999 33000 "sh$x" 23 999 39000 "python3.9$x" 27 999 35000 "node$x"
+  or_expect "$lb: thirteen print ten and 'and 3 more'" "$or_ten, and 3 more"
+  or_set "$sh" 31 999 172801 "node$x" 32 999 172800 "node$x" 33 999 50400 "python3.13$x" 34 999 259200 "node$x" 35 999 7199 "bash$x"
+  or_expect "$lb: ages read as hours up to 48 and as days after" "pid 34 node (3 d), pid 31 node (2 d), pid 32 node (48 h), pid 33 python3.13 (14 h), pid 35 bash (1 h)"
+  odd='godot "x" \y {z}, $(w) `v` 100%'
+  or_set "$sh" 70 999 7200 "$odd$x" 71 999 3700 $'godot\303\276x'"$x"
+  or_expect "$lb: a name with quotes, backslashes, braces, a substitution and a percent sign is cut down to [A-Za-z0-9._-], so the JSON holds" "pid 70 godotxyzwv100 (2 h), pid 71 godotx (1 h)"
+  if [ "$sh" = win ]; then good="80 999 7200 node.exe"; else good="   80   999 02:00:00 node"; fi
+  or_raw "$sh" 'PID PPID ELAPSED COMM' '1 2' 'a b c d' "5 6 -3 node$x" "7 8 9999999999999 node$x" '' "$good"
+  or_expect "$lb: rows that aren't pid, ppid, age and name (a header, a short row, words, a negative age) are skipped" "pid 80 node (2 h)"
+  or_set "$sh"
+  or_expect "$lb: an empty list prints nothing" ""
+  or_set "$sh" 500 999 7200 "node$x"
+  if [ "$sh" = win ]; then : > "$or_stub/pwsh-fails"; else : > "$or_stub/ps-fails"; fi
+  or_expect "$lb: a process tool that fails prints nothing and exits 0" ""
+  or_set "$sh" 500 999 7200 "node$x"
+  out="$(printf '{}' | GODOT_DIRECTOR_ORPHAN_REPORT=0 PATH="$or_stub:$PATH" bash "$or_hook" 2>&1)"; status=$?
+  if [ -z "$out" ] && [ "$status" -eq 0 ] && [ ! -e "$or_stub/ps-calls" ] && [ ! -e "$or_stub/pwsh-calls" ]; then ok "$lb: GODOT_DIRECTOR_ORPHAN_REPORT=0 turns the hook off: nothing printed, the process list not read"
+  else bad "$lb: GODOT_DIRECTOR_ORPHAN_REPORT=0 turns the hook off" "exit $status: $out"; fi
+}
+or_cases win "Windows list"
+or_cases ps "ps list"
+
+# 2. Windows: PowerShell is asked for the processes, under timeout 8 when timeout exists, and the list's own shape is read.
+or_set win 500 999 7200 node.exe
+out="$(or_run)"
+case "$(<"$or_stub/pwsh-calls")" in
+  "-NoProfile -NonInteractive -Command "*"Get-CimInstance Win32_Process"*"CreationDate"*) ok "Windows: PowerShell runs with -NoProfile -NonInteractive -Command, and asks Get-CimInstance Win32_Process for each CreationDate" ;;
+  *) bad "Windows: PowerShell runs with -NoProfile -NonInteractive -Command, and asks Get-CimInstance Win32_Process for each CreationDate" "$(<"$or_stub/pwsh-calls")" ;;
+esac
+case "$(<"$or_stub/pwsh-calls")" in
+  *'if($_.CreationDate)'*) ok "and skips a process that has no CreationDate" ;;
+  *) bad "and skips a process that has no CreationDate" "$(<"$or_stub/pwsh-calls")" ;;
+esac
+[ ! -e "$or_stub/ps-calls" ] && ok "and ps isn't run" || bad "and ps isn't run" "$(<"$or_stub/ps-calls")"
+or_set win 500 999 7200 node.exe
+out="$(printf '{}' | PATH="$or_tstub:$or_stub:$PATH" bash "$or_hook" 2>&1)"
+[ "$out" = "$(or_json 'pid 500 node (2 h)')" ] && [ "$(<"$or_stub/timeouts")" = "8" ] && [ -e "$or_stub/pwsh-calls" ] && ok "the PowerShell run is under timeout 8 when timeout exists" || bad "the PowerShell run is under timeout 8 when timeout exists" "$out"
+or_set win 500 999 7200 node.exe
+out="$(printf '{}' | PATH="$or_stub:/nonexistent" "$BASH" "$or_hook" 2>&1)"
+[ "$out" = "$(or_json 'pid 500 node (2 h)')" ] && [ ! -e "$or_stub/timeouts" ] && ok "and without timeout on PATH it still asks" || bad "and without timeout on PATH it still asks" "$out"
+or_set win 500 999 7200 node.exe
+out="$(printf '{}' | PATH="$or_t124:$or_stub:$PATH" bash "$or_hook" 2>&1)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && [ -e "$or_stub/pwsh-calls" ] && ok "a PowerShell run that times out (status 124) prints nothing, even with rows read, and exits 0" || bad "a PowerShell run that times out prints nothing" "exit $status: $out"
+out="$(printf '{}' | PATH="$or_bare" "$BASH" "$or_hook" 2>&1)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && ok "a Windows machine with no PowerShell prints nothing and exits 0" || bad "a Windows machine with no PowerShell prints nothing and exits 0" "exit $status: $out"
+or_set win 600 0 7200 node.exe
+or_expect "Windows: a ppid of 0 is a gone parent" "pid 600 node (2 h)"
+for or_sys in MSYS_NT-10.0-26200 CYGWIN_NT-10.0-19045; do
+  or_set win 500 999 7200 node.exe
+  echo "$or_sys" > "$or_stub/uname-is"
+  or_expect "$or_sys is a Windows machine too" "pid 500 node (2 h)"
+done
+
+# 3. Elsewhere: ps -A -o pid=,ppid=,etime=,comm=, with etime read from [[dd-]hh:]mm:ss and comm cut to its base name.
+or_set ps 500 999 7200 node
+out="$(printf '{}' | PATH="$or_tstub:$or_stub:$PATH" bash "$or_hook" 2>&1)"
+[ "$out" = "$(or_json 'pid 500 node (2 h)')" ] && [ "$(<"$or_stub/ps-calls")" = "-A -o pid=,ppid=,etime=,comm=" ] && [ ! -e "$or_stub/pwsh-calls" ] && [ ! -e "$or_stub/timeouts" ] \
+  && ok "elsewhere ps -A -o pid=,ppid=,etime=,comm= is run, with no PowerShell and no timeout" || bad "elsewhere ps -A -o pid=,ppid=,etime=,comm= is run" "$out"
+or_raw ps '   11     1 10-00:00:00 node' '   12     1  2-01:00:00 node' '   13     1  1-23:59:59 node' '   14     1  1-08:09:09 node' '   15     1    08:09:09 node' \
+  '   16     1    01:08:09 node' '   17     1       60:00 node' '   18     1       59:59 node' '   19     1    00:59:59 node'
+or_expect "etime reads right as dd-hh:mm:ss, hh:mm:ss and mm:ss, with zeros that aren't octal (08:09:09), and 59:59 is under the hour" \
+  "pid 11 node (10 d), pid 12 node (2 d), pid 13 node (47 h), pid 14 node (32 h), pid 15 node (8 h), pid 16 node (1 h), pid 17 node (1 h)"
+or_raw ps '   81     1 05:00:00 /usr/local/bin/node' '   82     1 04:00:00 /Applications/Some App.app/Contents/MacOS/python3.13' '   83     1 03:00:00 chrome-headless' \
+  '   84     1 02:00:01 Godot_v4.7-stab' '   85     1 02:00:00 /usr/sbin/sshd'
+or_expect "comm is cut to its base name (a path with spaces too), and Linux's 15-character chrome-headless counts" \
+  "pid 81 node (5 h), pid 82 python3.13 (4 h), pid 83 chrome-headless (3 h), pid 84 Godot_v4.7-stab (2 h)"
+or_raw ps '    1     0 10-00:00:00 launchd' '   90     1 02:00:00 node' '   91     0 02:00:00 sh'
+or_expect "a ppid of 1 or 0 is a gone parent, though a row for pid 1 exists and is older" "pid 90 node (2 h), pid 91 sh (2 h)"
+or_set ps 500 999 7200 node
+out="$(printf '{}' | PATH="/nonexistent" "$BASH" "$or_hook" 2>&1)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && ok "a machine with no ps (and no uname) prints nothing and exits 0" || bad "a machine with no ps (and no uname) prints nothing and exits 0" "exit $status: $out"
+or_set ps 500 999 7200 node
+echo Darwin > "$or_stub/uname-is"
+or_expect "Darwin reads ps too" "pid 500 node (2 h)"
+
+# 4. It only reads: nothing is stopped, signalled or written.
+if [ ! -e "$or_stub/killed" ]; then ok "no case called kill, taskkill, pkill or killall"; else bad "no case called kill, taskkill, pkill or killall" "$(<"$or_stub/killed")"; fi
+or_set ps 500 999 7200 node
+out="$(cd "$or_cwd" && printf '{}' | PATH="$or_stub:$PATH" bash "$or_hook" 2>&1)"
+if [ -n "$out" ] && [ -z "$(ls -A "$or_cwd")" ]; then ok "a run writes no file in the folder it runs in"; else bad "a run writes no file in the folder it runs in" "$(ls -A "$or_cwd")"; fi
+stops=$(grep -vE '^[[:space:]]*#' "$or_hook" | grep -niE 'kill|Stop-Process|Remove-|Set-|New-Item|Out-File|Add-Content|Invoke-' || true)
+if [ -z "$stops" ]; then ok "the hook names no command that stops, changes or writes anything"; else bad "the hook names no command that stops, changes or writes anything" "$stops"; fi
+writes=$(grep -vE '^[[:space:]]*#' "$or_hook" | grep '>' | grep -v '/dev/null' || true)
+if [ -z "$writes" ]; then ok "and redirects its output nowhere but /dev/null"; else bad "and redirects its output nowhere but /dev/null" "$writes"; fi
+unset -f kill
+
+# 5. The project check never runs it; settings.json runs it at session start with the release check, in one entry.
+if ! grep -rq 'orphan-report' "$src/framework/tools" "$src/framework/.githooks" "$src/framework/.godot-director"; then ok "the project check and the git hooks don't run the orphan report, so a report never fails tools/check.sh"
+else bad "the project check and the git hooks don't run the orphan report" "$(grep -rn 'orphan-report' "$src/framework/tools" "$src/framework/.githooks" "$src/framework/.godot-director")"; fi
+wiring="$(awk '/^    "[A-Za-z]+": \[/ { ev = $1; gsub(/[":]/, "", ev) } /"matcher"/ { split($0, a, "\""); m = a[4] }
+  /orphan-report\.sh/ { hit = ev ";" m; next } hit != "" && /"timeout"/ { t = $2; gsub(/[^0-9]/, "", t); print hit ";" t; hit = "" }' "$settings")"
+[ "$wiring" = "SessionStart;startup|resume;10" ] && ok "settings.json runs the orphan report at SessionStart, on startup and resume, with a timeout of 10 seconds" \
+  || bad "settings.json runs the orphan report at SessionStart, on startup and resume, with a timeout of 10 seconds" "$wiring"
+entry="$(awk '/^    "[A-Za-z]+": \[/ { ev = $1; gsub(/[":]/, "", ev) } ev == "SessionStart" && /"matcher"/ { m++ } ev == "SessionStart" && /"command":/ { n++ } END { print m ";" n }' "$settings")"
+[ "$entry" = "1;2" ] && ok "and in the same entry as the release check: one matcher, two hooks" || bad "and in the same entry as the release check: one matcher, two hooks" "$entry"
+bash4=$(grep -nE '^[^#]*(\$\{[A-Za-z_0-9]+(\[[^]]*\])?(,,|\^\^)\}|(declare|local|typeset) +-[a-zA-Z]*A|(^|[;&| ])(mapfile|readarray) +|(^|[;&| ])coproc +[A-Za-z]|[[:space:]]\|&[[:space:]]|\$\{[A-Za-z_0-9@*]+(\[[^]]*\])?: -[0-9]|stat +-c|date +-d|sed +-i|readlink +-f|-printf|-delete)' \
+  "$or_hook" || true)
+if [ -z "$bash4" ]; then ok "the orphan report uses no bash 4 form and no GNU-only tool flag"; else bad "the orphan report uses no bash 4 form and no GNU-only tool flag" "$bash4"; fi
+if grep -q 'GODOT_DIRECTOR_ORPHAN_REPORT=0' "$src/PRIVACY.md" && grep -q 'names, ids and ages of the processes on this machine' "$src/PRIVACY.md" && grep -q 'ended session left behind' "$src/README.md"; then
+  ok "PRIVACY.md says the hook reads the names, ids and ages of the processes and names the switch, and the README names the hook"
+else bad "PRIVACY.md says the hook reads the names, ids and ages of the processes and names the switch, and the README names the hook"; fi
+
+}
+
+l_precommit() {
+lane_game warm
+git add -A && { git_q commit -qm "state for the hook tests" >/dev/null 2>&1 || true; }
 # --- pre-commit hook ----------------------------------------------------------------------------
 echo "pre-commit hook"
 printf 'func broken( -> void:\n' >> scripts/systems/market.gd
@@ -1899,6 +5090,10 @@ bash "$src/install.sh" "$no_project" >/dev/null 2>&1
   && git add -A && git_q commit -qm "install" >/dev/null 2>&1)
 expect_status "commits in a repository without project.godot yet" 0 $?
 
+}
+
+l_secrets_a() {
+lane_game warm
 # --- secrets (gitleaks) -------------------------------------------------------------------------
 # gitleaks is optional. With it installed, the check scans the working tree (each credential listed as
 # file:line, the value redacted) and the pre-commit hook scans the staged changes of every commit,
@@ -1909,34 +5104,7 @@ expect_status "commits in a repository without project.godot yet" 0 $?
 # scan). Every token is assembled at run time ("ghp_" and 36 generated letters and digits) and written
 # only into a temporary copy of the example, never into a tracked file.
 echo "secrets"
-gen_token() { # gen_token: sets _tok to "ghp_" and 36 generated letters and digits
-  local chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789' i
-  _tok="ghp_"
-  for ((i = 0; i < 36; i++)); do _tok="$_tok${chars:$((RANDOM % 62)):1}"; done
-}
-_gl_ok=0; _gl_real=""
-if command -v gitleaks >/dev/null 2>&1; then
-  _gl_real="$(gitleaks version 2>/dev/null | tr -d 'v \r\n')"
-  _gl_maj="${_gl_real%%.*}"; _gl_rest="${_gl_real#*.}"; _gl_mnr="${_gl_rest%%.*}"
-  case "$_gl_maj$_gl_mnr" in
-    ''|*[!0-9]*) ;;
-    *) if [ "$_gl_real" != "8.19.0" ] && { [ "$_gl_maj" -gt 8 ] || { [ "$_gl_maj" -eq 8 ] && [ "$_gl_mnr" -ge 18 ]; }; }; then _gl_ok=1; fi ;;
-  esac
-fi
-# A PATH without gitleaks: every directory that holds it is left out (the other tools must remain).
-_no_gl_path=""
-while IFS= read -r _dir; do
-  [ -n "$_dir" ] || continue
-  if [ -x "$_dir/gitleaks" ] || [ -x "$_dir/gitleaks.exe" ]; then continue; fi
-  _no_gl_path="${_no_gl_path:+$_no_gl_path:}$_dir"
-done <<EOF
-$(printf '%s\n' "$PATH" | tr ':' '\n')
-EOF
-_no_gl_ok=1
-for _tool in git bash awk sed tr grep head tail cat mkdir rm find sort; do
-  PATH="$_no_gl_path" command -v "$_tool" >/dev/null 2>&1 || _no_gl_ok=0
-done
-PATH="$_no_gl_path" command -v gitleaks >/dev/null 2>&1 && _no_gl_ok=0
+gitleaks_prelude
 [ "$_no_gl_ok" -eq 1 ] || echo "  skip  the cases without gitleaks on PATH (no PATH without it keeps the other tools)"
 
 # The seeds: gitleaks's built-in rules, and the allowlist for .godot/ (Godot's gitignored cache, which holds
@@ -1948,28 +5116,6 @@ if grep -q '^useDefault = true$' "$src/project/.gitleaks.toml" && grep -qF "'''^
 else
   bad "the seeds: .gitleaks.toml and [gitleaks] min-version in check.cfg"
 fi
-
-# A stand-in gitleaks: it reports FAKE_GL_VERSION, logs each call to FAKE_GL_LOG, and a scan finds nothing,
-# or fails with FAKE_GL_ERROR's text and no report (as 8.19.0 does for every command). protect, the staged
-# scan, writes one finding in FAKE_GL_FINDING (a file) when it is set, in the report's own layout.
-_fake_gl="$work/fake-gl"; mkdir -p "$_fake_gl"
-cat > "$_fake_gl/gitleaks" << 'FAKE'
-#!/usr/bin/env bash
-[ -n "${FAKE_GL_LOG:-}" ] && printf '%s\n' "$*" >> "$FAKE_GL_LOG"
-case "$1" in
-  version) echo "v${FAKE_GL_VERSION:-8.30.1}" ;;
-  dir|detect|protect)
-    for a in "$@"; do case "$a" in --report-path=*) report="${a#--report-path=}" ;; esac; done
-    if [ -n "${FAKE_GL_ERROR:-}" ]; then echo "$FAKE_GL_ERROR"; exit 1; fi
-    if [ "$1" = protect ] && [ -n "${FAKE_GL_FINDING:-}" ]; then
-      printf '[\n {\n  "RuleID": "selftest-rule",\n  "StartLine": 7,\n  "Match": "REDACTED",\n  "Secret": "REDACTED",\n  "File": "%s",\n  "Fingerprint": "%s:selftest-rule:7"\n }\n]\n' "$FAKE_GL_FINDING" "$FAKE_GL_FINDING" > "$report"
-      exit 1
-    fi
-    exit 0 ;;
-  *) exit 0 ;;
-esac
-FAKE
-chmod +x "$_fake_gl/gitleaks"
 
 sg="$work/secrets-game"
 cp -R "$game" "$sg" && rm -rf "$sg/clones"
@@ -2007,6 +5153,16 @@ out="$(PATH="$_fake_gl:$PATH" FAKE_GL_VERSION=8.18.0 FAKE_GL_LOG="$_fake_log" ba
 expect_status "a clean game passes with a stand-in gitleaks 8.18.0" 0 "$status" "$out"
 grep -q '^detect --no-git --redact --report-path=' "$_fake_log" && ok "gitleaks 8.18.0 scans with detect --no-git" || bad "gitleaks 8.18.0 scans with detect --no-git" "$(cat "$_fake_log")"
 
+}
+
+l_secrets_b() {
+lane_game warm
+gitleaks_prelude
+sg="$work/secrets-game"
+cp -R "$game" "$sg" && rm -rf "$sg/clones"
+cd "$sg" || exit 1
+git add -A && { git_q commit -qm "state for the secrets tests" >/dev/null 2>&1 || true; }
+cp tools/check.cfg "$work/saved-check-cfg-gl"
 # A game with a secret in a script and in a config file, assembled at run time.
 gen_token; tok_script="$_tok"; gen_token; tok_cfg="$_tok"; gen_token; tok_note="$_tok"
 printf 'extends RefCounted\n\nconst API_TOKEN: String = "%s"\n' "$tok_script" > scripts/secret_config.gd
@@ -2063,6 +5219,16 @@ if [ "$_gl_ok" -eq 1 ]; then
   git reset -q HEAD -- scripts/secret_config.gd data/store.cfg
 fi
 
+}
+
+l_secrets_c() {
+lane_game warm
+gitleaks_prelude
+sg="$work/secrets-game"
+cp -R "$game" "$sg" && rm -rf "$sg/clones"
+cd "$sg" || exit 1
+git add -A && { git_q commit -qm "state for the secrets tests" >/dev/null 2>&1 || true; }
+cp tools/check.cfg "$work/saved-check-cfg-gl"
 # The hook with a stand-in gitleaks: it names each finding as file:line (rule), blocks one that can't scan
 # (8.19.0) without calling it a finding, and passes when the scan finds nothing.
 rm -f scripts/secret_config.gd data/store.cfg notes_upload.md
@@ -2123,8 +5289,11 @@ if [ "$_gl_ok" -eq 1 ]; then
 else
   echo "  skip  the real-gitleaks cases (gitleaks isn't installed, or is below 8.18.0, or is 8.19.0, which can't scan)"
 fi
-cd "$game" || exit 1
+}
 
+l_prototype() {
+game="$work/hook-game"; mkdir -p "$game/.claude" && cp -R "$src/framework/.claude/hooks" "$game/.claude/hooks" && cd "$game" || exit 1
+gitleaks_prelude
 # --- prototypes -----------------------------------------------------------------------------------
 echo "prototype"
 # tools/prototype.sh on a throwaway repository with an origin: start stops while origin/main is ahead, creates the
@@ -2541,22 +5710,9 @@ out="$(cd "$_ps" && bash tools/prototype.sh list 2>&1)"
 expect_output "and so does list" "^  gate files that differ from main's: \.githooks/pre-commit$" "$out"
 out="$(cd "$_ps" && bash tools/prototype.sh remove try 2>&1)"; status=$?
 [ "$status" -eq 0 ] && [ ! -e "$_psw" ] && ok "remove works there" || bad "remove works in a folder whose name has a space (exit $status)" "$out"
-cd "$game" || exit 1
+}
 
-# --- screen capture (/ui-design) ----------------------------------------------------------------
-echo "ui capture"
-captures=design/ui/captures
-# The catalogs below have views no adapter opens, and these tests are about the layout lint: keep the
-# check's autoplay smoke (tools/check.cfg) off until the autoplay sections.
-cp tools/check.cfg "$work/saved-check-cfg-ui"
-sed -e 's/^check_in_check=.*/check_in_check=false/' "$work/saved-check-cfg-ui" > tools/check.cfg
-out="$(GODOT_BIN=/nonexistent/godot bash tools/ui_capture.sh --all 2>&1)"; expect_status "capture exits 3 without Godot" 3 $? "$out"
-[ ! -e "$captures" ] && ok "and writes nothing" || bad "capture without Godot wrote $captures"
-out="$(bash tools/ui_capture.sh --list 2>&1)"; expect_status "lists the catalog" 0 $? "$out"
-expect_output "lists each screen with its states and scene" "^shop · Shop screen · states: default, closed · opens res://scenes/shop_screen\.tscn · drawing: no · spec: no$" "$out"
-
-# Lint fixtures: a screen built to break each rule, and a clean one. Headless, so no display needed.
-cp tools/ui_screens.gd "$work/saved-catalog"
+capture_defs() { # the lint fixtures: write_fixtures, remove_fixtures and lint_fixtures (both capture lanes use them)
 write_fixtures() {
   mkdir -p ui_fixtures
   # A HUD an autoload draws, and a scene a screen can name as an overlay.
@@ -2630,6 +5786,11 @@ func screens() -> Array[Dictionary]:
 		{"id": "hardcoded", "title": "Hard-coded position", "scene": "res://ui_fixtures/hard_coded.tscn", "setup": _hardcoded},
 		{"id": "pickable", "title": "3D pickable", "setup": _pickable},
 		{"id": "rows", "title": "Rows built in code", "setup": _rows},
+		{"id": "sheet", "title": "SubViewport page with a provider", "setup": _sheet.bind("provided")},
+		{"id": "sheetnone", "title": "SubViewport page with no provider", "setup": _sheet.bind("none")},
+		{"id": "sheethidden", "title": "SubViewport page whose provider has no rect", "setup": _sheet.bind("hidden")},
+		{"id": "boxed", "title": "SubViewportContainer with a provider", "setup": _boxed.bind(true)},
+		{"id": "boxednone", "title": "SubViewportContainer with no provider", "setup": _boxed.bind(false)},
 		{"id": "withhud", "title": "With the HUD", "setup": _clean, "overlays": ["/root/Hud"]},
 		{"id": "withhud2", "title": "With the HUD, again", "setup": _clean, "overlays": ["/root/Hud"]},
 		{"id": "nohud", "title": "Without the HUD", "setup": _clean},
@@ -2779,6 +5940,59 @@ func _rows() -> Node:
 	return page
 
 
+## A button of a SubViewport, with a unique name (owned by the screen's page).
+func _in_viewport(page: Control, viewport: Viewport, button_name: String, x: float) -> void:
+	var button: Button = Button.new()
+	button.name = button_name
+	button.text = "Go"
+	button.position = Vector2(x, 20.0)
+	button.size = Vector2(160, 40)
+	viewport.add_child(button)
+	button.owner = page
+	button.unique_name_in_owner = true
+
+
+## A page in a SubViewport (800 x 600 rendered, laid out in 400 x 300 units, as a sheet's page is) that
+## the screen shows at half size in its lower right, with two buttons side by side. Mapped by their place
+## on the screen, they don't leave the page, overlap or hold the focus. mode "provided" gives the
+## SubViewport a provider, "hidden" a provider with no rect (the page isn't shown), "none" none.
+func _sheet(mode: String) -> Node:
+	var page: Control = _page()
+	var flat: Button = _button(page, "Flat")
+	flat.position = Vector2(20, 20)
+	focus_default(flat)
+	var viewport: SubViewport = SubViewport.new()
+	viewport.size = Vector2i(800, 600)
+	viewport.size_2d_override = Vector2i(400, 300)
+	viewport.size_2d_override_stretch = true
+	page.add_child(viewport)
+	_in_viewport(page, viewport, "PageGo", 20.0)
+	_in_viewport(page, viewport, "PageMore", 200.0)
+	if mode == "provided":
+		viewport.set_meta(&"godot_director_screen_rect", func(rect: Rect2) -> Rect2: return Rect2(Vector2(400, 200) + rect.position * 0.5, rect.size * 0.5))
+	elif mode == "hidden":
+		viewport.set_meta(&"godot_director_screen_rect", func(_rect: Rect2) -> Rect2: return Rect2())
+	return page
+
+
+## A SubViewportContainer at (300, 100), 200 x 100, with a button in its SubViewport; the provider maps
+## the page through the container's transform.
+func _boxed(provided: bool) -> Node:
+	var page: Control = _page()
+	focus_default(_button(page, "Flat"))
+	var container: SubViewportContainer = SubViewportContainer.new()
+	container.stretch = true
+	container.position = Vector2(300, 100)
+	container.size = Vector2(200, 100)
+	page.add_child(container)
+	var viewport: SubViewport = SubViewport.new()
+	container.add_child(viewport)
+	_in_viewport(page, viewport, "BoxGo", 10.0)
+	if provided:
+		viewport.set_meta(&"godot_director_screen_rect", func(rect: Rect2) -> Rect2: return container.get_global_transform_with_canvas() * rect)
+	return page
+
+
 ## Three controls placed by their anchors alone, with unique names a screen spec can list. Moving
 ## Gear by shift (a fraction of the screen) is the deviation verify must find.
 func _spec_fixture(shift: float) -> Node:
@@ -2808,7 +6022,6 @@ func _placed(page: Control, node_name: String, control: Control, area: Rect2) ->
 EOF
 }
 remove_fixtures() { rm -rf ui_fixtures; [ -f "$work/saved-project" ] && cp "$work/saved-project" project.godot; }
-write_fixtures
 lint_fixtures() { # lint_fixtures <how>: each broken fixture gets exactly its own rule; the clean one nothing
   local rule file found
   [ ! -s "$captures/clean@1280x720.lint.txt" ] && [ -f "$captures/clean@1280x720.lint.txt" ] \
@@ -2820,6 +6033,27 @@ lint_fixtures() { # lint_fixtures <how>: each broken fixture gets exactly its ow
     [ "$found" = "${rule%%:*} " ] && ok "lint catches ${rule%%:*} ($1)" || bad "lint on the ${rule#*:} fixture ($1): found '$found'" "$(cat "$file" 2>&1)"
   done
 }
+}
+
+l_capture_a1() {
+lane_game warm
+user_data_init
+capture_defs
+# --- screen capture (/ui-design) ----------------------------------------------------------------
+echo "ui capture"
+captures=design/ui/captures
+# The catalogs below have views no adapter opens, and these tests are about the layout lint: keep the
+# check's autoplay smoke (tools/check.cfg) off until the autoplay sections.
+cp tools/check.cfg "$work/saved-check-cfg-ui"
+sed -e 's/^check_in_check=.*/check_in_check=false/' "$work/saved-check-cfg-ui" > tools/check.cfg
+out="$(GODOT_BIN=/nonexistent/godot bash tools/ui_capture.sh --all 2>&1)"; expect_status "capture exits 3 without Godot" 3 $? "$out"
+[ ! -e "$captures" ] && ok "and writes nothing" || bad "capture without Godot wrote $captures"
+out="$(bash tools/ui_capture.sh --list 2>&1)"; expect_status "lists the catalog" 0 $? "$out"
+expect_output "lists each screen with its states and scene" "^shop · Shop screen · states: default, closed · opens res://scenes/shop_screen\.tscn · drawing: no · spec: no$" "$out"
+
+# Lint fixtures: a screen built to break each rule, and a clean one. Headless, so no display needed.
+cp tools/ui_screens.gd "$work/saved-catalog"
+write_fixtures
 out="$(bash tools/ui_capture.sh --all --no-images --size 1280x720 2>&1)"; expect_status "--no-images maps and lints the fixtures headless" 0 $? "$out"
 lint_fixtures "headless"
 grep -q '"id":"Chest","path":"Node3D#[0-9]*/Chest","kind":"Area3D"' "$captures/pickable@1280x720.elements.json" 2>/dev/null \
@@ -2827,6 +6061,27 @@ grep -q '"id":"Chest","path":"Node3D#[0-9]*/Chest","kind":"Area3D"' "$captures/p
 [ ! -e "$captures/clean@1280x720.png" ] && ok "--no-images writes no images" || bad "--no-images writes no images"
 grep -q '"id":"Label#1","stable":false,"path":"Control#[0-9]*/CenterContainer#0/VBoxContainer#0/Label#1"' "$captures/rows@1280x720.elements.json" 2>/dev/null \
   && ok "names a node Godot named by its class and place" || bad "names a node Godot named by its class and place" "$(head -n 8 "$captures/rows@1280x720.elements.json" 2>&1)"
+# A SubViewport is drawn into a texture, so the map leaves its controls out unless the game gave it a
+# screen-rect provider (tools/ui_lint.gd); then they are mapped where the provider puts them, a
+# SubViewportContainer's page too, and no rule reads that place as the control's own.
+for mapped in sheet:PageGo:820,420,160,40 sheet:PageMore:1000,420,160,40 boxed:BoxGo:620,240,320,80; do
+  IFS=: read -r pg_screen pg_control pg_rect <<< "$mapped"
+  grep -qE "\"id\":\"$pg_control\",\"stable\":true,[^}]*\"rect\":\[$pg_rect\]" "$captures/$pg_screen@1280x720.elements.json" 2>/dev/null \
+    && ok "a SubViewport with a provider: $pg_control is mapped at its place on screen" \
+    || bad "a SubViewport with a provider: $pg_control is mapped at its place on screen" "$(grep -o '"id":"[A-Za-z]*","stable":[a-z]*,[^}]*"rect":\[[0-9,]*\]' "$captures/$pg_screen@1280x720.elements.json" 2>&1)"
+done
+for left_out in sheetnone sheethidden boxednone; do
+  if grep -q '"name":"Flat"' "$captures/$left_out@1280x720.elements.json" 2>/dev/null && ! grep -qE '"id":"(PageGo|PageMore|BoxGo)"' "$captures/$left_out@1280x720.elements.json"; then
+    ok "$left_out: a SubViewport with no provider, or none with a rect, is left out of the map as before"
+  else
+    bad "$left_out: a SubViewport with no provider, or none with a rect, is left out of the map as before" "$(grep -o '"id":"[A-Za-z#0-9]*"' "$captures/$left_out@1280x720.elements.json" 2>&1)"
+  fi
+done
+for lint_file in sheet sheetnone sheethidden boxed boxednone; do
+  [ -f "$captures/$lint_file@1280x720.lint.txt" ] && [ ! -s "$captures/$lint_file@1280x720.lint.txt" ] \
+    && ok "$lint_file: no finding, though a provided page is read in its own canvas and keeps its focus to itself" \
+    || bad "$lint_file: no finding for the page" "$(cat "$captures/$lint_file@1280x720.lint.txt" 2>&1)"
+done
 cp "$captures/rows@1280x720.elements.json" "$work/rows-all"
 out="$(bash tools/ui_capture.sh rows --no-images --size 1280x720 2>&1)"
 cmp -s "$captures/rows@1280x720.elements.json" "$work/rows-all" && ok "a screen built in code maps the same alone as in --all" \
@@ -2878,6 +6133,16 @@ out="$(bash tools/ui_capture.sh clean --verify --no-images --size 1280x720 2>&1)
 expect_output "and says where the spec goes" "no spec at design/ui/clean\.md" "$out"
 out="$(bash tools/ui_capture.sh --all --verify 2>&1)"; expect_status "verify takes one screen" 1 $? "$out"
 
+}
+
+l_capture_a2() {
+lane_game warm
+user_data_init
+capture_defs
+captures=design/ui/captures
+cp tools/check.cfg "$work/saved-check-cfg-ui"; sed -e 's/^check_in_check=.*/check_in_check=false/' "$work/saved-check-cfg-ui" > tools/check.cfg
+cp tools/ui_screens.gd "$work/saved-catalog"
+write_fixtures
 # The lint in the check (tools/ui_capture.cfg › [lint]): a screen under enforce with a finding fails
 # the check, one without passes, and with the lint off (or the keys missing) the check is unchanged.
 cp tools/ui_capture.cfg "$work/saved-lint-cfg"
@@ -2910,6 +6175,16 @@ set_lint false '[]'
 [ "$fp_before" != "$(bash tools/check.sh --fingerprint)" ] && ok "the check's fingerprint covers tools/ui_capture.cfg" || bad "the check's fingerprint covers tools/ui_capture.cfg"
 cp "$work/saved-lint-cfg" tools/ui_capture.cfg
 
+}
+
+l_capture_a3() {
+lane_game warm
+user_data_init
+capture_defs
+captures=design/ui/captures
+cp tools/check.cfg "$work/saved-check-cfg-ui"; sed -e 's/^check_in_check=.*/check_in_check=false/' "$work/saved-check-cfg-ui" > tools/check.cfg
+cp tools/ui_screens.gd "$work/saved-catalog"
+write_fixtures
 # A catalog with problems: each is named, the good screen is still captured, exit 1.
 cat > tools/ui_screens.gd <<'EOF'
 extends "res://tools/ui_catalog.gd"
@@ -2964,6 +6239,24 @@ cp "$work/saved-capture-cfg" tools/ui_capture.cfg
 out="$(bash tools/ui_capture.sh nowhere --no-images 2>&1)"; expect_output "refuses an unknown screen" "no screen 'nowhere'" "$out"
 cp "$work/saved-catalog" tools/ui_screens.gd; remove_fixtures; rm -rf "$captures"
 
+}
+
+l_capture_b() {
+lane_game warm
+user_data_init
+capture_defs
+captures=design/ui/captures
+cp tools/check.cfg "$work/saved-check-cfg-ui"; sed -e 's/^check_in_check=.*/check_in_check=false/' "$work/saved-check-cfg-ui" > tools/check.cfg
+cp tools/ui_screens.gd "$work/saved-catalog"
+mkdir -p design/ui
+spec_table='| # | Element | Name | Where (x, y, w, h %) | Shows | Does | Size |
+|---|---|---|---|---|---|---|
+| 1 | Hero sheet | %Sheet | 1, 11, 20, 70 | - | - | fill |
+| 2 | Gear list | %Gear | 62, 12, 34, 60 | - | - | fill |
+| 3 | Go | %Go | 62, 80, 18, 8 | - | click | fit |'
+printf '# Spec fixture\n\n## Layout (at 1280x720)\n%s\n' "$spec_table" > design/ui/specfix.md
+cp design/ui/specfix.md design/ui/specmoved.md
+printf '# Spec fixture\n\n## Layout (at 1280x720)\n%s\n' "$(printf '%s\n' "$spec_table" | grep -v '%Gear')" > design/ui/specdrawn.md
 # Drawings, headless. The fixture drawing (tests/ui-drawing/) has a green box with bound text and
 # click:, a blue box over an existing element, a red X over an element, an arrowed comment, a box
 # inside a box, a note outside the frame and a freehand squiggle; its expected reading was worked
@@ -3198,26 +6491,17 @@ else
 fi
 
 rm -f tools/selftest_drawings.gd tools/selftest_drawings.gd.uid design/ui/spec*.md
+}
 
+l_autoplay() {
+lane_game warm
+user_data_init
 # --- autoplay -----------------------------------------------------------------------------------
-cp "$work/saved-check-cfg-ui" tools/check.cfg
 # The example plays itself through its adapter: the real main scene, ui actions by real input and an
 # api action, screenshots and element maps, the invariants, repros and replays, and the same log
 # from the same seed. The planted bugs are the spec's three: a script error in a view's button
 # handler, a progress block that never clears, a view with no default focus.
 echo "autoplay"
-runs=playtesting/autoplay
-latest_run() { ls -d "$runs/$1"-* 2>/dev/null | grep -v -- '-replay' | LC_ALL=C /usr/bin/sort | tail -n 1; }
-after_line() { # after_line <file> <exact line> <lines to add after it>; awk reads \t and \n in both
-  awk -v line="$2" -v text="$3" '{ print } $0 == line { print text }' "$1"
-}
-replace_line() { # replace_line <file> <exact line> <its replacement>
-  awk -v line="$2" -v text="$3" '{ print ($0 == line ? text : $0) }' "$1"
-}
-normalized() { # a run's JSONL without time stamps, run ids and timing lines
-  sed -e 's/^{"t":[0-9]*,/{/' -e 's/[0-9]\{8\}-[0-9]\{6\}\(-[0-9][0-9]*\)\{0,1\}/<id>/g' "$1"/run-*.jsonl \
-    | grep -v -e '"event":"frame.hitch"' -e '"event":"window.focus"'
-}
 out="$(GODOT_BIN=/nonexistent/godot bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "autoplay exits 3 without Godot" 3 $? "$out"
 [ -z "$(ls -A "$runs" 2>/dev/null)" ] && ok "and writes nothing" || bad "autoplay without Godot wrote $runs"
 out="$(bash tools/autoplay.sh --list 2>&1)"; expect_status "lists the scenarios" 0 $? "$out"
@@ -3523,6 +6807,12 @@ expect_output "and says where" "check $sig: PRESENT in playtesting/autoplay/smok
 expect_output "delta: new again, against the clean run" "^  - $sig " "$(review_section "$back/review.md" Delta)"
 out="$(bash tools/log_review.sh "$back"/run-*.jsonl 2>&1)"; expect_status "reviews a run's .jsonl by its path" 0 $? "$out"
 cp "$work/saved-shop" scripts/ui/shop_screen.gd
+}
+
+l_autoplay2_a() {
+lane_game warm
+user_data_init
+cp scripts/ui/shop_screen.gd "$work/saved-shop"; cp tools/autoplay_adapter.gd "$work/saved-adapter"
 echo "autoplay"
 # --from-save: the save written before the failing step, loaded through the adapter's load_save(),
 # and the recorded actions from that step on, with the same step numbers.
@@ -3571,6 +6861,12 @@ expect_output "it's found when the view opens" "FAIL: smoke step 0: no-focus: th
 run="$(latest_run smoke-1)"
 out="$(bash tools/autoplay.sh --replay "$run" --until 0 --no-images 2>&1)"; expect_output "--replay reproduces it at the same step" "FAIL: smoke step 0: no-focus: the view shop " "$out"
 cp "$work/saved-shop" scripts/ui/shop_screen.gd
+}
+
+l_autoplay2_b() {
+lane_game warm
+user_data_init
+cp scripts/ui/shop_screen.gd "$work/saved-shop"; cp tools/autoplay_adapter.gd "$work/saved-adapter"
 # Where a view keeps its focus: the adapter's focus_roots(). The shop has no default focus here, and
 # the planted adapter adds a HUD layer outside the view node whose stand-in button holds the window's
 # focus (and, for _make_page(), a SubViewport page under the view whose own button has the page's, the
@@ -3677,6 +6973,12 @@ sed 's/"kind": "smoke", "turns": 3}/"kind": "strategy", "strategy": "random"}/' 
 out="$(bash tools/autoplay.sh --list 2>&1)"; expect_status "refuses scenarios without a smoke scenario" 1 $? "$out"
 expect_output "and says a smoke scenario is required" "a smoke scenario is required" "$out"
 cp "$work/saved-scenarios" tools/autoplay_scenarios.gd
+}
+
+l_autoplay2_c() {
+lane_game warm
+user_data_init
+cp scripts/ui/shop_screen.gd "$work/saved-shop"; cp tools/autoplay_adapter.gd "$work/saved-adapter"
 # A second view in the catalog: smoke opens it through the action whose `opens` names it and backs
 # out with the view's `back` action; without that action, the view smoke can't reach is a finding.
 cp tools/ui_screens.gd "$work/saved-screens"
@@ -3721,6 +7023,105 @@ grep -q '"text":"step 1: Ledger (Page Down) (input ui_page_down)"' "$run"/run-*.
   && ok "both key presses register as their InputMap actions" || bad "the key routes" "$(grep -o '"text":"step [^"]*"' "$run"/run-*.jsonl | head -n 3)"
 cp "$work/saved-screens" tools/ui_screens.gd; cp "$work/saved-adapter" tools/autoplay_adapter.gd; cp "$work/saved-shop" scripts/ui/shop_screen.gd
 rm -f scenes/ledger.tscn scenes/ledger.tscn.uid scripts/ui/ledger_view.gd scripts/ui/ledger_view.gd.uid
+# Controls in a SubViewport: the shop gets a page (a SubViewport with a button, %PageGo, that ends the
+# day) on a flat face that shows it at twice its size and forwards the clicks into it, or a 2D
+# SubViewportContainer. Only a SubViewport with a screen-rect provider is in the element map, so only
+# then can a ui action click the button; the click must still reach it, and a disabled button is refused.
+cat > "$work/page-helpers.gd" <<'GDEOF'
+
+
+func _make_page(provided: bool, forwarded: bool, disabled: bool) -> void:
+	var scene: Node = tree.current_scene
+	var face: Control = Control.new()
+	face.name = "Face"
+	face.position = Vector2(10, 10)
+	face.size = Vector2(160, 80)
+	scene.add_child(face)
+	var page: SubViewport = SubViewport.new()
+	page.name = "Page"
+	page.size = Vector2i(80, 40)
+	face.add_child(page)
+	_page_button(scene, page, disabled)
+	if forwarded:
+		face.gui_input.connect(_forward.bind(page))
+	if provided:
+		page.set_meta(&"godot_director_screen_rect", func(rect: Rect2) -> Rect2: return Rect2(face.get_global_rect().position + rect.position * 2.0, rect.size * 2.0))
+
+
+func _make_box(provided: bool) -> void:
+	var scene: Node = tree.current_scene
+	var container: SubViewportContainer = SubViewportContainer.new()
+	container.stretch = true
+	container.position = Vector2(10, 10)
+	container.size = Vector2(160, 80)
+	scene.add_child(container)
+	var page: SubViewport = SubViewport.new()
+	page.name = "Page"
+	container.add_child(page)
+	_page_button(scene, page, false)
+	if provided:
+		page.set_meta(&"godot_director_screen_rect", func(rect: Rect2) -> Rect2: return container.get_global_transform_with_canvas() * rect)
+
+
+## The page's button takes no focus, so a click leaves the window's focus where it is, as on a sheet view.
+func _page_button(scene: Node, page: SubViewport, disabled: bool) -> void:
+	var go: Button = Button.new()
+	go.name = "PageGo"
+	go.text = "Go"
+	go.position = Vector2(10, 10)
+	go.size = Vector2(50, 20)
+	go.disabled = disabled
+	go.focus_mode = Control.FOCUS_NONE
+	page.add_child(go)
+	go.owner = scene
+	go.unique_name_in_owner = true
+	go.pressed.connect(_page_pressed)
+
+
+## What a sheet view does: the face turns a click at its place on screen into the page's own point.
+func _forward(event: InputEvent, page: SubViewport) -> void:
+	var mouse: InputEventMouse = event as InputEventMouse
+	if mouse == null:
+		return
+	var local: InputEventMouse = mouse.duplicate() as InputEventMouse
+	local.position = mouse.position / 2.0
+	local.global_position = local.position
+	page.push_input(local, true)
+
+
+func _page_pressed() -> void:
+	PlayLog.log_event("fixture", "page.go", "PageGo pressed")
+	RunState.next_day()
+GDEOF
+page_adapter() { # page_adapter <the call run after start_run>: %PageGo is the progress action's node
+  replace_line "$work/saved-adapter" '\tawait wait_frames(1)' "\tawait wait_frames(1)\n\t$1" > "$work/adapter-page"
+  replace_line "$work/adapter-page" '\t\tactions.append({"id": "next_day", "label": "Next day", "kind": "ui", "node": "%NextDay", "progress": true})' \
+    '\t\tactions.append({"id": "next_day", "label": "Next day", "kind": "ui", "node": "%PageGo", "progress": true})' > tools/autoplay_adapter.gd
+  cat "$work/page-helpers.gd" >> tools/autoplay_adapter.gd
+}
+page_adapter '_make_page(true, true, false)'
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "a button in a SubViewport with a screen-rect provider is clicked as any ui action" 0 $? "$out"
+run="$(latest_run smoke-1)"
+if [ "$(grep -c '"event":"page.go"' "$run"/run-*.jsonl)" = "3" ] && grep -q '"route":"%PageGo"' "$run"/run-*.jsonl \
+    && grep -qE '"id":"PageGo","stable":true,"path":"ShopScreen/Face/Page/PageGo",[^}]*"rect":\[30,30,100,' "$run/0000-start.elements.json"; then
+  ok "it is in the element map at its place on screen, and the click the game forwards reaches it, three turns long"
+else
+  bad "the page's button is in the element map and its click reaches it" "$(grep -o '"id":"PageGo"[^}]*' "$run/0000-start.elements.json" 2>&1)"
+fi
+page_adapter '_make_page(true, false, false)'
+out="$(bash tools/autoplay.sh smoke --no-images --steps 3 2>&1)"; expect_status "a click the game doesn't forward into the SubViewport fails the run" 1 $? "$out"
+expect_output "as a drive finding that names the provider" "FAIL: smoke step [0-9]+: drive: the click on %PageGo \(next_day\) didn't reach it: .*SubViewport \(check the SubViewport's screen-rect provider\)" "$out"
+page_adapter '_make_page(false, true, false)'
+out="$(bash tools/autoplay.sh smoke --no-images --steps 3 2>&1)"; expect_status "a SubViewport with no provider stays out of the map, so its button can't be clicked" 1 $? "$out"
+expect_output "and the action's control is not on screen" "FAIL: smoke step [0-9]+: drive: the control %PageGo, next_day's route, isn't on screen" "$out"
+page_adapter '_make_page(true, true, true)'
+out="$(bash tools/autoplay.sh smoke --no-images --steps 3 2>&1)"
+expect_output "a disabled button in a provided SubViewport is refused as any ui action's" "FAIL: smoke step [0-9]+: drive: %PageGo is disabled, but list_actions\(\) offers next_day" "$out"
+page_adapter '_make_box(true)'
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "a button in a 2D SubViewportContainer is clicked through the same provider, the container forwarding the click" 0 $? "$out"
+run="$(latest_run smoke-1)"
+[ "$(grep -c '"event":"page.go"' "$run"/run-*.jsonl)" = "3" ] && ok "and every turn's click reached it" || bad "every turn's click through the container reached the button" "$(grep -c '"event":"page.go"' "$run"/run-*.jsonl)"
+cp "$work/saved-adapter" tools/autoplay_adapter.gd
 # With a display: screenshots and map images at the requested size, and the planted error's screenshot.
 out="$(bash tools/autoplay.sh smoke --size 1280x720 2>&1)"; status=$?
 if [ "$status" -eq 3 ]; then
@@ -3746,6 +7147,10 @@ out="$(bash tools/log_review.sh --latest 2>&1)"; expect_status "log review with 
 expect_output "and names where runs come from" "no autoplay run with a play log in playtesting/autoplay" "$out"
 
 
+}
+
+l_autoplay_check_a() {
+lane_game warm
 # --- autoplay in the check -----------------------------------------------------------------------
 # tools/check.cfg > [autoplay]: smoke played headless once the rest passed. A finding fails the check
 # only for a scenario under enforce; with the keys missing or check_in_check=false the check is what it
@@ -3771,6 +7176,15 @@ out="$(bash tools/check.sh 2>&1)"; expect_status "with enforce empty the same fi
 expect_output "and is a note, marked as not enforced" "check: note: \(not enforced\) autoplay: smoke step 1: error: Cannot call method 'queue_free'" "$out"
 grep -v '^enforce=' "$work/saved-check-cfg" > tools/check.cfg
 out="$(bash tools/check.sh 2>&1)"; expect_status "with check_in_check on and enforce missing, smoke is a note too" 0 $? "$out"
+}
+
+l_autoplay_check_b() {
+lane_game warm
+cp tools/check.cfg "$work/saved-check-cfg"; cp scripts/ui/shop_screen.gd "$work/saved-shop"
+set_autoplay() { # set_autoplay <check_in_check> <enforce as JSON>
+  sed -e "s/^check_in_check=.*/check_in_check=$1/" -e "s/^enforce=.*/enforce=$2/" "$work/saved-check-cfg" > tools/check.cfg
+}
+rm -rf "$runs"
 set_autoplay true '["*"]'
 cp "$work/saved-shop" scripts/ui/shop_screen.gd
 out="$(bash tools/check.sh 2>&1)"; expect_status "enforce [\"*\"] plays every scenario, clean" 0 $? "$out"
@@ -3796,6 +7210,11 @@ set_autoplay false '[]'
 cp "$work/saved-check-cfg" tools/check.cfg; cp "$work/saved-shop" scripts/ui/shop_screen.gd
 rm -rf "$runs"
 
+}
+
+l_autoplay_beside_a() {
+lane_game warm
+cp tools/check.cfg "$work/saved-check-cfg"; cp scripts/ui/shop_screen.gd "$work/saved-shop"
 # In a parallel run autoplay starts as soon as the import and the load pass are clean, in its own process
 # beside the test jobs (one fewer, so the CPU count holds); its result joins the report, with the exit
 # codes as they were. A serial run (--jobs 1) plays it after the tests.
@@ -3822,6 +7241,12 @@ printf 'extends "res://tools/test_case.gd"\n\nfunc test_autoplay_plays_beside_th
 out="$(bash tools/check.sh --jobs 3 2>&1)"; expect_status "a test that waits for autoplay's log passes: autoplay started while the tests ran" 0 $? "$out"
 expect_output "and counts as one more test" "13 tests passed" "$out"
 rm -f tests/test_zz_beside.gd tests/test_zz_beside.gd.uid
+}
+
+l_autoplay_beside_b() {
+lane_game warm
+cp scripts/ui/shop_screen.gd "$work/saved-shop"
+logs=".godot/godot-director"
 # A finding beside the tests fails the check as it does after them.
 after_line "$work/saved-shop" 'func _on_buy_pressed() -> void:' '\tvar receipt: Node = null\n\treceipt.queue_free()' > scripts/ui/shop_screen.gd
 out="$(bash tools/check.sh --jobs 3 2>&1)"; expect_status "a finding in smoke beside the tests fails the check" 1 $? "$out"
@@ -3850,6 +7275,10 @@ cp "$work/saved" scripts/systems/market.gd
 out="$(bash tools/check.sh 2>&1)"; expect_status "the check passes again after the beside-the-tests cases" 0 $? "$out"
 rm -rf "$runs"
 
+}
+
+l_autoplay_fresh() {
+cd "$work" || exit 1
 # A game made from the seeds, with nothing wired yet: the new project's seed has autoplay in the check
 # on, smoke exits 0 and says what to wire at each stage, the check passes, and nothing is written.
 fresh="$work/fresh-game"; mkdir -p "$fresh"
@@ -3894,4 +7323,72 @@ grep -q 'Wire autoplay' "$src/CHANGELOG.md" && grep -q 'enforce=\["smoke"\]' "$s
   && ok "and the changelog's upgrade step adds the \"Wire autoplay\" item and says how to turn the check on" || bad "the changelog's upgrade step for autoplay"
 
 
+}
+
+
+# --- the run ------------------------------------------------------------------------------------
+# The guard's time on a long file body is measured first, with nothing else of ours running. Then the
+# lanes start, the lanes that need no game first and then the longest of the rest; a lane that needs a
+# game waits for it to be made (prepare, above), and when every place is taken the next one waits for a
+# free place. The names after lane_start are the lanes' names (SELFTEST_ONLY); the order of lanes_print
+# is the order of the sections.
+cd "$work" || exit 1
+guard_slow_measure
+if [ -n "$godot" ]; then
+  lane_start prototype           l_prototype
+fi
+lane_start installer-c         l_installer_c
+lane_start stop-hook-session   l_stop_hook_session
+lane_start release-check       l_release_check
+lane_start orphan-report       l_orphan_report
+lane_start framework           l_framework
+[ -z "$godot" ] || lane_start autoplay-fresh l_autoplay_fresh
+lane_start installer-a         l_installer_a
+lane_start installer-b         l_installer_b
+lane_start guard               l_guard               base
+lane_start guard2              l_guard2              base
+if [ -n "$godot" ]; then
+  lane_start setup               l_setup               base
+  lane_start check-import-a      l_check_import_a      ready
+  lane_start autoplay            l_autoplay            warm
+  lane_start stop-hook           l_stop_hook           warm
+  lane_start check-import-b      l_check_import_b      warm
+  lane_start autoplay-beside-b   l_autoplay_beside_b   warm
+  lane_start check-faults-b      l_check_faults_b      warm
+  lane_start autoplay2-b         l_autoplay2_b         warm
+  lane_start par-c2              l_par_c2              warm
+  lane_start secrets-b           l_secrets_b           warm
+  lane_start capture-a2          l_capture_a2          warm
+  lane_start autoplay-check-a    l_autoplay_check_a    warm
+  lane_start autoplay-check-b    l_autoplay_check_b    warm
+  lane_start check-faults-a      l_check_faults_a      warm
+  lane_start autoplay-beside-a   l_autoplay_beside_a   warm
+  lane_start autoplay2-a         l_autoplay2_a         warm
+  lane_start par-d               l_par_d               warm
+  lane_start check-misc-a        l_check_misc_a        warm
+  lane_start pre-commit          l_precommit           warm
+  lane_start capture-a1          l_capture_a1          warm
+  lane_start capture-b           l_capture_b           warm
+  lane_start capture-a3          l_capture_a3          warm
+  lane_start par-b2              l_par_b2              warm
+  lane_start par-b1              l_par_b1              warm
+  lane_start check-misc-b        l_check_misc_b        warm
+  lane_start autoplay2-c         l_autoplay2_c         warm
+  lane_start par-c1              l_par_c1              warm
+  lane_start secrets-a           l_secrets_a           warm
+  lane_start par-a               l_par_a               warm
+  lane_start secrets-c           l_secrets_c           warm
+  lane_start playlog             l_playlog             warm
+fi
+
+lanes_print framework installer-a installer-b installer-c guard guard2 stop-hook-session release-check orphan-report
+if [ -z "$godot" ]; then
+  echo "check and hooks: skipped (pass the path to Godot 4.5+ to test them)"
+  lanes_times
+  finish
+fi
+lanes_print setup check-import-a check-import-b check-faults-a check-faults-b check-misc-a check-misc-b par-a par-b1 par-b2 par-c1 par-c2 par-d \
+  playlog stop-hook pre-commit secrets-a secrets-b secrets-c prototype capture-a1 capture-a2 capture-a3 capture-b autoplay \
+  autoplay2-a autoplay2-b autoplay2-c autoplay-check-a autoplay-check-b autoplay-beside-a autoplay-beside-b autoplay-fresh
+lanes_times
 finish

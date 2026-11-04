@@ -28,9 +28,13 @@
     ],
     "ask": [
       "Bash(git push *)",
+      "PowerShell(git push *)",
       "Bash(git rebase *)",
+      "PowerShell(git rebase *)",
       "Bash(git -c *)",
-      "Bash(git config *)"
+      "PowerShell(git -c *)",
+      "Bash(git config *)",
+      "PowerShell(git config *)"
     ],
     "deny": [
       "Read(~/.ssh/**)",
@@ -39,17 +43,43 @@
       "Read(~/.config/gh/**)",
       "Read(~/AppData/Roaming/GitHub CLI/**)",
       "Bash(git push --force *)",
+      "PowerShell(git push --force *)",
       "Bash(git push -f *)",
+      "PowerShell(git push -f *)",
       "Bash(git reset --hard *)",
+      "PowerShell(git reset --hard *)",
       "Bash(git commit --no-verify *)",
+      "PowerShell(git commit --no-verify *)",
       "Bash(git commit -n *)",
+      "PowerShell(git commit -n *)",
       "Bash(git *--output*)",
+      "PowerShell(git *--output*)",
       "Bash(git *--no-index*)",
+      "PowerShell(git *--no-index*)",
       "Bash(git *--ext-diff*)",
-      "Bash(git commit *--file*)"
+      "PowerShell(git *--ext-diff*)",
+      "Bash(git commit *--file*)",
+      "PowerShell(git commit *--file*)"
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/release-check.sh\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/orphan-report.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
@@ -63,6 +93,16 @@
       },
       {
         "matcher": "Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-git.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "PowerShell",
         "hooks": [
           {
             "type": "command",
@@ -88,6 +128,50 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-protected.sh\"",
             "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-touched.sh\" before",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-touched.sh\" after",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-touched.sh\" after",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-touched.sh\" after",
+            "timeout": 20
           }
         ]
       }

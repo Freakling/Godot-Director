@@ -43,11 +43,12 @@ The request is `prepare` (the default), `process`, or `all` (a full regression r
      It uses the item's own `(play)` outcome for what to try, so the usual collection of outcomes picks it up.
 
 ## Process
+Read the whole ticked file first and work out what it leads to. Write nothing until the human approves a summary of all of it (`design.md` › Summary and approval); a chat message or an "Other" answer before then re-opens the options. The summary lists the `B` items, the story rewrites and ticks (with user stories on), the records of design findings (decision lines and Open Questions), and the Processed line.
 1. **Works:** nothing to record; the ticked file is the record.
-2. **Broken:** make a `B` item.
+2. **Broken:** draft a `B` item.
    - Take the repro from the notes, set `Found in:` to the file, and, with user stories on, take `Stories:` from the item it was found under.
    - Judge the severity from the notes: `high` if it crashes or blocks play, `low` if it's cosmetic, `med` otherwise.
-   - If the notes say the rule itself should change, it's a design question instead: offer options (`design.md`), or add an Open Question.
+   - If the notes say the rule itself should change, it's a design question instead: offer options (`design.md`), or draft an Open Question.
 3. **Not ticked:** leave it. It comes back in the next round.
-4. **Stories** (with user stories on): record each story's ticks in `design/user-stories.md` as `design.md` › Still right? in a playtest or function check says.
-5. **Finish:** under the header, add `**Processed:** YYYY-MM-DD → B7, Q9, US-2` (the new items and questions, and the corrected stories). Commit the file, the new items and the stories as `docs: process function check YYYY-MM-DD` after the human approves.
+4. **Stories** (with user stories on): collect each story's ticks as `design.md` › Still right? in a playtest or function check says. The summary lists the Confirmed dates and the rewritten stories for `design/user-stories.md`.
+5. **Finish:** show the summary and wait. Once the human approves it, write everything it lists: under the header, add `**Processed:** YYYY-MM-DD → B7, Q9, US-2` (the new items and questions, and the corrected stories). Commit the file, the new items and the stories as `docs: process function check YYYY-MM-DD`; the approval of the summary is the approval to commit.

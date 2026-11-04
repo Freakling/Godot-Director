@@ -31,7 +31,7 @@ AI writes game code fast. Without structure, that speed goes wrong in familiar w
 
 ### Start here: write your design document
 
-Before you install, write your game design document in your own words. The [template](https://raw.githubusercontent.com/Freakling/Godot-Director/v4.9.0/project/design/director-gdd.md) shows what to cover; fill in what you know and leave the rest blank. Then install Godot Director below: onboarding reads your document and asks only about what you left open.
+Before you install, write your game design document in your own words. The [template](https://raw.githubusercontent.com/Freakling/Godot-Director/v4.10.0/project/design/director-gdd.md) shows what to cover; fill in what you know and leave the rest blank. Then install Godot Director below: onboarding reads your document and asks only about what you left open.
 
 ### Install
 
@@ -62,7 +62,7 @@ Either way, onboarding works out whether this is a new game, an existing game, a
 1. installs the files and finds your Godot;
 2. interviews you (new game) or reads the existing game, or reads the Game Design Document you wrote yourself in `design/director-gdd.md` (an alternative or an addition; it adds context for everything that follows);
 3. agrees with you who owns what, and whether the game uses user stories;
-4. ends with one commit for you to approve.
+4. shows you a summary of the records it will write, and ends with one commit for you to approve.
 
 Afterwards, restart Claude Code so the new commands load. Each new clone of the game later needs one command: `bash tools/setup-clone.sh`.
 
@@ -82,25 +82,25 @@ Only Godot Director's own files are replaced, and your edits to them are kept. W
 | "Do the next task" (`/next-task`) | Builds the next ready item (high-severity bugs first), proves it with the check, updates the records, and asks you to approve the commit. |
 | "Do the next 3 tasks", "Work through the queue", "Grab tasks until you're blocked" | The same, item after item, committing each without pausing, until one needs you. |
 | "Which open questions block development?" (`/design questions`) | Ranks the open design questions by what they unblock, with options and a recommendation for each. |
-| "Let's brainstorm {topic}" (`/design {topic}`) | A design session. Your decisions become GDD text, decision-log lines, user stories (if the game uses them) and task items. |
+| "Let's brainstorm {topic}" (`/design {topic}`) | A design session. Your decisions become GDD text, decision-log lines, user stories (if the game uses them) and task items, written once you approve a summary of them. |
 | "Validate the user stories" (`/design validate the stories`) | In a game that uses user stories: you confirm, correct or drop each story the recently built items served, and each one still unconfirmed. `/next-task` proposes it every 10 built items (`tools/check.cfg` › `[stories] every`); you can decline. Each playtest and function check also asks whether the stories behind what it covers are still right. |
 | "Prototype {idea}", "Let me try {change} quickly" (`/prototype {name}`, then `/prototype harvest {name}`) | Tries a change fast, before it's built against the design: a new git worktree beside your game on a `proto/{name}` branch, where you open a second session that is outside the loop (no items, records, reviews or check on its commits; the guard and the secrets scan stay on, and nothing is pushed or merged: a pre-push hook refuses a `proto/` branch). The game runs there: play it yourself, or let autoplay play it, and keep notes on what you tried and how it felt in its `PROTOTYPE.md`; with screens, `/ui-design` captures before and after let you compare. The harvest, back in your main session, is a design session on the prototype's diff and your notes: you decide what becomes GDD changes, decisions, user stories (if the game uses them) and items, which are built from main with the check and reviews, and the prototype's code is never merged. Then it offers to remove the worktree; deleting the branch is yours to run (`git branch -D`). A prototype needs gitleaks installed, since the secrets scan is the only gate on its commits. `/prototype list` shows the prototypes. |
-| "Research how other games handle {topic}", "What licence does this plugin use?" (`/research {question}`) | A read-only researcher looks into one question in a fresh context and saves a dated note in `design/research/`: the conclusion, the options, the sources with a confidence, and a recommendation. It informs; you decide. A design session asks it for facts it doesn't have, and you can queue a research item (`R1`, `R2`, ...) for later. |
+| "Research how other games handle {topic}", "What licence does this plugin use?" (`/research {question}`) | A read-only researcher looks into one question in a fresh context and, once you approve a summary of it, saves a dated note in `design/research/`: the conclusion, the options, the sources with a confidence, and a recommendation. It informs; you decide. A design session asks it for facts it doesn't have, and you can queue a research item (`R1`, `R2`, ...) for later. |
 | "Export the game", "Make a Web build" (`/export`) | Exports every export preset headless with the Godot your clone already knows, after checking the export templates are installed, into the gitignored `builds/` folder, and reports what it produced. Onboarding asks which platforms you ship to and where exports run (this machine, a build container, or a hosted service such as GitHub Actions); skip it and the GDD gets an open question, so `/design Q{n}` sets it up later. |
 | "Release the game", "Push a build to UAT", "Promote to production" (`/release`) | Exports the presets, then runs the upload command you supplied for each preset to its UAT branch or channel (`release.cfg` names the commands and the CI secrets they read; Godot Director knows no store). It goes to production only when you ask, with the check passing. `.godot-director/templates/release-workflow.yml` is a GitHub Actions workflow that exports on every change, uploads to UAT from `main`, and runs production behind a protected Environment you approve. Onboarding asks for the commands and secret names, or you skip it and the GDD gets an open question. |
 | "Playtest this", "Run the smoke test", "I just played, check the logs" (`/autoplay`) | The game plays itself through its real main scene, clicking and pressing keys as you would, and the assistant reads the play log into findings, each with a step, a screenshot and a command that replays it. After your own session it reviews your log the same way. |
-| "New playtest", "Process my playtest" (`/playtest`) | Creates a report from the template, or turns a filled-in one into bugs, score trends and design proposals. |
-| "Capture the screens", "Redesign the shop screen", "Process my drawing", "Verify the hero room" (`/ui-design`) | Renders each screen at each size with a numbered map of its elements and a layout lint (squeezed text, off-screen or unreachable controls, no default focus), and writes a starter drawing per screen. You draw over it in Excalidraw (free, no account) and save it in `director/ui/`; `process` reads exactly what you drew, asks about what it can't tell, and records the layout once in `design/ui/<screen>.md`; the build follows that spec, and `verify` captures the built screen, lists its deviations from the spec and writes a compare image of your drawing's screenshot beside the result. A catalog entry's `overlays` put a HUD an autoload draws into the shot. The lint can also run in the check (`tools/ui_capture.cfg` › `[lint]`: on for new games, off after an upgrade, per screen in `enforce`). Drawing is optional; capture and lint work without it. |
-| "Prepare a function check", "Process the function check" (`/function-check`) | A checklist of what's been built since the last round and needs a human eye; you tick Works or Broken. |
-| "Check the docs are aligned" (`/align`) | A consistency pass. Drift gets fixed; gaps and conflicts come to you. |
-| "Reset the design drift" (`/drift-reset`, later `/drift-reset postmortem`) | For when a pillar has been built two ways. Maps how the game really works, puts each conflict to you as a design call, and plans the rebuild as tasks. Align often, reset when you have to. |
+| "New playtest", "Process my playtest" (`/playtest`) | Creates a report from the template, or turns a filled-in one into bugs, score trends and design proposals, written once you approve a summary of them. |
+| "Capture the screens", "Redesign the shop screen", "Process my drawing", "Verify the hero room" (`/ui-design`) | Renders each screen at each size with a numbered map of its elements and a layout lint (squeezed text, off-screen or unreachable controls, no default focus), and writes a starter drawing per screen. You draw over it in Excalidraw (free, no account) and save it in `director/ui/`; `process` reads exactly what you drew, asks about what it can't tell, and, once you approve a summary, records the layout once in `design/ui/<screen>.md`; the build follows that spec, and `verify` captures the built screen, lists its deviations from the spec and writes a compare image of your drawing's screenshot beside the result. A catalog entry's `overlays` put a HUD an autoload draws into the shot. The lint can also run in the check (`tools/ui_capture.cfg` › `[lint]`: on for new games, off after an upgrade, per screen in `enforce`). Drawing is optional; capture and lint work without it. |
+| "Prepare a function check", "Process the function check" (`/function-check`) | A checklist of what's been built since the last round and needs a human eye; you tick Works or Broken, and processing it writes its bugs and story ticks once you approve a summary. |
+| "Check the docs are aligned" (`/align`) | A consistency pass. Drift fixes are written once you approve them; gaps and conflicts come to you. |
+| "Reset the design drift" (`/drift-reset`, later `/drift-reset postmortem`) | For when a pillar has been built two ways. Maps how the game really works, puts each conflict to you as a design call, and plans the rebuild as tasks; the design changes and the plan are written once you approve one summary of them. Align often, reset when you have to. |
 | "Prune the task list" (`/prune`) | Moves done items to `TASKS-archive.md`. |
 
 ```
 you play, or have an idea
         │
         ▼
-design session ── options + a recommendation ── you decide ──► GDD + decisions.md + TASKS.md items (+ user stories)
+design session ── options + a recommendation ── you decide ── you approve a summary ──► GDD + decisions.md + TASKS.md items (+ user stories)
         │
         ▼
 next task ── builds the next ready item ── tests ── bash tools/check.sh ──► commit (you approve)
@@ -119,7 +119,7 @@ bugs and design proposals ── you decide ── repeat
 ### Who does what
 | | Responsible for |
 |---|---|
-| **You** | Design, balance, art direction, priorities; playing and playtesting; approving commits. You have the final say on everything. |
+| **You** | Design, balance, art direction, priorities; playing and playtesting; approving summaries and commits. You have the final say on everything. |
 | **The AI assistant** | GDScript, scenes, `.tres` schemas, placeholder art, tests, running Godot and git, keeping the records true. |
 
 ### What gets installed in your game
@@ -171,7 +171,10 @@ your-game/
 │  Godot Director's, Claude Code adapter: updated on upgrade
 ├── .claude/skills/             /next-task and the rest: each points to its procedure
 ├── .claude/agents/             builder (builds each item in a fresh context) · reviewer and researcher (read-only)
-├── .claude/hooks/              runs the check before a turn ends; blocks risky git commands
+├── .claude/hooks/              runs the check before a turn ends, for a session that changed code;
+│                               blocks risky git commands; says at session start when the
+│                               project is behind the latest release, and lists the processes
+│                               an ended session left behind
 └── .claude/settings.json       permissions, hooks, timeouts
 ```
 Machine-local and gitignored: `tools/godot_bin.local` (the path to your Godot) and `.claude/settings.local.json`.
@@ -179,6 +182,7 @@ Machine-local and gitignored: `tools/godot_bin.local` (the path to your Godot) a
 ### The rules, briefly
 The full rules are in `.godot-director/rules.md`, and the assistant reads them every session.
 - **You decide design.** The assistant offers options and a recommendation. It never picks balance numbers (new values are marked `## PLACEHOLDER`), and never answers an open question itself.
+- **Nothing is written until you approve a summary of it.** A session holds your answers in the conversation, then shows every file, line, item and story it will write; a message that changes the scope re-opens the options, and only a yes to the summary as shown approves it.
 - **Areas you own are never generated.** Onboarding asks who owns art, audio, scenes, tunables and text. Human-owned areas get a documented placeholder policy instead of generated content. `director/` is an optional protected workspace; the AI reads it for context but never creates, modifies or deletes anything inside it.
 - **Each fact lives in one place,** and is updated in the same change that makes it untrue.
 - **Rules live in systems, not screens.** They sit in plain classes that tests can build directly. Saves are JSON in `user://`, never Resources, which can run scripts when loaded.
@@ -224,11 +228,11 @@ The game plays itself, so an assistant can playtest a change before you do, and 
 
 It exits 0 on pass, 1 on fail, and 3 when it can't run, including when a Godot run hits its timeout (`tools/check.cfg` › `[tests] timeout`, 600 seconds by default): the report then names the test file it was in, so a slow suite never reads as a failing one. An installed gitleaks that is too old (`[gitleaks] min-version`, 8.18.0 by default) or that can't scan, such as 8.19.0, also exits 3. It remembers the last passing state, so hooks don't run it again when nothing has changed. Game-specific settings go in `tools/check.cfg`, and extra steps (for example an existing GUT suite) go in `tools/check.local.sh`.
 
-- **One test file.** `bash tools/check.sh --only tests/<file>.gd` (repeat `--only` for more) runs just those tests, after the import pass when one is needed, under the check's time limit. It skips the rest of the check and records nothing for `--if-changed`, so a builder uses it while working and the full check still decides done. It is the supported way to run one test file: the Bash guard refuses a direct Godot run without a short `timeout`, and the refusal points here.
+- **One test file.** `bash tools/check.sh --only tests/<file>.gd` (repeat `--only` for more) runs just those tests, after the import pass when one is needed, under the check's time limit. It skips the rest of the check and records nothing for `--if-changed`, so a builder uses it while working and the full check still decides done. It is the supported way to run one test file: the guard refuses a direct Godot run without a short `timeout`, and the refusal points here.
 - **Parallel tests.** The tests run in several headless Godot processes at once, one per CPU core by default (`[tests] jobs`, or `--jobs N` for one run; `--jobs 1` runs them in one process). Each process takes a contiguous group of the sorted test files, in file order, with its own log in `.godot/godot-director/`, and the check merges them into one report. So a test must not depend on autoload or `user://` state that another test file left behind: it sets up what it reads. Test files also run at the same time and share one `user://` and one `.godot/`, so two of them must not write the same `user://` file: use a unique name per test (or per file, in a `no-split` file).
 - **Balanced and split runs (opt-in).** `[tests] balance = true` deals the test files longest first by their times in the last run instead (files with no time yet go first), each to the process with the least time so far. With it on, `[tests] split_over = <seconds>` splits a file whose whole time is over that into shards of its test methods, each in its own process, its tests counted once; a file whose tests share state across methods keeps a line `# gdir: no-split` among its first ten lines and runs whole. Every run records the times in `.godot/godot-director/test-times.tsv` (each file's whole time, which sizes the split; a split run that finishes all its shards lowers it to their sum but never raises it, and the shard count and longest shard of its last run), so turning it on works at once; `bash tools/check.sh --jobs 1` re-measures every file whole, which is how a file that got slower gets a larger split. Turn it on once no test depends on another having run first, when a few files hold up the run; where heavy files then compete for the CPU it may not help, so compare the slowest-files summary before and after.
 - **Slowest files.** Each test file's time is in the logs, and every run ends with the ten slowest files and their share of the test time, so you know which tests to make faster.
-- **Parallel sessions.** Give each building session its own git worktree (`git worktree add ../game-b`, then `bash tools/setup-clone.sh` there), so sessions don't share `.godot/`, the check's lock or each other's half-written files.
+- **Parallel sessions.** Give each building session its own git worktree (`git worktree add ../game-b`, then `bash tools/setup-clone.sh` there), so sessions don't share `.godot/`, the check's lock or each other's half-written files. The Stop hook runs the check only for a session that wrote a code, scene or data file itself, so a session that edits only documentation isn't held up by the other's code.
 
 ### This repository
 | Path | |
@@ -246,6 +250,6 @@ It exits 0 on pass, 1 on fail, and 3 when it can't run, including when a Godot r
 | `CLAUDE.md` | instructions for an assistant working on Godot Director itself |
 
 ## License
-Privacy: Godot Director runs on your machine and sends nothing anywhere; see [PRIVACY.md](PRIVACY.md).
+Privacy: Godot Director runs on your machine and sends nothing anywhere, apart from a release check at most once a day; see [PRIVACY.md](PRIVACY.md).
 
 MIT © 2026 Vikingur Saemundsson: see [LICENSE](LICENSE). You may use, fork and change Godot Director, including in commercial games, as long as the copyright notice and the license stay with it. Installed games carry a copy in `.godot-director/LICENSE`.
