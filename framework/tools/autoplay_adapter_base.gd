@@ -13,7 +13,11 @@ extends RefCounted
 ##             centre of the control `node` names (taken from the element map), or a press of the
 ##             InputMap action `input` (its first key, then pad button). An api action is performed
 ##             by perform(), which calls the game's systems directly, for speed.
-##   node      String: the unique node name (%EndTurn, or EndTurn) of the control to click
+##   node      String: the unique node name (%EndTurn, or EndTurn) of the control to click. A control
+##             drawn in a SubViewport (a page on a 3D sheet, a letter, a terminal) is in the element
+##             map only when the game gave that SubViewport a screen-rect provider: set_meta(
+##             &"godot_director_screen_rect", a Callable from a Rect2 in the SubViewport to its Rect2 on
+##             screen). See .godot-director/procedures/autoplay.md.
 ##   input     String: the InputMap action to press (a key or a pad button), instead of node
 ##   progress  bool: this is the main progress action (End Turn, Next Day); smoke and the end_turn
 ##             strategy end turns with it

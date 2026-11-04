@@ -6,6 +6,18 @@ extends RefCounted
 ## element_map() writes the mapped elements as an .elements.json file's text. They read the live scene
 ## tree and work with or without a display; tools/ui_capture.gd and tools/autoplay.gd use them.
 ## Don't edit this file in a project; thresholds are in tools/ui_capture.cfg › [lint].
+##
+## A SubViewport is drawn into a texture, so its controls aren't on screen where they say, and the map
+## leaves it out. A game that shows one on screen (a page on a 3D sheet, a 2D SubViewportContainer)
+## opts in by giving that SubViewport a provider (SCREEN_RECT_META): its controls are then mapped at
+## the rects the provider returns, and a ui action of tools/autoplay.gd can click them. The lint rules
+## still read each provided control in its own viewport's canvas, where its siblings, its clipping
+## parents and its viewport's edges are, and leave its focus to the game (a page keeps its own).
+
+## The meta of a SubViewport that holds a provider: a Callable taking a Rect2 in the SubViewport's own
+## canvas and returning the Rect2 where it shows on screen, in the canvas of the viewport the
+## SubViewport sits in. An empty Rect2 means the page isn't on screen now, and its controls are left out.
+const SCREEN_RECT_META: StringName = &"godot_director_screen_rect"
 
 ## The rules, in the order findings are listed for an element.
 const RULES: PackedStringArray = [
@@ -36,6 +48,7 @@ var _focus_order: Dictionary = {}        # Control -> position in focus traversa
 var _viewports: Array[Viewport] = []     # the screen's viewport and every visible embedded Window
 var _focusables: Dictionary = {}         # Viewport -> Array of its visible focusable controls
 var _scene_states: Dictionary = {}       # scene path -> SceneState, for hard-coded-position
+var _screens: Dictionary = {}            # Control -> the provider of the SubViewport it is drawn in
 
 
 ## Maps the screen shown in root. to_pixels turns its canvas coordinates into capture pixels; size
@@ -48,6 +61,7 @@ func map(root: Viewport, to_pixels: Transform2D, size: Vector2i) -> void:
 	_focus_order.clear()
 	_viewports.clear()
 	_focusables.clear()
+	_screens.clear()
 	capped = false
 	var visible: Array[Control] = []
 	var offsets: Dictionary = {}   # Control -> offset of its viewport in the root canvas
@@ -59,14 +73,18 @@ func map(root: Viewport, to_pixels: Transform2D, size: Vector2i) -> void:
 	for control: Control in visible:
 		if not _is_mapped(control):
 			continue
+		var canvas: Rect2 = _canvas_rect(control)
+		var placed: Rect2 = Rect2(canvas.position + (offsets[control] as Vector2), canvas.size)
+		if _screens.has(control):
+			placed = _provided(control, placed)
+			if not placed.has_area():
+				continue   # the page isn't on screen now, or the provider has no rect for this control
 		if _nodes.size() >= max_elements:
 			capped = true
 			break
 		_nodes.append(control)
-		var canvas: Rect2 = _canvas_rect(control)
 		_canvas.append(canvas)
-		var pixels: Rect2i = _pixel_rect(to_pixels, Rect2(canvas.position + (offsets[control] as Vector2), canvas.size))
-		elements.append(_element(root, control, _nodes.size(), pixels, size))
+		elements.append(_element(root, control, _nodes.size(), _pixel_rect(to_pixels, placed), size))
 	_map_pickables(root, to_pixels, size)
 
 
@@ -124,26 +142,50 @@ func _json_rows(rows: Array[Dictionary]) -> String:
 
 # --- the map ------------------------------------------------------------------------------------
 
-func _walk(node: Node, viewport: Viewport, offset: Vector2, visible: Array[Control], offsets: Dictionary) -> void:
+## screen is the provider of the SubViewport being walked, else an invalid Callable.
+func _walk(node: Node, viewport: Viewport, offset: Vector2, visible: Array[Control], offsets: Dictionary, screen: Callable = Callable()) -> void:
 	for child: Node in node.get_children():
 		var window: Window = child as Window
 		if window != null:
 			if window.visible:
 				_viewports.append(window)
 				_focusables[window] = []
-				_walk(window, window, offset + Vector2(window.position), visible, offsets)
+				_walk(window, window, offset + Vector2(window.position), visible, offsets, screen)
 			continue
-		if child is SubViewport:
-			continue   # drawn into a texture; its controls aren't on screen where they say
+		var page: SubViewport = child as SubViewport
+		if page != null:
+			# Drawn into a texture; its controls aren't on screen where they say. Only the game knows
+			# where, so a SubViewport with no provider (or inside one that has) is left out.
+			var provider: Callable = _provider(page)
+			if provider.is_valid() and not screen.is_valid():
+				_walk(page, page, Vector2.ZERO, visible, offsets, provider)
+			continue
 		var control: Control = child as Control
 		if control != null:
 			if not control.is_visible_in_tree():
 				continue
 			visible.append(control)
 			offsets[control] = offset
-			if control.focus_mode == Control.FOCUS_ALL:
+			if screen.is_valid():
+				_screens[control] = screen
+			if control.focus_mode == Control.FOCUS_ALL and _focusables.has(viewport):   # a page's focus is the game's
 				(_focusables[viewport] as Array).append(control)
-		_walk(child, viewport, offset, visible, offsets)
+		_walk(child, viewport, offset, visible, offsets, screen)
+
+
+## The provider the game gave this SubViewport (SCREEN_RECT_META), or an invalid Callable.
+func _provider(page: SubViewport) -> Callable:
+	if not page.has_meta(SCREEN_RECT_META):
+		return Callable()
+	var provider: Variant = page.get_meta(SCREEN_RECT_META)
+	return provider as Callable if provider is Callable and (provider as Callable).is_valid() else Callable()
+
+
+## Where a control of a provided SubViewport shows: what its provider makes of rect, which is the
+## control's in the SubViewport's canvas. An empty Rect2 when the provider gives none.
+func _provided(control: Control, rect: Rect2) -> Rect2:
+	var shown: Variant = (_screens[control] as Callable).call(rect)
+	return shown as Rect2 if shown is Rect2 else Rect2()
 
 
 ## Follows Tab from the default focus (the focus owner, else the first focusable control), then

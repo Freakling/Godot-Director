@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T50 · B6 · R1
+**Next IDs:** T51 · B6 · R1
 
 ## Queue
+
+### T50 · Autoplay and the layout lint reach controls drawn in a SubViewport · done · M · agent
+- Touches: framework/tools/ui_lint.gd, framework/tools/autoplay.gd, framework/tools/autoplay_adapter_base.gd, framework/.godot-director/procedures/autoplay.md, selftest.sh, CHANGELOG.md, TASKS.md
+- Done when: a game can give a SubViewport a provider, `set_meta(&"godot_director_screen_rect", callable)`, a `Callable` from a `Rect2` in the SubViewport's canvas to the `Rect2` where it shows on screen (an empty `Rect2()` while the page isn't shown), and `UiLint` then lists the SubViewport's controls as elements at their screen rects, so `_press()` clicks them as any other `ui` action, with the same disabled and reached checks, and a click the game doesn't forward into the SubViewport is a `drive` finding that names the provider; the lint's rules read each such control in its own SubViewport's canvas and leave its focus to the game (test) · a SubViewport with no provider is skipped as before, so a game with flat UI sees no change (test) · UI in a 2D SubViewportContainer is covered by the same provider, and a SubViewportContainer with none stays skipped, so no upgrade brings a game new lint findings (test) · `autoplay.md` says how a game adds a provider (check) · the entry sits under 4.10.0, with upgrade steps, and `selftest.sh` passes (check)
+- GDD: (none)
+- Source: Director-Driven-Development T311
 
 ### T49 · A session reports processes that outlived the shell that started them · done · M · agent
 - Touches: framework/.claude/hooks/orphan-report.sh (new), framework/.claude/settings.json, PRIVACY.md, README.md, selftest.sh, CHANGELOG.md

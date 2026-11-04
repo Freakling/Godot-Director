@@ -6,7 +6,10 @@ extends SceneTree
 ## Engine.has_meta("godot_director_autoplay") set, and drives it only through the game's adapter,
 ## res://tools/autoplay_adapter.gd (which extends tools/autoplay_adapter_base.gd): ui actions by real
 ## input (a click at the centre of the control's rect in the element map, or a key or pad button of
-## an InputMap action), api actions through perform(). The scenarios are in
+## an InputMap action), api actions through perform(). A control drawn in a SubViewport is in the
+## element map, and so a ui action's node, only when the game gave the SubViewport a screen-rect
+## provider (tools/ui_lint.gd: SCREEN_RECT_META); the click goes to its place on screen, and the game
+## forwards it into the SubViewport as it does a player's. The scenarios are in
 ## res://tools/autoplay_scenarios.gd (which extends tools/autoplay_catalog.gd); a smoke scenario is
 ## required. The project's own invariants are in res://tools/autoplay_invariants.gd.
 ##
@@ -859,8 +862,10 @@ func _press(action: Dictionary) -> String:
 	if is_instance_valid(control) and control.gui_input.is_connected(watch):
 		control.gui_input.disconnect(watch)
 	if not bool(reached["pressed"]):
-		return "the click on %%%s (%s) didn't reach it: something on top took it, it ignores the mouse, or its centre is clipped or off screen" % [
-			wanted, action["id"]]
+		var why: String = "something on top took it, it ignores the mouse, or its centre is clipped or off screen"
+		if is_instance_valid(control) and control.get_viewport() is SubViewport:
+			why += ", or the game doesn't forward a click there into its SubViewport (check the SubViewport's screen-rect provider)"
+		return "the click on %%%s (%s) didn't reach it: %s" % [wanted, action["id"], why]
 	return ""
 
 

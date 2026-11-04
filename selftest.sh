@@ -5786,6 +5786,11 @@ func screens() -> Array[Dictionary]:
 		{"id": "hardcoded", "title": "Hard-coded position", "scene": "res://ui_fixtures/hard_coded.tscn", "setup": _hardcoded},
 		{"id": "pickable", "title": "3D pickable", "setup": _pickable},
 		{"id": "rows", "title": "Rows built in code", "setup": _rows},
+		{"id": "sheet", "title": "SubViewport page with a provider", "setup": _sheet.bind("provided")},
+		{"id": "sheetnone", "title": "SubViewport page with no provider", "setup": _sheet.bind("none")},
+		{"id": "sheethidden", "title": "SubViewport page whose provider has no rect", "setup": _sheet.bind("hidden")},
+		{"id": "boxed", "title": "SubViewportContainer with a provider", "setup": _boxed.bind(true)},
+		{"id": "boxednone", "title": "SubViewportContainer with no provider", "setup": _boxed.bind(false)},
 		{"id": "withhud", "title": "With the HUD", "setup": _clean, "overlays": ["/root/Hud"]},
 		{"id": "withhud2", "title": "With the HUD, again", "setup": _clean, "overlays": ["/root/Hud"]},
 		{"id": "nohud", "title": "Without the HUD", "setup": _clean},
@@ -5935,6 +5940,59 @@ func _rows() -> Node:
 	return page
 
 
+## A button of a SubViewport, with a unique name (owned by the screen's page).
+func _in_viewport(page: Control, viewport: Viewport, button_name: String, x: float) -> void:
+	var button: Button = Button.new()
+	button.name = button_name
+	button.text = "Go"
+	button.position = Vector2(x, 20.0)
+	button.size = Vector2(160, 40)
+	viewport.add_child(button)
+	button.owner = page
+	button.unique_name_in_owner = true
+
+
+## A page in a SubViewport (800 x 600 rendered, laid out in 400 x 300 units, as a sheet's page is) that
+## the screen shows at half size in its lower right, with two buttons side by side. Mapped by their place
+## on the screen, they don't leave the page, overlap or hold the focus. mode "provided" gives the
+## SubViewport a provider, "hidden" a provider with no rect (the page isn't shown), "none" none.
+func _sheet(mode: String) -> Node:
+	var page: Control = _page()
+	var flat: Button = _button(page, "Flat")
+	flat.position = Vector2(20, 20)
+	focus_default(flat)
+	var viewport: SubViewport = SubViewport.new()
+	viewport.size = Vector2i(800, 600)
+	viewport.size_2d_override = Vector2i(400, 300)
+	viewport.size_2d_override_stretch = true
+	page.add_child(viewport)
+	_in_viewport(page, viewport, "PageGo", 20.0)
+	_in_viewport(page, viewport, "PageMore", 200.0)
+	if mode == "provided":
+		viewport.set_meta(&"godot_director_screen_rect", func(rect: Rect2) -> Rect2: return Rect2(Vector2(400, 200) + rect.position * 0.5, rect.size * 0.5))
+	elif mode == "hidden":
+		viewport.set_meta(&"godot_director_screen_rect", func(_rect: Rect2) -> Rect2: return Rect2())
+	return page
+
+
+## A SubViewportContainer at (300, 100), 200 x 100, with a button in its SubViewport; the provider maps
+## the page through the container's transform.
+func _boxed(provided: bool) -> Node:
+	var page: Control = _page()
+	focus_default(_button(page, "Flat"))
+	var container: SubViewportContainer = SubViewportContainer.new()
+	container.stretch = true
+	container.position = Vector2(300, 100)
+	container.size = Vector2(200, 100)
+	page.add_child(container)
+	var viewport: SubViewport = SubViewport.new()
+	container.add_child(viewport)
+	_in_viewport(page, viewport, "BoxGo", 10.0)
+	if provided:
+		viewport.set_meta(&"godot_director_screen_rect", func(rect: Rect2) -> Rect2: return container.get_global_transform_with_canvas() * rect)
+	return page
+
+
 ## Three controls placed by their anchors alone, with unique names a screen spec can list. Moving
 ## Gear by shift (a fraction of the screen) is the deviation verify must find.
 func _spec_fixture(shift: float) -> Node:
@@ -6003,6 +6061,27 @@ grep -q '"id":"Chest","path":"Node3D#[0-9]*/Chest","kind":"Area3D"' "$captures/p
 [ ! -e "$captures/clean@1280x720.png" ] && ok "--no-images writes no images" || bad "--no-images writes no images"
 grep -q '"id":"Label#1","stable":false,"path":"Control#[0-9]*/CenterContainer#0/VBoxContainer#0/Label#1"' "$captures/rows@1280x720.elements.json" 2>/dev/null \
   && ok "names a node Godot named by its class and place" || bad "names a node Godot named by its class and place" "$(head -n 8 "$captures/rows@1280x720.elements.json" 2>&1)"
+# A SubViewport is drawn into a texture, so the map leaves its controls out unless the game gave it a
+# screen-rect provider (tools/ui_lint.gd); then they are mapped where the provider puts them, a
+# SubViewportContainer's page too, and no rule reads that place as the control's own.
+for mapped in sheet:PageGo:820,420,160,40 sheet:PageMore:1000,420,160,40 boxed:BoxGo:620,240,320,80; do
+  IFS=: read -r pg_screen pg_control pg_rect <<< "$mapped"
+  grep -qE "\"id\":\"$pg_control\",\"stable\":true,[^}]*\"rect\":\[$pg_rect\]" "$captures/$pg_screen@1280x720.elements.json" 2>/dev/null \
+    && ok "a SubViewport with a provider: $pg_control is mapped at its place on screen" \
+    || bad "a SubViewport with a provider: $pg_control is mapped at its place on screen" "$(grep -o '"id":"[A-Za-z]*","stable":[a-z]*,[^}]*"rect":\[[0-9,]*\]' "$captures/$pg_screen@1280x720.elements.json" 2>&1)"
+done
+for left_out in sheetnone sheethidden boxednone; do
+  if grep -q '"name":"Flat"' "$captures/$left_out@1280x720.elements.json" 2>/dev/null && ! grep -qE '"id":"(PageGo|PageMore|BoxGo)"' "$captures/$left_out@1280x720.elements.json"; then
+    ok "$left_out: a SubViewport with no provider, or none with a rect, is left out of the map as before"
+  else
+    bad "$left_out: a SubViewport with no provider, or none with a rect, is left out of the map as before" "$(grep -o '"id":"[A-Za-z#0-9]*"' "$captures/$left_out@1280x720.elements.json" 2>&1)"
+  fi
+done
+for lint_file in sheet sheetnone sheethidden boxed boxednone; do
+  [ -f "$captures/$lint_file@1280x720.lint.txt" ] && [ ! -s "$captures/$lint_file@1280x720.lint.txt" ] \
+    && ok "$lint_file: no finding, though a provided page is read in its own canvas and keeps its focus to itself" \
+    || bad "$lint_file: no finding for the page" "$(cat "$captures/$lint_file@1280x720.lint.txt" 2>&1)"
+done
 cp "$captures/rows@1280x720.elements.json" "$work/rows-all"
 out="$(bash tools/ui_capture.sh rows --no-images --size 1280x720 2>&1)"
 cmp -s "$captures/rows@1280x720.elements.json" "$work/rows-all" && ok "a screen built in code maps the same alone as in --all" \
@@ -6944,6 +7023,105 @@ grep -q '"text":"step 1: Ledger (Page Down) (input ui_page_down)"' "$run"/run-*.
   && ok "both key presses register as their InputMap actions" || bad "the key routes" "$(grep -o '"text":"step [^"]*"' "$run"/run-*.jsonl | head -n 3)"
 cp "$work/saved-screens" tools/ui_screens.gd; cp "$work/saved-adapter" tools/autoplay_adapter.gd; cp "$work/saved-shop" scripts/ui/shop_screen.gd
 rm -f scenes/ledger.tscn scenes/ledger.tscn.uid scripts/ui/ledger_view.gd scripts/ui/ledger_view.gd.uid
+# Controls in a SubViewport: the shop gets a page (a SubViewport with a button, %PageGo, that ends the
+# day) on a flat face that shows it at twice its size and forwards the clicks into it, or a 2D
+# SubViewportContainer. Only a SubViewport with a screen-rect provider is in the element map, so only
+# then can a ui action click the button; the click must still reach it, and a disabled button is refused.
+cat > "$work/page-helpers.gd" <<'GDEOF'
+
+
+func _make_page(provided: bool, forwarded: bool, disabled: bool) -> void:
+	var scene: Node = tree.current_scene
+	var face: Control = Control.new()
+	face.name = "Face"
+	face.position = Vector2(10, 10)
+	face.size = Vector2(160, 80)
+	scene.add_child(face)
+	var page: SubViewport = SubViewport.new()
+	page.name = "Page"
+	page.size = Vector2i(80, 40)
+	face.add_child(page)
+	_page_button(scene, page, disabled)
+	if forwarded:
+		face.gui_input.connect(_forward.bind(page))
+	if provided:
+		page.set_meta(&"godot_director_screen_rect", func(rect: Rect2) -> Rect2: return Rect2(face.get_global_rect().position + rect.position * 2.0, rect.size * 2.0))
+
+
+func _make_box(provided: bool) -> void:
+	var scene: Node = tree.current_scene
+	var container: SubViewportContainer = SubViewportContainer.new()
+	container.stretch = true
+	container.position = Vector2(10, 10)
+	container.size = Vector2(160, 80)
+	scene.add_child(container)
+	var page: SubViewport = SubViewport.new()
+	page.name = "Page"
+	container.add_child(page)
+	_page_button(scene, page, false)
+	if provided:
+		page.set_meta(&"godot_director_screen_rect", func(rect: Rect2) -> Rect2: return container.get_global_transform_with_canvas() * rect)
+
+
+## The page's button takes no focus, so a click leaves the window's focus where it is, as on a sheet view.
+func _page_button(scene: Node, page: SubViewport, disabled: bool) -> void:
+	var go: Button = Button.new()
+	go.name = "PageGo"
+	go.text = "Go"
+	go.position = Vector2(10, 10)
+	go.size = Vector2(50, 20)
+	go.disabled = disabled
+	go.focus_mode = Control.FOCUS_NONE
+	page.add_child(go)
+	go.owner = scene
+	go.unique_name_in_owner = true
+	go.pressed.connect(_page_pressed)
+
+
+## What a sheet view does: the face turns a click at its place on screen into the page's own point.
+func _forward(event: InputEvent, page: SubViewport) -> void:
+	var mouse: InputEventMouse = event as InputEventMouse
+	if mouse == null:
+		return
+	var local: InputEventMouse = mouse.duplicate() as InputEventMouse
+	local.position = mouse.position / 2.0
+	local.global_position = local.position
+	page.push_input(local, true)
+
+
+func _page_pressed() -> void:
+	PlayLog.log_event("fixture", "page.go", "PageGo pressed")
+	RunState.next_day()
+GDEOF
+page_adapter() { # page_adapter <the call run after start_run>: %PageGo is the progress action's node
+  replace_line "$work/saved-adapter" '\tawait wait_frames(1)' "\tawait wait_frames(1)\n\t$1" > "$work/adapter-page"
+  replace_line "$work/adapter-page" '\t\tactions.append({"id": "next_day", "label": "Next day", "kind": "ui", "node": "%NextDay", "progress": true})' \
+    '\t\tactions.append({"id": "next_day", "label": "Next day", "kind": "ui", "node": "%PageGo", "progress": true})' > tools/autoplay_adapter.gd
+  cat "$work/page-helpers.gd" >> tools/autoplay_adapter.gd
+}
+page_adapter '_make_page(true, true, false)'
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "a button in a SubViewport with a screen-rect provider is clicked as any ui action" 0 $? "$out"
+run="$(latest_run smoke-1)"
+if [ "$(grep -c '"event":"page.go"' "$run"/run-*.jsonl)" = "3" ] && grep -q '"route":"%PageGo"' "$run"/run-*.jsonl \
+    && grep -qE '"id":"PageGo","stable":true,"path":"ShopScreen/Face/Page/PageGo",[^}]*"rect":\[30,30,100,' "$run/0000-start.elements.json"; then
+  ok "it is in the element map at its place on screen, and the click the game forwards reaches it, three turns long"
+else
+  bad "the page's button is in the element map and its click reaches it" "$(grep -o '"id":"PageGo"[^}]*' "$run/0000-start.elements.json" 2>&1)"
+fi
+page_adapter '_make_page(true, false, false)'
+out="$(bash tools/autoplay.sh smoke --no-images --steps 3 2>&1)"; expect_status "a click the game doesn't forward into the SubViewport fails the run" 1 $? "$out"
+expect_output "as a drive finding that names the provider" "FAIL: smoke step [0-9]+: drive: the click on %PageGo \(next_day\) didn't reach it: .*SubViewport \(check the SubViewport's screen-rect provider\)" "$out"
+page_adapter '_make_page(false, true, false)'
+out="$(bash tools/autoplay.sh smoke --no-images --steps 3 2>&1)"; expect_status "a SubViewport with no provider stays out of the map, so its button can't be clicked" 1 $? "$out"
+expect_output "and the action's control is not on screen" "FAIL: smoke step [0-9]+: drive: the control %PageGo, next_day's route, isn't on screen" "$out"
+page_adapter '_make_page(true, true, true)'
+out="$(bash tools/autoplay.sh smoke --no-images --steps 3 2>&1)"
+expect_output "a disabled button in a provided SubViewport is refused as any ui action's" "FAIL: smoke step [0-9]+: drive: %PageGo is disabled, but list_actions\(\) offers next_day" "$out"
+page_adapter '_make_box(true)'
+out="$(bash tools/autoplay.sh smoke --no-images 2>&1)"; expect_status "a button in a 2D SubViewportContainer is clicked through the same provider, the container forwarding the click" 0 $? "$out"
+run="$(latest_run smoke-1)"
+[ "$(grep -c '"event":"page.go"' "$run"/run-*.jsonl)" = "3" ] && ok "and every turn's click reached it" || bad "every turn's click through the container reached the button" "$(grep -c '"event":"page.go"' "$run"/run-*.jsonl)"
+cp "$work/saved-adapter" tools/autoplay_adapter.gd
 # With a display: screenshots and map images at the requested size, and the planted error's screenshot.
 out="$(bash tools/autoplay.sh smoke --size 1280x720 2>&1)"; status=$?
 if [ "$status" -eq 3 ]; then
