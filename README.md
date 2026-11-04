@@ -172,7 +172,8 @@ your-game/
 ├── .claude/skills/             /next-task and the rest: each points to its procedure
 ├── .claude/agents/             builder (builds each item in a fresh context) · reviewer and researcher (read-only)
 ├── .claude/hooks/              runs the check before a turn ends, for a session that changed code;
-│                               blocks risky git commands
+│                               blocks risky git commands; says at session start when the
+│                               project is behind the latest release
 └── .claude/settings.json       permissions, hooks, timeouts
 ```
 Machine-local and gitignored: `tools/godot_bin.local` (the path to your Godot) and `.claude/settings.local.json`.
@@ -248,6 +249,6 @@ It exits 0 on pass, 1 on fail, and 3 when it can't run, including when a Godot r
 | `CLAUDE.md` | instructions for an assistant working on Godot Director itself |
 
 ## License
-Privacy: Godot Director runs on your machine and sends nothing anywhere; see [PRIVACY.md](PRIVACY.md).
+Privacy: Godot Director runs on your machine and sends nothing anywhere, apart from a release check at most once a day; see [PRIVACY.md](PRIVACY.md).
 
 MIT © 2026 Vikingur Saemundsson: see [LICENSE](LICENSE). You may use, fork and change Godot Director, including in commercial games, as long as the copyright notice and the license stay with it. Installed games carry a copy in `.godot-director/LICENSE`.

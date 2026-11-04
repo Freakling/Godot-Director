@@ -1124,6 +1124,12 @@ if [ -x .claude/hooks/session-touched.sh ] && cut -f2 .godot-director/manifest |
 else
   bad "installs the session record hook, and git ignores the records it keeps" "$(cat .gitignore)"
 fi
+if [ -x .claude/hooks/release-check.sh ] && cut -f2 .godot-director/manifest | grep -q '^\.claude/hooks/release-check\.sh$' \
+    && grep -q 'release-check\.sh' .claude/settings.json && git check-ignore -q .godot/godot-director/latest-release; then
+  ok "installs the release check hook, wires it into settings.json, and git ignores the cache it keeps"
+else
+  bad "installs the release check hook, wires it into settings.json, and git ignores the cache it keeps" "$(cat .gitignore)"
+fi
 grep -q "Market Day" AGENTS.md && ok "keeps the project's own files" || bad "keeps the project's own files"
 [ -z "$(git status --porcelain)" ] && ok "adds no duplicate .gitignore/.gitattributes lines" || bad "adds no duplicate lines" "$(git status --porcelain)"
 out="$(bash "$src/install.sh" . 2>&1)"; expect_output "a second run changes nothing" "0 new, 0 updated" "$out"
@@ -4619,6 +4625,182 @@ else bad "the Stop hook and the record hook use no bash 4 form and no GNU-only t
 
 }
 
+l_release_check() {
+cd "$work" || exit 1
+# --- release check hook -------------------------------------------------------------------------
+# release-check.sh runs when a session starts and says when the installed version (the manifest's first line) is below the
+# latest release tag on GitHub. A throwaway project holds the manifest and the cache, and a stand-in git (first on PATH) records
+# each call and answers with the tags a case sets, so no case reaches the network. It needs no Godot, so it is a lane of its own.
+echo "release check hook"
+rc_hook="$src/framework/.claude/hooks/release-check.sh"
+rc_proj="$work/rc-project"; rc_stub="$work/rc-stub"; rc_tstub="$work/rc-tstub"
+rc_cache="$rc_proj/.godot/godot-director/latest-release"
+rc_url="https://github.com/Freakling/Godot-Director.git"
+mkdir -p "$rc_proj/.godot-director" "$rc_stub" "$rc_tstub"
+cat > "$rc_stub/git" <<'EOF'
+#!/bin/bash
+# a stand-in git: it records each call (the prompt setting and the arguments), then fails when git-fails exists, or prints the tags file
+printf '%s|%s\n' "${GIT_TERMINAL_PROMPT:-unset}" "$*" >> "$RC_STUB/calls"
+[ -e "$RC_STUB/git-fails" ] && exit 128
+while IFS= read -r line; do printf '%s\n' "$line"; done < "$RC_STUB/tags"
+exit 0
+EOF
+cat > "$rc_tstub/timeout" <<'EOF'
+#!/bin/bash
+# a stand-in timeout: it records its limit and runs the command
+printf '%s\n' "$1" >> "$RC_STUB/timeouts"
+shift
+exec "$@"
+EOF
+chmod +x "$rc_stub/git" "$rc_tstub/timeout"
+unset GODOT_DIRECTOR_RELEASE_CHECK
+export CLAUDE_PROJECT_DIR="$rc_proj" RC_STUB="$rc_stub"
+rc_sha="0123456789abcdef0123456789abcdef01234567"
+rc_set() { # rc_set <manifest first line> [tag…]: a project at that version, no cache, and a git that lists these tags
+  local t
+  rm -rf "$rc_proj/.godot" "$rc_stub/calls" "$rc_stub/timeouts" "$rc_stub/git-fails"
+  printf '%s\n# tools claude\n%s\t.claude/settings.json\n' "$1" "$rc_sha" > "$rc_proj/.godot-director/manifest"
+  shift
+  : > "$rc_stub/tags"
+  for t in "$@"; do printf '%s\trefs/tags/%s\n' "$rc_sha" "$t" >> "$rc_stub/tags"; done
+}
+rc_cache_is() { # rc_cache_is <version>: write the cache with that value
+  mkdir -p "$rc_proj/.godot/godot-director"; printf '%s\n' "$1" > "$rc_cache"
+}
+rc_run() { # the hook's output, stdout and stderr together; its exit status is the hook's
+  printf '{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}' | PATH="$rc_stub:$PATH" bash "$rc_hook" 2>&1
+}
+rc_calls() { # how many times git was called
+  local n=0 l
+  [ -f "$rc_stub/calls" ] && while IFS= read -r l; do n=$((n + 1)); done < "$rc_stub/calls"
+  echo "$n"
+}
+rc_json() { # rc_json <installed> <latest>: the line the hook prints
+  local t="Godot Director $1 is installed, and the latest release is $2. Ask the agent to upgrade it when it suits you."
+  printf '{"systemMessage":"%s","hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s Tell the human this once, in your first reply."}}' "$t" "$t"
+}
+
+# 1. Behind the latest release: it warns, with the text for the human and for Claude in one line of JSON, and looks the tags up once.
+rc_set "# godot-director 4.10.0" v4.9.0 v4.11.0 v4.10.0
+out="$(rc_run)"; status=$?
+expect_status "a project behind the latest release: the hook exits 0" 0 "$status" "$out"
+[ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && ok "and prints one line of JSON with the message for the human and the same text and the instruction for Claude" \
+  || bad "and prints one line of JSON with the message for the human and the same text and the instruction for Claude" "$out"
+[ "$(rc_calls)" = "1" ] && [ "$(<"$rc_stub/calls")" = "0|ls-remote --tags --refs $rc_url refs/tags/v*" ] \
+  && ok "it asked git once, for the release tags only, with the terminal prompt off" || bad "it asked git once, for the release tags only, with the terminal prompt off" "$(<"$rc_stub/calls")"
+[ "$(<"$rc_cache")" = "4.11.0" ] && ok "and kept the highest version in .godot/godot-director/latest-release" || bad "and kept the highest version in .godot/godot-director/latest-release" "$(<"$rc_cache")"
+rc_set "# godot-director 1.9.0" v1.14.0 v1.9.0
+out="$(rc_run)"; [ "$out" = "$(rc_json 1.9.0 1.14.0)" ] && ok "1.9.0 is below 1.14.0: versions compare field by field as numbers" || bad "1.9.0 is below 1.14.0: versions compare field by field as numbers" "$out"
+rc_set "# godot-director 1.14.0" v1.9.0
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && ok "and 1.14.0 is not below 1.9.0" || bad "and 1.14.0 is not below 1.9.0" "$out"
+rc_set "# godot-director 9.9.9" v10.0.0
+out="$(rc_run)"; [ "$out" = "$(rc_json 9.9.9 10.0.0)" ] && ok "9.9.9 is below 10.0.0" || bad "9.9.9 is below 10.0.0" "$out"
+
+# 2. Up to date, ahead, and nothing found: silent.
+rc_set "# godot-director 4.11.0" v4.10.0 v4.11.0
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && ok "the latest release installed: nothing is printed" || bad "the latest release installed: nothing is printed" "$out"
+rc_set "# godot-director 4.12.0" v4.11.0
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && ok "a newer install than the latest tag: nothing is printed" || bad "a newer install than the latest tag: nothing is printed" "$out"
+rc_set "# godot-director 4.10.0"
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && ok "a lookup that finds no tag: nothing is printed" || bad "a lookup that finds no tag: nothing is printed" "$out"
+
+# 3. A development snapshot's ' + unreleased (...)' tail is read as its version, and a CRLF manifest as the same one.
+rc_set "# godot-director 4.10.0 + unreleased (abc1234)" v4.11.0
+out="$(rc_run)"; [ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && ok "a manifest saying '4.10.0 + unreleased (abc1234)' is read as 4.10.0" || bad "a manifest saying '4.10.0 + unreleased (abc1234)' is read as 4.10.0" "$out"
+rc_set "# godot-director 4.10.0 + unreleased" v4.10.0
+out="$(rc_run)"; [ -z "$out" ] && ok "and a snapshot of the latest release is up to date" || bad "and a snapshot of the latest release is up to date" "$out"
+rc_set "# godot-director 4.10.0" v4.11.0
+printf '# godot-director 4.10.0\r\n# tools claude\r\n' > "$rc_proj/.godot-director/manifest"
+out="$(rc_run)"; [ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && ok "a manifest with CRLF line endings is read too" || bad "a manifest with CRLF line endings is read too" "$out"
+
+# 4. The cache: a fresh one is used without git, a day-old one is refreshed once, and the day's next start doesn't ask again.
+rc_set "# godot-director 4.10.0" v4.12.0
+rc_cache_is 4.11.0
+out="$(rc_run)"; status=$?
+[ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && [ "$(rc_calls)" = "0" ] && [ "$status" -eq 0 ] && ok "a fresh cache is used and git isn't called" || bad "a fresh cache is used and git isn't called" "$out"
+touch -t 202001010000 "$rc_cache"
+out="$(rc_run)"
+[ "$out" = "$(rc_json 4.10.0 4.12.0)" ] && [ "$(rc_calls)" = "1" ] && [ "$(<"$rc_cache")" = "4.12.0" ] \
+  && ok "a cache a day old calls git once and takes the new value" || bad "a cache a day old calls git once and takes the new value" "calls $(rc_calls): $out"
+out="$(rc_run)"; [ "$out" = "$(rc_json 4.10.0 4.12.0)" ] && [ "$(rc_calls)" = "1" ] && ok "and the next start the same day doesn't call it again" || bad "and the next start the same day doesn't call it again" "calls $(rc_calls): $out"
+rc_set "# godot-director 4.10.0" v4.12.0
+rc_cache_is "not a version"
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && [ "$(rc_calls)" = "0" ] && ok "a cache that doesn't hold a version is silent until it is a day old" || bad "a cache that doesn't hold a version is silent until it is a day old" "$out"
+
+# 5. A lookup that fails: nothing printed, exit 0, and the day's one try is spent; an old value is kept.
+rc_set "# godot-director 4.10.0" v4.12.0
+: > "$rc_stub/git-fails"
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && [ "$(rc_calls)" = "1" ] && [ -f "$rc_cache" ] && [ ! -s "$rc_cache" ] \
+  && ok "a failed git prints nothing, exits 0 and leaves an empty cache" || bad "a failed git prints nothing, exits 0 and leaves an empty cache" "exit $status, calls $(rc_calls): $out"
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && [ "$(rc_calls)" = "1" ] && ok "and doesn't call git again that day" || bad "and doesn't call git again that day" "exit $status, calls $(rc_calls): $out"
+rc_set "# godot-director 4.10.0" v4.12.0
+: > "$rc_stub/git-fails"
+rc_cache_is 4.11.0; touch -t 202001010000 "$rc_cache"
+out="$(rc_run)"; status=$?
+[ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && [ "$status" -eq 0 ] && [ "$(rc_calls)" = "1" ] && [ "$(<"$rc_cache")" = "4.11.0" ] \
+  && ok "a failed refresh keeps the old value, and still warns by it" || bad "a failed refresh keeps the old value, and still warns by it" "exit $status, calls $(rc_calls): $out"
+out="$(rc_run)"; [ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && [ "$(rc_calls)" = "1" ] && ok "and the old value's day starts again, so git isn't called a second time that day" || bad "and the old value's day starts again, so git isn't called a second time that day" "calls $(rc_calls): $out"
+rc_set "# godot-director 4.10.0" v4.12.0
+out="$(printf '{}' | PATH="/nonexistent" "$BASH" "$rc_hook" 2>&1)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && ok "a PATH with no git at all prints nothing and exits 0" || bad "a PATH with no git at all prints nothing and exits 0" "exit $status: $out"
+
+# 6. Only v<major>.<minor>.<patch> tags count.
+rc_set "# godot-director 4.10.0" v2.0.0-rc1 latest v4.11.0 v5.0.0-beta v4.12 v4.12.0.1 v4.13.0-rc1 nightly/v9.9.9 V9.0.0
+out="$(rc_run)"
+[ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && [ "$(<"$rc_cache")" = "4.11.0" ] && ok "tags of any other shape (-rc1, a name, two or four fields, a prefix, a capital V) are ignored" \
+  || bad "tags of any other shape (-rc1, a name, two or four fields, a prefix, a capital V) are ignored" "$out"
+rc_set "# godot-director 4.10.0" v2.0.0-rc1 latest
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && [ ! -s "$rc_cache" ] && ok "and with only such tags nothing is printed" || bad "and with only such tags nothing is printed" "$out"
+rc_set "# godot-director 4.10.0" v08.09.0
+out="$(rc_run)"; status=$?
+[ "$out" = "$(rc_json 4.10.0 8.9.0)" ] && [ "$status" -eq 0 ] && ok "a field with a leading zero is a decimal number, not an octal one" || bad "a field with a leading zero is a decimal number, not an octal one" "exit $status: $out"
+
+# 7. The time limit: 5 seconds when timeout exists, and the lookup still runs without it.
+rc_set "# godot-director 4.10.0" v4.11.0
+out="$(printf '{}' | PATH="$rc_tstub:$rc_stub:$PATH" bash "$rc_hook" 2>&1)"
+[ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && [ "$(<"$rc_stub/timeouts")" = "5" ] && ok "the lookup runs under timeout 5 when timeout exists" || bad "the lookup runs under timeout 5 when timeout exists" "$out"
+rc_set "# godot-director 4.10.0" v4.11.0
+out="$(printf '{}' | PATH="$rc_stub:/nonexistent" "$BASH" "$rc_hook" 2>&1)"
+[ "$out" = "$(rc_json 4.10.0 4.11.0)" ] && [ "$(rc_calls)" = "1" ] && [ ! -e "$rc_stub/timeouts" ] && ok "and without timeout on PATH it still looks the tags up" || bad "and without timeout on PATH it still looks the tags up" "calls $(rc_calls): $out"
+
+# 8. Off, and nothing to compare: silent, and git is never called.
+rc_set "# godot-director 4.10.0" v4.11.0
+out="$(printf '{}' | GODOT_DIRECTOR_RELEASE_CHECK=0 PATH="$rc_stub:$PATH" bash "$rc_hook" 2>&1)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && [ "$(rc_calls)" = "0" ] && [ ! -e "$rc_cache" ] && ok "GODOT_DIRECTOR_RELEASE_CHECK=0 turns the hook off: nothing printed, git not called" || bad "GODOT_DIRECTOR_RELEASE_CHECK=0 turns the hook off" "exit $status: $out"
+rc_set "# godot-director 4.10.0" v4.11.0
+rm -f "$rc_proj/.godot-director/manifest"
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && [ "$(rc_calls)" = "0" ] && ok "a project with no manifest: nothing printed, git not called" || bad "a project with no manifest: nothing printed, git not called" "exit $status: $out"
+printf '# tools claude\n%s\t.claude/settings.json\n' "$rc_sha" > "$rc_proj/.godot-director/manifest"
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && [ "$(rc_calls)" = "0" ] && ok "a manifest with no version line: nothing printed, git not called" || bad "a manifest with no version line: nothing printed, git not called" "exit $status: $out"
+rc_set "# godot-director 4.x" v4.11.0
+out="$(rc_run)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && [ "$(rc_calls)" = "0" ] && ok "and one whose version isn't three numbers" || bad "and one whose version isn't three numbers" "exit $status: $out"
+out="$(printf '{}' | CLAUDE_PROJECT_DIR="$work/no-such-folder" PATH="$rc_stub:$PATH" bash "$rc_hook" 2>&1)"; status=$?
+[ -z "$out" ] && [ "$status" -eq 0 ] && ok "a project folder that doesn't exist: nothing printed, exit 0" || bad "a project folder that doesn't exist: nothing printed, exit 0" "exit $status: $out"
+
+# 9. The project check never runs it, so a warning can't fail tools/check.sh; settings.json runs it at session start only.
+if ! grep -rq 'release-check' "$src/framework/tools" "$src/framework/.githooks" "$src/framework/.godot-director"; then ok "the project check and the git hooks don't run the release check, so a warning never fails tools/check.sh"
+else bad "the project check and the git hooks don't run the release check" "$(grep -rn 'release-check' "$src/framework/tools" "$src/framework/.githooks" "$src/framework/.godot-director")"; fi
+wiring="$(awk '/^    "[A-Za-z]+": \[/ { ev = $1; gsub(/[":]/, "", ev) } /"matcher"/ { split($0, a, "\""); m = a[4] }
+  /release-check\.sh/ { hit = ev ";" m; next } hit != "" && /"timeout"/ { t = $2; gsub(/[^0-9]/, "", t); print hit ";" t; hit = "" }' "$settings")"
+[ "$wiring" = "SessionStart;startup|resume;10" ] && ok "settings.json runs the release check at SessionStart, on startup and resume, with a timeout of 10 seconds" \
+  || bad "settings.json runs the release check at SessionStart, on startup and resume, with a timeout of 10 seconds" "$wiring"
+bash4=$(grep -nE '^[^#]*(\$\{[A-Za-z_0-9]+(\[[^]]*\])?(,,|\^\^)\}|(declare|local|typeset) +-[a-zA-Z]*A|(^|[;&| ])(mapfile|readarray) +|(^|[;&| ])coproc +[A-Za-z]|[[:space:]]\|&[[:space:]]|\$\{[A-Za-z_0-9@*]+(\[[^]]*\])?: -[0-9]|stat +-c|date +-d|sed +-i|readlink +-f|-printf|-delete)' \
+  "$rc_hook" || true)
+if [ -z "$bash4" ]; then ok "the release check uses no bash 4 form and no GNU-only tool flag"; else bad "the release check uses no bash 4 form and no GNU-only tool flag" "$bash4"; fi
+
+}
+
 l_precommit() {
 lane_game warm
 git add -A && { git_q commit -qm "state for the hook tests" >/dev/null 2>&1 || true; }
@@ -6739,6 +6921,7 @@ if [ -n "$godot" ]; then
 fi
 lane_start installer-c         l_installer_c
 lane_start stop-hook-session   l_stop_hook_session
+lane_start release-check       l_release_check
 lane_start framework           l_framework
 [ -z "$godot" ] || lane_start autoplay-fresh l_autoplay_fresh
 lane_start installer-a         l_installer_a
@@ -6779,7 +6962,7 @@ if [ -n "$godot" ]; then
   lane_start playlog             l_playlog             warm
 fi
 
-lanes_print framework installer-a installer-b installer-c guard guard2 stop-hook-session
+lanes_print framework installer-a installer-b installer-c guard guard2 stop-hook-session release-check
 if [ -z "$godot" ]; then
   echo "check and hooks: skipped (pass the path to Godot 4.5+ to test them)"
   lanes_times
