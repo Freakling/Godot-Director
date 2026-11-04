@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T43 · B6 · R1
+**Next IDs:** T44 · B6 · R1
 
 ## Queue
+
+### T43 · The variable command name rule skips a global option's value · done · XS · agent
+- Touches: framework/.claude/hooks/guard-git.sh, selftest.sh, CHANGELOG.md
+- Done when: `cname_judge` skips the value of each global option that `var_segment` skips (`-C`, `-c`, `--git-dir`, `--work-tree`, `--namespace`, `--config-env`, `--attr-source`, `--super-prefix`) before it looks for the git subcommand (check) · `G=$(cat tools/godot_bin.local); "$G" --work-tree . restore .` and `G=$(cat tools/godot_bin.local); "$G" --git-dir .git branch -D x` are blocked, and `G=$(cat tools/godot_bin.local); timeout 120 "$G" --headless --script tests/run.gd` still passes, with their cases in `selftest.sh` (check) · `selftest.sh` passes (check)
+- GDD: (none)
+- Source: Director-Driven-Development T289
 
 ### T42 · The selftest runs in under fifteen minutes · done · M · agent
 - Touches: selftest.sh

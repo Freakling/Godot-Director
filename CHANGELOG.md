@@ -20,6 +20,8 @@ Each entry lists what changed. **Upgrade steps** at the end of an entry cover bo
   - **Upgrade steps:** none; the rules, the procedures, the design skill and `ONBOARDING.md` are framework-owned and arrive with the upgrade (restart Claude Code so the skill's new description loads).
 - **The docs no longer call it the Bash guard.** The guard reads the PowerShell tool's commands as well as Bash's, so `rules.md`, the builder agent and the README say "the guard" where they said "the Bash guard".
   - **Upgrade steps:** none; `rules.md` and the builder agent are framework-owned and arrive with the upgrade.
+- **A variable as a command's name is judged past a global option's value.** The guard's rule for a variable as a command's name read the word after `--git-dir`, `--work-tree` and `--namespace` as the git subcommand, so the real subcommand after it went unjudged: `"$G" --work-tree . restore .` and `"$G" --git-dir .git branch -D x` passed when `G` held git. The rule now skips the value of each global option the git command rule skips (`-C`, `-c`, `--git-dir`, `--work-tree`, `--namespace`, `--config-env`, `--attr-source` and `--super-prefix`), so both are blocked, and the Godot run through `G=$(cat tools/godot_bin.local)` still passes.
+  - **Upgrade steps:** none; the hook is framework-owned and arrives with the upgrade.
 
 ## 4.9.0 (2026-11-02)
 

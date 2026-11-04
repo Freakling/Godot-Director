@@ -513,8 +513,9 @@ cname_judge() {
         ((${vdep[vi]:-0} > 0)) && block "$MSG_CNSCR"
         nm="${vbn[p]}"; cn_asg "$nm" && block "$MSG_CNASG"
       fi
-      # The words after the name, as git reads them: the subcommand is the first word that isn't an option (-C and -c take a
-      # value), and a destructive long flag is blocked anywhere after the name.
+      # The words after the name, as git reads them: the subcommand is the first word that isn't an option, and a destructive long
+      # flag is blocked anywhere after the name. A global option that takes a value takes the word after it, as var_segment reads
+      # it (Director-Driven-Development T289), so --git-dir .git or --work-tree . is no subcommand.
       j=$((p + 1)); sub_done=0
       while ((j <= b)); do
         w="${vbw[j]}"
@@ -522,7 +523,7 @@ cname_judge() {
           --force* | --hard | --mirror | --delete* | --no-veri* | --discard-changes | --upload-pack* | --receive-pack* | --exec*) block "$MSG_CNAME" ;;
         esac
         if ((!sub_done)); then
-          if [[ $w == -[Cc] ]]; then ((j += 2)); continue; fi
+          case $w in -C | -c | --git-dir | --work-tree | --namespace | --config-env | --attr-source | --super-prefix) ((j += 2)); continue ;; esac
           if [[ $w == -* ]]; then ((j++)); continue; fi
           sub_done=1
           [[ " $cn_sub " == *" $w "* ]] && block "$MSG_CNAME"

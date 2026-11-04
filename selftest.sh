@@ -1718,10 +1718,16 @@ done
 # line, in a wrapper's script, a substitution or a heredoc body a shell runs, and in the PowerShell tool. A message or a file
 # body that names one is text, and a timeout of 280 seconds or less before the run, or above its wrapper, bounds it. The Godot
 # path that tools/setup-clone.sh saves, G=$(cat tools/godot_bin.local), is read as $GODOT_BIN is (B45 reads any other
-# variable as a command's name), so a git subcommand or a destructive flag after it is still blocked.
+# variable as a command's name), so a git subcommand or a destructive flag after it is still blocked. A global option that takes a
+# value (--git-dir, --work-tree, --namespace) takes the word after it, which is no subcommand, and the subcommand after that is
+# judged (Director-Driven-Development T289).
 for cmd in \
     'G=$(cat tools/godot_bin.local); $G push --force' \
     'G=$(cat tools/godot_bin.local); "$G" --force' \
+    'G=$(cat tools/godot_bin.local); "$G" --work-tree . restore .' \
+    'G=$(cat tools/godot_bin.local); "$G" --git-dir .git branch -D x' \
+    'G=$(cat tools/godot_bin.local); "$G" --namespace x restore .' \
+    'G=$(cat tools/godot_bin.local); "$G" --config-env x=Y worktree remove -f x' \
     'G=$(cat tools/godot_bin.local); timeout 60 "$G" commit -m x' \
     'G=$(cat x.txt); timeout 120 "$G" --headless --import' \
     'G=$(cat tools/godot_bin.local); G=$(cat x); timeout 60 "$G" --headless --import' \
@@ -1754,6 +1760,7 @@ for cmd in \
     'G="$(cat tools/godot_bin.local)"; timeout 60 "$G" --headless --import' \
     'G=$(head -n 1 tools/godot_bin.local); timeout 60 "$G" --headless --import' \
     'G=$(cat tools/godot_bin.local); timeout 2m "$G" --version' \
+    'G=$(cat tools/godot_bin.local); timeout 120 "$G" --headless --script tests/run.gd' \
     'timeout 240 bash -c "godot --headless --script x.gd"' \
     'timeout 120 "C:/Program Files/Godot/godot.exe" --headless --import' \
     'git commit -m "run godot --headless under timeout" -- a.md' \
