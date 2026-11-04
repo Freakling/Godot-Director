@@ -2,6 +2,11 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
+## Unreleased
+
+- **The guard blocks a Python with nothing to run.** `python3 -`, `python` or `py -3` with no script, no `-c`, no `-m` and nothing fed to it waits for input that never comes, and a time limit doesn't change that. The guard blocked only a Python reading a heredoc; now this form is blocked too, behind a path, a wrapper or a chain. `python3 - < x.py`, `cat x.py | python3 -`, a script file, `python3 --version` and `command -v python3` still pass, and so does a heredoc that ends in a line named `PY`.
+  - **Upgrade steps:** none; the hook is framework-owned and arrives with the upgrade.
+
 ## 4.10.0 (2026-11-04)
 
 - **The guard and the deny rules reach the PowerShell tool.** Claude Code's PowerShell tool has its own name, so a guard wired to the `Bash` and `Monitor` matchers never saw its commands, and a `Bash(...)` deny or ask rule didn't cover the same command there. `.claude/settings.json` now runs `guard-git.sh` for a `PowerShell` matcher too, next to the `Bash` and `Monitor` ones, and each Bash deny and ask rule has a `PowerShell(...)` twin. The allow list names no PowerShell command, so PowerShell runs nothing without a prompt. `selftest.sh` checks the matchers, each twin and the allow list, and runs a selection of the guard's cases in the PowerShell tool too: the destructive git commands and the file-writing flags, the credential-store readers, backtick continuations and comments, substitutions, wrappers, wait loops and pauses, `Invoke-Expression`, a Godot run, and Godot Director's own branch, worktree and whole-tree restore rules.

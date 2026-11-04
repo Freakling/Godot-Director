@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T51 · B6 · R1
+**Next IDs:** T52 · B6 · R1
 
 ## Queue
+
+### T51 · The guard blocks a Python with nothing to run · done · M · agent
+- Touches: framework/.claude/hooks/guard-git.sh, selftest.sh, CHANGELOG.md, TASKS.md
+- Done when: the guard blocks `python3 -`, `python`, `py -3` and the like with no script, no `-c`, no `-m` and nothing fed to it, bare, behind a path, a quote or a wrapper, in a chain, with a time limit or a redirect (test) · `python3 - < x.py`, a pipe into it, a script file, `--version` and `command -v python3` pass (test)
+- GDD: (none)
+- Source: Director-Driven-Development B66
 
 ### T50 · Autoplay and the layout lint reach controls drawn in a SubViewport · done · M · agent
 - Touches: framework/tools/ui_lint.gd, framework/tools/autoplay.gd, framework/tools/autoplay_adapter_base.gd, framework/.godot-director/procedures/autoplay.md, selftest.sh, CHANGELOG.md, TASKS.md
