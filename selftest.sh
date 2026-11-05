@@ -577,6 +577,9 @@ grep -q 'When the human skips it' "$releaseproc" && grep -q 'Depends on: Q<n>' "
 grep -q 'environment: production' "$proc/templates/release-workflow.yml" && grep -q 'tools/release\.sh uat' "$proc/templates/release-workflow.yml" || wired="$wired release-workflow.yml"
 [ -z "$wired" ] && ok "release is wired into the rules, the skill, the docs, the onboarding skip path and the workflow template" \
   || bad "release isn't wired into:$wired"
+unpinned="$(grep -E '^[[:space:]]*(- )?uses:' "$proc/templates/release-workflow.yml" | grep -Ev 'uses: [^@ ]+@[0-9a-f]{40} # v[0-9]+(\.[0-9]+)*$')"
+[ -z "$unpinned" ] && ok "every action in the release workflow template is pinned to a full commit SHA, with its version in a comment" \
+  || bad "release-workflow.yml has actions not pinned by commit" "$unpinned"
 rel="$work/release"
 mkdir -p "$rel/builds/Web" "$rel/builds/Empty"
 printf 'x\n' > "$rel/builds/Web/index.html"

@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T53 · B6 · R1
+**Next IDs:** T54 · B6 · R1
 
 ## Queue
+
+### T53 · The release workflow template pins every action by commit · done · S · agent
+- Touches: framework/.godot-director/templates/release-workflow.yml, selftest.sh, CHANGELOG.md, TASKS.md
+- Done when: every `uses:` in the template is a full commit SHA with its version in a trailing comment, each SHA read from the action's own repository (check) · the selftest fails on a template with an unpinned action and passes on this one (check)
+- GDD: (none)
+- Source: Director-Driven-Development T318
 
 ### T52 · The guard reads a quoted or backslash path to git or a shell as it reads the bare name · done · M · agent
 - Touches: framework/.claude/hooks/guard-git.sh, selftest.sh, CHANGELOG.md, TASKS.md

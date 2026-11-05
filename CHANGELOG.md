@@ -6,6 +6,8 @@ Each entry lists what changed. **Upgrade steps** at the end of an entry cover bo
 
 - **The guard reads a quoted or backslash path to git or a shell as it reads the bare name.** `"C:\Program Files\Git\bin\git.exe" -c core.pager=calc log`, `C:\Git\bin\git.exe fetch --upload-pack=calc origin`, `"C:\Program Files\Git\bin\bash.exe" -c "git push --force"` and `C:\Git\bin\sh.exe -c ...` are blocked as `git -c ...`, `git fetch --upload-pack=...` and `bash -c ...` are. The name is the path's last part without `.exe`, in any case, with forward slashes or backslashes, behind a prefix such as `env` or `timeout`, in the Bash and the PowerShell tool. A path that is only an argument or a message (`echo "C:\Program Files\Git\bin\bash.exe -c foo"`, `"C:\Program Files\tool\app.exe" -c x`) still passes.
   - **Upgrade steps:** none; the hook is framework-owned and arrives with the upgrade.
+- **The release workflow template pins every action by commit.** `release-workflow.yml` named its actions by tags such as `actions/checkout@v4`, and a tag can move, so a build ran whatever the tag pointed at that day. Each `uses:` is now a full commit SHA with its version in a trailing comment, at the commit its tag points at today, and the self-test checks that every action stays pinned this way.
+  - **Upgrade steps:** if the game has `.github/workflows/release.yml`, replace each `uses:` line in it with the template's from `.godot-director/templates/release-workflow.yml`: the same actions at the same major versions. For a version of the game's own, read that version's commit from the action's repository and pin it the same way.
 
 ## 4.10.1 (2026-11-04)
 
