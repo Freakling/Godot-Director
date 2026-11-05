@@ -4,9 +4,15 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T52 · B6 · R1
+**Next IDs:** T53 · B6 · R1
 
 ## Queue
+
+### T52 · The guard reads a quoted or backslash path to git or a shell as it reads the bare name · done · M · agent
+- Touches: framework/.claude/hooks/guard-git.sh, selftest.sh, CHANGELOG.md, TASKS.md
+- Done when: `"C:\Program Files\Git\bin\git.exe" -c core.pager=calc log` and `--upload-pack` with a quoted git path, and `"C:\Program Files\Git\bin\bash.exe" -c "git push --force"` and `C:\Git\bin\bash.exe -c ...`, are blocked as the bare names are, with their cases (test) · the selftest passes (check)
+- GDD: (none)
+- Source: Director-Driven-Development T294
 
 ### T51 · The guard blocks a Python with nothing to run · done · M · agent
 - Touches: framework/.claude/hooks/guard-git.sh, selftest.sh, CHANGELOG.md, TASKS.md
