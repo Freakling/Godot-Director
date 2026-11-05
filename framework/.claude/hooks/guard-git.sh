@@ -346,7 +346,10 @@ subst_segment() {
   local cw=0 gi=-1 j rest idx
   while ((cw < n)) && [[ ${w[cw]} =~ ^(([A-Za-z_][A-Za-z0-9_]*=.*)|\$|env|time|nohup|exec|command|sudo|if|then|else|elif|do|while|until|!)$ ]]; do ((cw++)); done
   [[ ${w[cw]:-} == *$'\x1a'* ]] && block "$MSG_CMD"
-  for ((j = 0; j < n; j++)); do [[ ${w[j]} == [Gg][Ii][Tt] ]] && { gi=$j; break; }; done
+  # git is the word git anywhere, or a path-qualified or .exe git as the command's name (cw), where /usr/bin/git can run.
+  for ((j = 0; j < n; j++)); do
+    [[ ${w[j]} == [Gg][Ii][Tt] ]] || { ((j == cw)) && [[ ${w[j]} =~ $gitw_re ]]; } && { gi=$j; break; }
+  done
   ((gi < 0)) && return 0
   bsk=$((gi + 1))
   while ((bsk < n)); do case ${w[bsk]} in -C | -c | --git-dir | --work-tree | --namespace | --config-env | --attr-source | --super-prefix) ((bsk += 2)) ;; -*) ((bsk++)) ;; *) break ;; esac; done
@@ -385,6 +388,21 @@ vsh_pre_re='\$[^[:space:]]*[[:space:]]+-[a-zA-Z]*[cC]'
 # the keywords that begin a command (if, then, do, {, !, and the rest), so `then $G push` and `xargs $G push` name $G (B45).
 vsh_prefix_re='^([A-Za-z_][A-Za-z0-9_]*\+?=.*|env|exec|command|sudo|nohup|time|timeout|nice|ionice|stdbuf|xargs|builtin|setsid|watch|doas|coproc|if|then|else|elif|do|while|until|!|\{|-.*|[0-9.]+[smhd]?)$'
 vsh_opt_re='^-[a-zA-Z]*[cC]'
+# The git name as a word: in any case, after a path (/usr/bin/git, C:\Program Files\Git\bin\git.exe) and with .exe (T294).
+gitw_re='^(.*[/\\])?[Gg][Ii][Tt](\.[Ee][Xx][Ee])?$'
+# gitw_find <first word> <last word>: sets gitw_i to the index in vbw of the git in one segment, or -1. It is the word git (in any
+# case) anywhere, or a path-qualified or .exe git as the command's name: after the NAME=value words and the prefixes vsh_prefix_re
+# allows. A path that ends in git elsewhere (cp $SRC/git $DST) is an argument.
+gitw_find() {
+  local j cp=1 w
+  gitw_i=-1
+  for ((j = $1; j <= $2; j++)); do
+    w="${vbw[j]}"
+    if [[ $w == [Gg][Ii][Tt] ]] || { ((cp)) && [[ $w =~ $gitw_re ]]; }; then gitw_i=$j; return 0; fi
+    [[ $w =~ ^[A-Za-z_][A-Za-z0-9_]*\+?= || $w =~ $vsh_prefix_re ]] || cp=0
+  done
+  return 0
+}
 
 # --- A variable as a command's name (B45) ------------------------------------------------------
 # A command whose name is a variable runs what the variable holds. When the command assigns it a plain value, var_resolve
@@ -596,7 +614,7 @@ vend() {
     if ((skipnext)); then skipnext=0
     else vbs+=("$seg"); vbw+=("$w"); vbu+=("$uq"); vbn+=("$vn"); fi
   fi
-  st=0; w=""; uq=0; vn=""
+  st=0; w=""; uq=0; vn=""; pb=0
 }
 vref() { # at a $ (s[i]): a variable reference adds \x07 to the word and moves past itself; returns 1 when there is none
   local rest="${s:i}"
@@ -610,7 +628,7 @@ vref() { # at a $ (s[i]): a variable reference adds \x07 to the word and moves p
   return 1
 }
 var_walk() {
-  local s="$1" L=${#1} i=0 c n ch k content w="" uq=0 st=0 seg=0 skipnext=0 inq=0 vn=""
+  local s="$1" L=${#1} i=0 c n ch k content w="" uq=0 st=0 seg=0 skipnext=0 inq=0 vn="" pb=0
   local sesc='\'
   [[ $tool == PowerShell ]] && sesc='`'
   vbs=(); vbw=(); vbu=(); vbn=()
@@ -643,6 +661,8 @@ var_walk() {
       "$sesc")
         if [[ -z $n ]]; then ((i++))
         elif [[ $n == "$nl" ]]; then ((i += 2))
+        elif [[ $tool != PowerShell && $n == [[:alnum:]_.~\\-] ]] && { ((pb)) || [[ $w =~ ^([A-Za-z]:|\.\.?|~)$ || ( -z $w && $n == "$sesc" ) ]]; }; then
+          w+="$sesc"; pb=1; st=1; ((i++))   # T294: a backslash path (C:\Git\bin\git.exe) keeps its backslashes, so the name is its last part
         else w+="$n"; st=1; ((i += 2)); fi ;;
       "'")
         k=$((i + 1)); content=""
@@ -683,7 +703,7 @@ vtaker() {
 # option before it, after --, or as a push's branch after the remote (npos counts the words before it after the subcommand).
 var_segment() {
   local a=$1 b=$2 gi=-1 j sub si=-1 npos=0 prev="" w p
-  for ((j = a; j <= b; j++)); do [[ ${vbw[j]} == [Gg][Ii][Tt] ]] && { gi=$j; break; }; done
+  gitw_find "$a" "$b"; gi=$gitw_i
   ((gi < 0)) && return 0
   j=$((gi + 1))
   while ((j <= b)); do
@@ -748,7 +768,7 @@ MSG_CFGVAR="a variable as a git -c or --config-env key holds a name the guard ca
 MSG_CFGSUB="a command substitution as a git -c or --config-env key prints a name the guard can't read: write the key out"
 MSG_ENVRUN="a variable that names a program git runs (GIT_PAGER, GIT_EDITOR, GIT_SSH_COMMAND, GIT_CONFIG_*, EDITOR, PAGER and the like) is set on a git command, and the guard can't see which program runs"
 # cfg_pre: the words name a git command's global option (git -c, git -C) or a remote subcommand, where cfg_segment reads.
-cfg_pre='[Gg][Ii][Tt][[:space:]]+-|(^|[^[:alnum:]_.-])(fetch|pull|push|clone|ls-remote|archive)([^[:alnum:]_.-]|$)'
+cfg_pre='[Gg][Ii][Tt](\.[Ee][Xx][Ee])?[[:space:]]+-|(^|[^[:alnum:]_.-])(fetch|pull|push|clone|ls-remote|archive)([^[:alnum:]_.-]|$)'
 # The names above as they're set on a command's line: before git, after export or env, or as PowerShell's $env:NAME = value.
 env_run_re='(^|[^[:alnum:]_.-])(\$env:)?(GIT_(CONFIG|SSH|PAGER|EDITOR|SEQUENCE_EDITOR|EXTERNAL_DIFF|ASKPASS|PROXY_COMMAND|EXEC_PATH|ALLOW_PROTOCOL)[[:alnum:]_]*|EDITOR|VISUAL|PAGER)[[:space:]]*='
 
@@ -783,7 +803,7 @@ cfg_check() {
 # clone also takes -c and --config (checked as keys) and the short -u, which is its upload-pack.
 cfg_segment() {
   local a=$1 b=$2 gi=-1 j sub w name nxt cl c rest q
-  for ((j = a; j <= b; j++)); do [[ ${vbw[j]} == [Gg][Ii][Tt] ]] && { gi=$j; break; }; done
+  gitw_find "$a" "$b"; gi=$gitw_i
   ((gi < 0)) && return 0
   j=$((gi + 1))
   while ((j <= b)); do
@@ -904,13 +924,18 @@ jesc() {
 # removed and each substitution kept as text, and moves i past it. Returns 1 when a quote, a substitution or an ANSI-C
 # string doesn't close, or an ANSI-C string has a numeric escape, which can spell any character.
 wrap_word() {
-  local c n k
+  local c n k wpb=0
   wv=""
   while ((i < L)); do
     c="${s:i:1}"
     case $c in ' ' | $'\t' | "$nl" | ';' | '&' | '|' | '(' | ')') return 0 ;; esac
     if [[ $c == "$sesc" ]]; then
-      n="${s:i+1:1}"; i=$((i + 2))
+      n="${s:i+1:1}"
+      # T294: a backslash path (C:\Git\bin\bash.exe) keeps its backslashes, so the shell's name is its last part
+      if [[ $tool != PowerShell && $n == [[:alnum:]_.~\\-] ]] && { ((wpb)) || [[ $wv =~ ^([A-Za-z]:|\.\.?|~)$ || ( -z $wv && $n == "$sesc" ) ]]; }; then
+        wv+="$c"; wpb=1; i=$((i + 1)); continue
+      fi
+      i=$((i + 2))
       # an escaped line break continues the word; an escaped $ is the script's own (x6, B45)
       if [[ $n == '$' ]]; then wv+="$x6"; elif [[ $n != "$nl" && -n $n ]]; then wv+="$n"; fi
       continue
@@ -1601,6 +1626,10 @@ hang_strip() {
   return 0
 }
 hang_strip
+# cntext is hst without the bodies of a PowerShell command's here-strings (ps_here_strip), made once for the wrapper gate and the walks
+# below (T294): a body nothing runs costs no per-character walk and no wrapper reading, even when it names bash.exe or git.exe -c.
+cntext="$hst"
+if ((${vps[vi]:-0})) && [[ $cntext == *"@'"* || $cntext == *'@"'* ]]; then ps_here_strip "$cntext"; cntext="$PH"; fi
 
 # The text the rules read (B50) is hbt as code is detect: its quoted strings blanked, and its line breaks as ;.
 # blank_q <text> <regex>: sets BQ to the text with each match of the regex, from the left, as " Q ". A cursor moves past each
@@ -2001,9 +2030,11 @@ wscripts=()
 shl="${raw//\\\\/$x1}"; shl="${shl//\\\"/\"}"; shl="${shl//\\n/$nl}"; shl="${shl//\\t/ }"; shl="${shl//\\r/}"; shl="${shl//$x1/$bs}"
 shopt -s nocasematch
 bare="${shl//[\"\'\\]/}"
+# T294: a backslash path reads as spaces too, so C:\Git\bin\bash.exe names bash (bare2 is made only when the text has a backslash)
+bare2=""; [[ $cntext == *\\* ]] && { bare2="${cntext//[\"\']/}"; bare2="${bare2//\\/ }"; }   # cntext: a here-string's body is left out
 # B60: a PowerShell view that names iex or Invoke-Expression is read too (no Bash view does: iex isn't a Bash command). shl keeps
 # the backslash of a module-qualified name (Microsoft.PowerShell.Utility\Invoke-Expression), which bare drops.
-if [[ $bare =~ $wrap_gate ]] || { ((${vps[vi]:-0})) && { [[ $bare =~ $iex_gate ]] || [[ $shl =~ $iex_gate ]]; }; }; then
+if [[ $bare =~ $wrap_gate || ( -n $bare2 && $bare2 =~ $wrap_gate ) ]] || { ((${vps[vi]:-0})) && { [[ $bare =~ $iex_gate ]] || [[ $shl =~ $iex_gate ]]; }; }; then
   # The heredoc bodies gtext leaves out (below) are left out here too, so a message that names a shell isn't read as a script.
   wtext=""; wdelim=""; wq=""; wbody=""
   while IFS= read -r line || [ -n "$line" ]; do
@@ -2020,7 +2051,8 @@ if [[ $bare =~ $wrap_gate ]] || { ((${vps[vi]:-0})) && { [[ $bare =~ $iex_gate ]
   done <<<"$shl"
   wtext+="$wbody"
   bare="${wtext//[\"\'\\]/}"
-  if [[ $bare =~ $wrap_gate ]] || { ((${vps[vi]:-0})) && { [[ $bare =~ $iex_gate ]] || [[ $wtext =~ $iex_gate ]]; }; }; then
+  bare2=""; [[ $wtext == *\\* ]] && { bare2="${wtext//[\"\']/}"; bare2="${bare2//\\/ }"; }
+  if [[ $bare =~ $wrap_gate || ( -n $bare2 && $bare2 =~ $wrap_gate ) ]] || { ((${vps[vi]:-0})) && { [[ $bare =~ $iex_gate ]] || [[ $wtext =~ $iex_gate ]]; }; }; then
     wrap_read "$wtext" || block "$MSG_WRAP"
     for ((wk = 0; wk < ${#wscripts[@]}; wk++)); do
       ((${vdep[vi]:-0} < WRAP_MAX)) || block "$MSG_DEEP"
@@ -2050,8 +2082,6 @@ gh_pre=0; [[ ${real//[\"\'\\]/} =~ (^|[^[:alnum:]_.-])gh[[:space:]] ]] && gh_pre
 # hst, the command without the bodies nothing runs (B50), and in PowerShell without the bodies of its here-strings (ps_here_strip),
 # so a file written from a heredoc or a here-string (a GDScript file of $Node.method() lines) costs no walk of every character.
 cnv=0
-cntext="$hst"
-if ((${vps[vi]:-0})) && [[ $cntext == *"@'"* || $cntext == *'@"'* ]]; then ps_here_strip "$cntext"; cntext="$PH"; fi
 [[ $cntext =~ $cn_pre_re || $cntext =~ $cn_exec_re ]] && cname_judge "$cntext" 0
 
 # B49: a command substitution runs before the command it's an argument of, so a timeout above it doesn't bound it: timeout 60
@@ -2430,8 +2460,11 @@ if ((isgit)); then
   # command's own words are also read for their configuration keys and program flags (cfg_segment), never a heredoc body. That
   # read is about 0.2 s for a 3 KB message, so it runs only when cfg_pre finds a git option or a remote subcommand in the words
   # (quotes and $ removed, so "git" -c and $'-c' are found too) or a variable is there for B37 to judge.
-  cbare="${cut_out//[\"\'\\\$]/}"
-  if [[ $cut_out == *'$'* || $cbare =~ $cfg_pre ]]; then var_judge "$cut_out" 1; fi
+  # A PowerShell here-string's body is left out as it is from cntext: a long body that names git.exe -c costs no walk of every character.
+  cg="$cut_out"
+  if ((${vps[vi]:-0})) && [[ $cg == *"@'"* || $cg == *'@"'* ]]; then ps_here_strip "$cg"; cg="$PH"; fi
+  cbare="${cg//[\"\'\\\$]/}"
+  if [[ $cg == *'$'* || $cbare =~ $cfg_pre ]]; then var_judge "$cg" 1; fi
   [[ $hall == *'$'* ]] && var_judge "$hall"
   # B38: a variable that names a program git runs, set on the command's line. gcode has the quotes decoded, so a quoted message
   # doesn't count, and a heredoc body isn't in it.
@@ -2495,7 +2528,6 @@ for gs in "${gsegs[@]}"; do
   n=${#w[@]}; k=0
   ((isgit)) && subst_segment
   # git is found by its name in any case, after a path and with .exe (/usr/bin/git, GIT.EXE are git, as they are for the shell).
-  gitw_re='^(.*/)?[Gg][Ii][Tt](\.[Ee][Xx][Ee])?$'
   while ((k < n)) && ! [[ ${w[k]} =~ $gitw_re ]]; do ((k++)); done
   ((k++))
   # git's global options: the ones that take a value as the next word skip it too.

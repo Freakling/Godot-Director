@@ -239,7 +239,13 @@ while ((${#gd_body} < 25000)); do gd_body+=$'\t$AnimationPlayer.play("walk")\n\t
 py_body='import sys'$'\n'
 while ((${#py_body} < 25000)); do py_body+=$'def copy_py(x):\n    # python data, it\'s "ok"\n    return x\n'; done
 slow_cmds=($'cat > scripts/hero.gd <<\'EOF\'\n'"$gd_body"$'EOF' $'@\'\n'"$gd_body"$'\'@ | Set-Content scripts/hero.gd' $'python3 tool.py <<\'EOF\'\n'"$py_body"$'EOF')
-slow_tools=(Bash PowerShell Bash); slow_names=(heredoc here-string python-data); slow_fail=""; slow_times=""
+# T294: 300 lines (about 14 KB) that name bash.exe and git.exe -c, in a heredoc and a here-string. Every line gives the wrapper gate and
+# the git option rules something to read, so this body costs more than the GDScript one (about 1 second, where the GDScript body takes
+# 0.4 to 1.2), and it grows faster than its length (900 lines take about 6, with nothing else running): the limit of 5 seconds holds with room to spare here.
+nm_body=""
+for ((si = 0; si < 300; si++)); do nm_body+=$'see C:\\Git\\bin\\bash.exe -c and git.exe -c here\n'; done
+slow_cmds+=($'cat > scripts/hero.gd <<\'EOF\'\n'"$nm_body"$'EOF' $'@\'\n'"$nm_body"$'\'@ | Set-Content scripts/hero.gd')
+slow_tools=(Bash PowerShell Bash Bash PowerShell); slow_names=(heredoc here-string python-data named-heredoc named-here-string); slow_fail=""; slow_times=""
 for ((si = 0; si < ${#slow_cmds[@]}; si++)); do
   json_str "${slow_cmds[si]}"
   printf '{"session_id":"s","tool_name":"%s","tool_input":{"command":"%s","description":"run"}}' "${slow_tools[si]}" "$JSON_STR" > "$guard_dir/slow.json"
@@ -248,8 +254,8 @@ for ((si = 0; si < ${#slow_cmds[@]}; si++)); do
   unset TIMEFORMAT
   slow_rc="${slow_out#*rc }"; slow_rc="${slow_rc%%[!0-9]*}"; slow_s="${slow_out##*[!0-9.]}"
   slow_times="$slow_times ${slow_names[si]} (${slow_tools[si]}) ${slow_s}s,"
-  [ "$slow_rc" = 0 ] || slow_fail="$slow_fail"$'\n'"  (${slow_tools[si]}) the guard exited $slow_rc on a 25 KB ${slow_names[si]} body, expected 0"
-  [ "${slow_s%%.*}" -lt 5 ] 2>/dev/null || slow_fail="$slow_fail"$'\n'"  (${slow_tools[si]}) the guard took ${slow_s}s on a 25 KB ${slow_names[si]} body, over 5 seconds"
+  [ "$slow_rc" = 0 ] || slow_fail="$slow_fail"$'\n'"  (${slow_tools[si]}) the guard exited $slow_rc on a long ${slow_names[si]} body, expected 0"
+  [ "${slow_s%%.*}" -lt 5 ] 2>/dev/null || slow_fail="$slow_fail"$'\n'"  (${slow_tools[si]}) the guard took ${slow_s}s on a long ${slow_names[si]} body, over 5 seconds"
 done
 rm -f "$guard_dir/slow.json"
   cd "$work"
@@ -571,6 +577,9 @@ grep -q 'When the human skips it' "$releaseproc" && grep -q 'Depends on: Q<n>' "
 grep -q 'environment: production' "$proc/templates/release-workflow.yml" && grep -q 'tools/release\.sh uat' "$proc/templates/release-workflow.yml" || wired="$wired release-workflow.yml"
 [ -z "$wired" ] && ok "release is wired into the rules, the skill, the docs, the onboarding skip path and the workflow template" \
   || bad "release isn't wired into:$wired"
+unpinned="$(grep -E '^[[:space:]]*(- )?uses:' "$proc/templates/release-workflow.yml" | grep -Ev 'uses: [^@ ]+@[0-9a-f]{40} # v[0-9]+(\.[0-9]+)*$')"
+[ -z "$unpinned" ] && ok "every action in the release workflow template is pinned to a full commit SHA, with its version in a comment" \
+  || bad "release-workflow.yml has actions not pinned by commit" "$unpinned"
 rel="$work/release"
 mkdir -p "$rel/builds/Web" "$rel/builds/Empty"
 printf 'x\n' > "$rel/builds/Web/index.html"
@@ -2245,6 +2254,55 @@ for cmd in \
 done
 guard 0 $'cat > notes.md <<\'EOF\'\n"C:\\Program Files\\Git\\bin\\git.exe" push --force\nEOF\ngit add notes.md'
 guard 0 $'git commit -q -F - <<\'EOF\'\ndocs: "C:\\Program Files\\Git\\bin\\git.exe" push --force is blocked\nEOF'
+# The same paths in front of git's -c and program flags and in front of a shell (Director-Driven-Development T294): the name is its last
+# part without .exe in any case, quoted with a space, as a backslash path, with forward slashes, behind a prefix, so the rules that read
+# git's options and the shell wrapper's script judge them as they do the bare names.
+for cmd in \
+    '"C:\Program Files\Git\bin\git.exe" -c core.pager=calc log' \
+    'C:\Git\bin\git.exe -c core.pager=calc log' \
+    '"C:/Program Files/Git/bin/git.exe" -c core.pager=calc log' \
+    '"C:\Program Files\Git\bin\GIT.EXE" -c core.sshCommand=calc fetch' \
+    'env "C:\Program Files\Git\bin\git.exe" -c core.pager=calc log' \
+    '..\bin\git.exe -c core.pager=calc log' \
+    '\\server\share\git.exe -c core.pager=calc log' \
+    '"C:\Program Files\Git\bin\git.exe" fetch --upload-pack=calc origin' \
+    '"C:\Program Files\Git\bin\git.exe" ls-remote --upload-pack calc origin' \
+    'C:\Git\bin\git.exe push --receive-pack=calc origin' \
+    '"C:\Program Files\Git\bin\git.exe" clone -u calc u' \
+    '"C:\Program Files\Git\bin\bash.exe" -c "git push --force"' \
+    'C:\Git\bin\bash.exe -c "git push --force"' \
+    '"C:\Program Files\Git\bin\sh.exe" -c "git reset --hard"' \
+    'C:\Git\usr\bin\sh.exe -c "git push --force"' \
+    '/c/Git/bin/BASH.EXE -c "git push --force"' \
+    '"C:/Program Files/Git/bin/bash.exe" -c "git push --force"' \
+    'C:/Git/bin/bash.exe -c "git push --force"' \
+    '"C:\Program Files\Git\bin\BASH.EXE" -c "git push --force"' \
+    '"C:\Program Files\Git\bin\zsh.exe" -c "git push --force"' \
+    'env "C:\Program Files\Git\bin\bash.exe" -c "git push --force"' \
+    'timeout 5 C:\Git\bin\bash.exe -c "git push --force"' \
+    'x && C:\Git\bin\bash.exe -lc "git push --force"' \
+    '..\bin\bash.exe -c "git push --force"' \
+    '\\server\share\bash.exe -c "git push --force"' \
+    '~\bin\sh.exe -c "git push --force"'; do
+  guard 2 "$cmd"
+  guard 2 "$cmd" PowerShell
+done
+for cmd in \
+    '"C:\Program Files\Git\bin\git.exe" -c user.name=x log' \
+    '"C:\Program Files\tool\app.exe" -c x' \
+    'C:\tools\app.exe -c "git push --force"' \
+    'echo "C:\Program Files\Git\bin\bash.exe -c foo"' \
+    'echo "C:\Program Files\Git\bin\git.exe -c core.pager=calc log"' \
+    'cp "C:\Program Files\Git\bin\bash.exe" backup' \
+    'ls C:\Git\bin\bash.exe' \
+    'C:\Windows\System32\notepad.exe C:\Git\bin\bash.exe -c foo' \
+    'git log "C:\Program Files\Git\bin\bash.exe" -c' \
+    'git commit -q -m "docs: C:\Program Files\Git\bin\git.exe -c core.pager=calc log is blocked"' \
+    '"C:\Program Files\Git\bin\bash.exe" -c "echo hi"' \
+    'C:\Git\bin\bash.exe tools/check.sh'; do
+  guard 0 "$cmd"
+  guard 0 "$cmd" PowerShell
+done
 for cmd in \
     '"C:\Tools\Godot_v4.7.2-stable_win64_console.exe" --headless --script x.gd' \
     '"C:\Tools\Godot_v4.7.2-stable_win64_console.exe" --headless --import' \
@@ -2351,7 +2409,7 @@ guard_report "$nopath_fail" "the guard starts another process" "the guard starts
 # seconds in Git Bash on Windows). A third body, 25 KB of text that spells py on two lines in three, is data fed to a Python script
 # (python3 tool.py <<'EOF'): the guard keeps that body, since a script may run it, and reads only the lines that hold a <<.
 # Bash's time keyword reads the clock, so the measurement starts no process of its own.
-guard_report "$slow_fail" "the guard is too slow on a long file body" "the guard reads a 25 KB GDScript heredoc and here-string, and 25 KB of data fed to a Python script, in under 5 seconds each:${slow_times%,}"
+guard_report "$slow_fail" "the guard is too slow on a long file body" "the guard reads a 25 KB GDScript heredoc and here-string, 25 KB of data fed to a Python script, and a 14 KB heredoc and here-string that name bash.exe and git.exe -c, in under 5 seconds each:${slow_times%,}"
 
 # A variable in the hook's environment named like a per-view array (vhang, vcov, vdep, vpx, vps) changes nothing: the arrays start
 # empty, so an exported vhang=1 doesn't skip the git rules.

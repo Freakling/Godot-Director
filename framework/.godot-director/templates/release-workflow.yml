@@ -7,6 +7,9 @@
 # - Run by hand with "promote" ticked: upload to production. The job waits for the approval
 #   of the GitHub Environment `production` (Settings > Environments > required reviewers).
 # Credentials are repository or environment secrets only; release.cfg names them, it never holds them.
+# Every action is pinned to a full commit SHA, with its version in a trailing comment: a tag can move,
+# a commit can't. To update one, change the SHA and the comment together (Dependabot's github-actions
+# updates do both).
 name: Export and release
 
 on:
@@ -26,7 +29,7 @@ jobs:
     container:
       image: barichello/godot-ci:4.5 # FILL IN: an image with your project's Godot version and its export templates
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Export every preset
         run: |
           set -e
@@ -37,7 +40,7 @@ jobs:
             mkdir -p "$(dirname "$path")"
             godot --headless --path . --export-release "$preset" "$path"
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: builds
           path: builds/
@@ -47,8 +50,8 @@ jobs:
     if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: builds
           path: builds/
@@ -65,8 +68,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: production # protect this Environment with required reviewers
     steps:
-      - uses: actions/checkout@v4
-      - uses: dawidd6/action-download-artifact@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dawidd6/action-download-artifact@bf251b5aa9c2f7eeb574a96ee720e24f801b7c11 # v6
         with:
           workflow: release.yml
           name: builds
