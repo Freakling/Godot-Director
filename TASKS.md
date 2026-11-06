@@ -4,9 +4,17 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T54 · B6 · R1
+**Next IDs:** T54 · B7 · R1
 
 ## Queue
+
+### B6 · A check failure doesn't always say why · done · M · agent · med
+- Touches: framework/tools/check.sh, selftest.sh, CHANGELOG.md, TASKS.md
+- Repro: a parallel run where a test group's Godot exits non-zero after its tests finished, and another group's `GDIR-IGNORE` allows that group's error line away → expected: a line naming the group and its status / actual: `check: FAIL (full logs in .godot/godot-director/)` and nothing else; and `--if-changed`, the pre-commit hook and the Stop hook repeating a failure print only "nothing changed since the last failing run", so the agent reruns the tests to learn the reason
+- Found in: Director-Driven-Development B68 (The Guildkeeper)
+- Done when: every path that sets `failed=1` or `hard_fail=1` prints a line naming what failed or adds to `errors` (test) · a failing run saves its reason lines beside `last-fail`, capped at about 20, and a repeat prints them after the FAIL line, in `--if-changed`, the pre-commit hook and the Stop hook (test) · a leak line at exit, such as `ERROR: 1 RID allocations of type ... were leaked at exit`, counts as an error and stays in the saved reason (test) · the existing wording and exit codes are unchanged (test) · the selftest passes (check)
+- GDD: (none)
+- Source: Director-Driven-Development B68
 
 ### T53 · The release workflow template pins every action by commit · done · S · agent
 - Touches: framework/.godot-director/templates/release-workflow.yml, selftest.sh, CHANGELOG.md, TASKS.md

@@ -211,6 +211,11 @@ reuse_last() {
   fi
   if [ "$(cat "$state_dir/last-fail" 2>/dev/null)" = "$key" ]; then
     echo "check: FAIL (nothing changed since the last failing run; run 'bash tools/check.sh' to see why)"
+    # The reason that run saved (its first line is the key it belongs to). A project upgraded from an
+    # older install has none: then the FAIL line stands alone.
+    if [ "$(head -n 1 "$state_dir/last-fail-reason" 2>/dev/null)" = "$key" ]; then
+      tail -n +2 "$state_dir/last-fail-reason"
+    fi
     exit 1
   fi
 }
@@ -334,6 +339,53 @@ hard_fail=0   # a failure that isn't a timeout: it wins over exit 3
 echo "check: Godot $version"
 
 # --- helpers of the steps below -----------------------------------------------------------------
+# The lines that say why the run failed, as printed, kept for last-fail-reason. note adds lines (one or
+# several); say prints one and keeps it. Only what the run printed goes in: no value from a secrets finding.
+reasons=""
+note() { reasons="${reasons:+$reasons$nl}$1"; }
+say() { echo "$1"; note "$1"; }
+# exit_named <status> <log> <line>: a process that exited non-zero with error lines in its log. A status
+# other than 1 is a crash or a kill (tools/check.gd exits 1 when a test failed): said at once. Status 1 is
+# the ordinary failing test, which the errors block explains, so the line is held, and named_held says it
+# after the final scan only when that scan reports nothing from the log (another log's GDIR-IGNORE
+# allowed its errors away).
+held=""
+tab="$(printf '\t')"
+exit_named() {
+  if [ "$1" -ne 1 ]; then say "$3"; else held="${held:+$held$nl}$2$tab$3"; fi
+}
+named_held() {
+  local entry
+  [ -n "$held" ] || return 0
+  while IFS= read -r entry; do
+    [ -n "$(scan "$error_pattern" "${entry%%"$tab"*}")" ] || say "${entry#*"$tab"}"
+  done <<HELD
+$held
+HELD
+}
+# save_reason: the saved reason of a failing run, the cache key first, so a reason is only shown for the
+# files it was written for. At most 20 lines: up to 5 lines that name a process (they start "check: ",
+# but for the errors header), then the leak lines and GDIR-FAIL lines, then the rest in the space left,
+# all in the order they were printed, and a line saying how many were left out.
+save_reason() {
+  local tmp="$state_dir/last-fail-reason.tmp"
+  {
+    cache_key "$before"; echo
+    printf '%s\n' "$reasons" | grep -v '^[[:space:]]*at: ' | awk -v cap=20 '
+      NF { n++; line[n] = $0
+        proc[n] = ($0 ~ /^check: / && $0 !~ /^check: errors:/)
+        prio[n] = (!proc[n] && ($0 ~ /leaked/ || $0 ~ /GDIR-FAIL:/)) }
+      END {
+        used = 0; procs = 0
+        for (i = 1; i <= n; i++) if (proc[i] && procs < 5 && used < cap) { keep[i] = 1; used++; procs++ }
+        for (i = 1; i <= n; i++) if (prio[i] && used < cap) { keep[i] = 1; used++ }
+        for (i = 1; i <= n; i++) if (!keep[i] && used < cap) { keep[i] = 1; used++ }
+        for (i = 1; i <= n; i++) if (keep[i]) print line[i]
+        if (n > used) printf "  ... and %d more reason lines (see the logs in .godot/godot-director/)\n", n - used
+      }'
+  } > "$tmp" && mv -f "$tmp" "$state_dir/last-fail-reason"
+  rm -f "$tmp"
+}
 esc="$(printf '\033')"
 clean() { tr -d '\r' < "$1" | sed "s/${esc}\[[0-9;]*m//g"; }
 # timed_out_in <what> <log>: say which test file a run that hit the timeout was in.
@@ -341,7 +393,7 @@ timed_out_in() {
   local running group
   running="$(clean "$2" | sed -n 's/^GDIR-TEST: \(.*\)::.*$/\1/p' | tail -n 1)"
   group="$(clean "$2" | sed -n 's/^GDIR-GROUP: //p' | head -n 1)"
-  echo "check: $1 timed out after ${limit} s in ${group:-the tests}${running:+, while running $running} (see $2)"
+  say "check: $1 timed out after ${limit} s in ${group:-the tests}${running:+, while running $running} (see $2)"
   timed_out="${timed_out:+$timed_out, }$1"
   failed=1
 }
@@ -394,7 +446,7 @@ silent_exit() {
   [ -z "$(scan "$error_pattern" "$1")" ]
 }
 # exit_quiet <what> <status> <log>: the line for a process that exited non-zero and printed no error.
-exit_quiet() { echo "check: $1 exited with $(exit_text "$2") and printed no error; see $3"; }
+exit_quiet() { say "check: $1 exited with $(exit_text "$2") and printed no error; see $3"; }
 
 # --- one test file (--only) --------------------------------------------------------------------
 # The import pass when needed, then the named test files in one Godot run. Nothing is recorded for
@@ -494,8 +546,9 @@ else
   elif grep -qs '"File"' "$gl_report"; then
     gl_found="$(gl_findings)"
     gl_count="$(printf '%s\n' "$gl_found" | grep -c .)"
-    echo "check: secrets FAIL: gitleaks found $gl_count possible credential(s) in the working tree:"
+    say "check: secrets FAIL: gitleaks found $gl_count possible credential(s) in the working tree:"
     printf '%s\n' "$gl_found" | head -n 20 | sed 's/^/       /'
+    note "$(printf '%s\n' "$gl_found" | head -n 5 | sed 's/^/       /')"
     [ "$gl_count" -gt 20 ] && echo "       ... and $((gl_count - 20)) more (see the report)"
     echo "       Report (values redacted): $gl_report"
     echo "       Move the credential out of the file (the environment, or a gitignored file); if it was ever"
@@ -524,10 +577,10 @@ else
   status=$?
   import_record "$status"
 fi
-if [ "$status" -eq 124 ]; then timed_out="the import pass"; echo "check: the import pass timed out after ${limit} s"; failed=1
+if [ "$status" -eq 124 ]; then timed_out="the import pass"; say "check: the import pass timed out after ${limit} s"; failed=1
 elif [ "$status" -ne 0 ]; then
   if silent_exit "$state_dir/import.log"; then exit_quiet "the import pass" "$status" "$state_dir/import.log"
-  else echo "check: the import pass exited with $status"; fi
+  else say "check: the import pass exited with $status"; fi
   failed=1; hard_fail=1
 fi
 
@@ -558,7 +611,8 @@ if [ "$par" -eq 0 ]; then
   status=$?
   if [ "$status" -eq 124 ]; then timed_out_in "tools/check.gd" "$state_dir/check.log"
   elif [ "$status" -ne 0 ]; then
-    if silent_exit "$state_dir/check.log"; then exit_quiet "tools/check.gd" "$status" "$state_dir/check.log"; fi
+    if silent_exit "$state_dir/check.log"; then exit_quiet "tools/check.gd" "$status" "$state_dir/check.log"
+    else exit_named "$status" "$state_dir/check.log" "check: tools/check.gd exited with $(exit_text "$status") (see $state_dir/check.log)"; fi
     failed=1; hard_fail=1
   fi
 else
@@ -574,7 +628,8 @@ else
   wait "$main_pid"; status=$?
   if [ "$status" -eq 124 ]; then timed_out_in "tools/check.gd (loading and screen rules)" "$state_dir/check.log"
   elif [ "$status" -ne 0 ]; then
-    if silent_exit "$state_dir/check.log"; then exit_quiet "the load pass (tools/check.gd --no-tests)" "$status" "$state_dir/check.log"; fi
+    if silent_exit "$state_dir/check.log"; then exit_quiet "the load pass (tools/check.gd --no-tests)" "$status" "$state_dir/check.log"
+    else exit_named "$status" "$state_dir/check.log" "check: the load pass (tools/check.gd --no-tests) exited with $(exit_text "$status") (see $state_dir/check.log)"; fi
     failed=1; hard_fail=1
   fi
   # The import and the load pass are done. If both were clean (the game's own code is about to run),
@@ -595,10 +650,11 @@ else
     if [ "$status" -eq 124 ]; then timed_out_in "test group $k of $test_jobs" "$log"
     elif ! clean "$log" | grep -q '^GDIR-TESTS: '; then
       if [ "$status" -ne 0 ] && silent_exit "$log"; then exit_quiet "test group $k of $test_jobs" "$status" "$log"
-      else echo "check: test group $k of $test_jobs didn't finish (see $log)"; fi
+      else say "check: test group $k of $test_jobs didn't finish (see $log)"; fi
       failed=1
     elif [ "$status" -ne 0 ]; then
-      if silent_exit "$log"; then exit_quiet "test group $k of $test_jobs" "$status" "$log"; fi
+      if silent_exit "$log"; then exit_quiet "test group $k of $test_jobs" "$status" "$log"
+      else exit_named "$status" "$log" "check: test group $k of $test_jobs exited $(exit_text "$status") after its tests finished (see $log)"; fi
       failed=1; hard_fail=1
     fi
     k=$((k + 1))
@@ -645,6 +701,7 @@ rm -f "$times_file.new" "$times_file.tmp"
 
 write_allow $test_logs
 errors="$(scan "$error_pattern" "$state_dir/import.log" $test_logs)"
+named_held
 warnings="$(scan '^[ \t]*(WARNING|SCRIPT WARNING|USER WARNING):' "$state_dir/import.log" $test_logs)"
 
 # --- 3b. layout lint of the screens (opt in) ----------------------------------------------------
@@ -662,7 +719,7 @@ if [ "$failed" -eq 0 ] && [ -z "$errors" ] && [ -f tools/ui_capture.cfg ] && [ -
     ui_ran=1
     run_godot "$ui_log" --headless --path . --script tools/ui_capture.gd -- --check
     ui_status=$?
-    if [ "$ui_status" -eq 124 ]; then timed_out="${timed_out:+$timed_out, }the layout lint"; echo "check: the layout lint timed out after ${limit} s"; failed=1; fi
+    if [ "$ui_status" -eq 124 ]; then timed_out="${timed_out:+$timed_out, }the layout lint"; say "check: the layout lint timed out after ${limit} s"; failed=1; fi
     ui_errors="$(scan "$error_pattern" "$ui_log")"
     if [ -n "$ui_errors" ]; then errors="$ui_errors"; fi
     ui_warnings="$(scan '^[ \t]*(WARNING|SCRIPT WARNING|USER WARNING):' "$ui_log")"
@@ -735,7 +792,7 @@ fi
 if clean "$state_dir/check.log" | grep -q '^GDIR: '; then
   printf '%s\n' "$summary" | sed 's/^GDIR: /check: /; s/^GDIR-NOTE: /check: note: /'
 elif [ -z "$timed_out" ]; then
-  echo "check: tools/check.gd didn't finish (see $state_dir/check.log)"
+  say "check: tools/check.gd didn't finish (see $state_dir/check.log)"
   failed=1
 fi
 if [ "$ui_ran" -eq 1 ]; then
@@ -744,7 +801,7 @@ if [ "$ui_ran" -eq 1 ]; then
     exit_quiet "the layout lint (tools/ui_capture.gd --check)" "$ui_status" "$ui_log"
     failed=1
   elif [ "$ui_status" -ne 0 ] && [ -z "$(clean "$ui_log" | grep -E '^[[:space:]]*(GDIR-FAIL|ERROR|SCRIPT ERROR):')" ]; then
-    echo "check: the layout lint stopped early (see $ui_log)"
+    say "check: the layout lint stopped early (see $ui_log)"
     failed=1
   fi
 fi
@@ -762,6 +819,9 @@ if [ -n "$errors" ]; then
   failed=1
   echo "check: errors:"
   printf '%s\n' "$errors" | head -n 60 | sed 's/^/  /'
+  # All of them go to the saved reason, not just the 60 shown: save_reason keeps the leak lines and
+  # GDIR-FAIL lines first when it has to cut.
+  note "check: errors:$nl$(printf '%s\n' "$errors" | sed 's/^/  /')"
   if printf '%s\n' "$errors" | grep -q '^GDIR-FAIL: autoplay:'; then
     echo "  autoplay: 'bash tools/log_review.sh --latest' reads the run; 'bash tools/autoplay.sh --replay <run folder>' plays it again"
   fi
@@ -771,7 +831,7 @@ fi
 if [ -f tools/check.local.sh ]; then
   echo "check: running tools/check.local.sh"
   if ! GODOT_BIN="$godot" bash tools/check.local.sh; then
-    echo "check: tools/check.local.sh failed"
+    say "check: tools/check.local.sh failed"
     failed=1
   fi
 fi
@@ -807,7 +867,7 @@ if [ "$failed" -eq 0 ]; then
   elif [ -n "$before" ]; then
     echo "check: note: files changed while the check ran; run it again to cover the changes."
   fi
-  rm -f "$state_dir/last-fail"
+  rm -f "$state_dir/last-fail" "$state_dir/last-fail-reason"
   # Streak tracking: count how many consecutive passing runs each warning has appeared in,
   # and emit a note for any that have reached the threshold.
   streak_file="$state_dir/warn-streak.json"
@@ -866,7 +926,10 @@ fi
 # A failing run may have left Godot's class cache stale (scripts aren't in the import fingerprint), so
 # the next run imports again.
 rm -f "$state_dir/last-pass" "$state_dir/import-fingerprint"
-if [ -n "$before" ] && [ "$before" = "$(fingerprint)" ]; then cache_key "$before" > "$state_dir/last-fail"; fi
+if [ -n "$before" ] && [ "$before" = "$(fingerprint)" ]; then
+  save_reason   # first, with the key inside it, so last-fail never names a reason for other files
+  cache_key "$before" > "$state_dir/last-fail"
+fi
 slowest
 echo "check: FAIL (full logs in $state_dir/)"
 exit 1

@@ -4512,6 +4512,198 @@ out="$(GODOT_BIN="$work/godot-crash" bash tools/check.sh --jobs 1 2>&1)"; expect
 expect_output "names the check, its status and its log" "check: tools/check\.gd exited with 139 \(segmentation fault\) and printed no error; see \.godot/godot-director/check\.log" "$out"
 }
 
+l_fail_reason() {
+lane_game warm
+parallel_prelude
+crash_defs
+printf '\n[tests]\njobs=2\n' >> tools/check.cfg
+# --- a failing run says why, and a repeat says it again -----------------------------------------
+echo "failure reasons"
+state=".godot/godot-director"
+# A stand-in for Godot. Group 1 asks to ignore a line (GDIR-IGNORE) that group 2 reports as an error and then
+# exits 139: the final scan allows that line away, so only the group's own line can name the failure.
+cat > "$work/godot-hole" <<HOLE
+#!/usr/bin/env bash
+"$godot" "\$@"
+status=\$?
+case "\$*" in
+  *"--tests 1 2"*) echo "GDIR-IGNORE:selftest hole line" ;;
+  *"--tests 2 2"*) echo "ERROR: selftest hole line"; exit 139 ;;
+esac
+exit \$status
+HOLE
+# Group 1 prints a real leak at exit, an engine-noise leak, and more error lines than the saved reason holds.
+cat > "$work/godot-leak" <<LEAK
+#!/usr/bin/env bash
+"$godot" "\$@"
+status=\$?
+case "\$*" in
+  *"--tests 1 2"*)
+    i=1; while [ \$i -le 30 ]; do echo "ERROR: selftest noise \$i"; i=\$((i + 1)); done
+    echo "ERROR: 1 RID allocations of type 'Foo' were leaked at exit."
+    echo "ERROR: 3 ObjectDB instances leaked at exit (run with --verbose for details)."
+    ;;
+esac
+exit \$status
+LEAK
+chmod +x "$work/godot-hole" "$work/godot-leak"
+fail_line="check: FAIL \(nothing changed since the last failing run; run 'bash tools/check.sh' to see why\)"
+export GODOT_BIN="$work/godot-hole"
+out="$(bash tools/check.sh 2>&1)"; status=$?
+expect_status "a group that exits non-zero after its tests, whose error another group's GDIR-IGNORE allows, fails the check" 1 "$status" "$out"
+expect_output "and names the group, its status and its log" "check: test group 2 of 2 exited 139 \(segmentation fault\) after its tests finished \(see \.godot/godot-director/tests-2\.log\)" "$out"
+expect_no_output "with no error block, since the line was allowed away" "check: errors:" "$out"
+[ "$(head -n 1 "$state/last-fail-reason")" = "$(cat "$state/last-fail")" ] \
+  && ok "the saved reason starts with the key last-fail holds" || bad "the saved reason starts with the key last-fail holds" "$(cat "$state/last-fail-reason" 2>/dev/null)"
+grep -q 'test group 2 of 2 exited 139' "$state/last-fail-reason" \
+  && ok "and holds the line" || bad "and holds the line" "$(cat "$state/last-fail-reason" 2>/dev/null)"
+out="$(bash tools/check.sh --if-changed 2>&1)"; status=$?
+expect_status "--if-changed repeats the failure with exit 1" 1 "$status" "$out"
+expect_output "keeps the FAIL line as it was" "^$fail_line\$" "$out"
+expect_output "and prints the saved reason" "check: test group 2 of 2 exited 139 \(segmentation fault\) after its tests finished" "$out"
+before "$out" "nothing changed since the last failing run" "test group 2 of 2 exited" && ok "after the FAIL line" || bad "after the FAIL line" "$out"
+# A repeat that waits for a running check: the first look misses, and the saved reason is shown after the lock.
+cp "$state/last-fail" "$work/saved-last-fail"; cp "$state/last-fail-reason" "$work/saved-last-fail-reason"
+rm -f "$state/last-fail" "$state/last-fail-reason" "$work/waiter.status"
+mkdir -p "$state/lock"
+sleep 120 &
+holder=$!
+echo "$holder" > "$state/lock/pid"
+( bash tools/check.sh --if-changed > "$work/waiter.out" 2>&1; echo $? > "$work/waiter.status" ) &
+waited=0   # the saved result comes back only once the waiter has said it waits, so its first look missed
+while ! grep -qs "waiting for another check" "$work/waiter.out" && [ "$waited" -lt 60 ]; do sleep 1; waited=$((waited + 1)); done
+cp "$work/saved-last-fail" "$state/last-fail"; cp "$work/saved-last-fail-reason" "$state/last-fail-reason"
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+waited=0
+while [ ! -f "$work/waiter.status" ] && [ "$waited" -lt 60 ]; do sleep 1; waited=$((waited + 1)); done
+out="$(cat "$work/waiter.out" 2>/dev/null)"
+expect_status "a repeat that waited for a running check exits 1" 1 "$(cat "$work/waiter.status" 2>/dev/null)" "$out"
+expect_output "and says it waited" "waiting for another check to finish" "$out"
+expect_output "and shows the saved reason after the lock too" "check: test group 2 of 2 exited 139 \(segmentation fault\) after its tests finished" "$out"
+# A project upgraded from an older install has last-fail and no reason file.
+rm -f "$state/last-fail-reason"
+out="$(bash tools/check.sh --if-changed 2>&1)"; status=$?
+expect_status "a last-fail with no reason file still repeats the failure" 1 "$status" "$out"
+[ "$out" = "check: FAIL (nothing changed since the last failing run; run 'bash tools/check.sh' to see why)" ] \
+  && ok "and prints just the FAIL line" || bad "and prints just the FAIL line" "$out"
+# A reason saved for other files is not shown.
+printf 'some other key\ncheck: stale reason\n' > "$state/last-fail-reason"
+out="$(bash tools/check.sh --if-changed 2>&1)"
+expect_no_output "a reason saved under another key isn't shown" "stale reason" "$out"
+# The cap: leak and GDIR-FAIL lines are kept, the rest cut, and the cut is counted. Engine-noise leaks stay allowed.
+export GODOT_BIN="$work/godot-leak"
+out="$(bash tools/check.sh 2>&1)"; status=$?
+expect_status "a leak at exit fails the check" 1 "$status" "$out"
+expect_output "and is reported as an error" "ERROR: 1 RID allocations of type 'Foo' were leaked at exit" "$out"
+expect_no_output "the engine-noise leak stays allowed" "ObjectDB instances leaked at exit" "$out"
+lines="$(tail -n +2 "$state/last-fail-reason" | wc -l | tr -d ' ')"
+[ "$lines" -le 21 ] && ok "the saved reason is capped" || bad "the saved reason is capped" "$lines lines"
+grep -q "RID allocations of type 'Foo' were leaked at exit" "$state/last-fail-reason" \
+  && ok "the leak line is kept past the cap" || bad "the leak line is kept past the cap" "$(cat "$state/last-fail-reason")"
+grep -qE 'and [0-9]+ more reason lines' "$state/last-fail-reason" \
+  && ok "and the saved reason says how many lines were left out" || bad "and the saved reason says how many lines were left out" "$(cat "$state/last-fail-reason")"
+out="$(bash tools/check.sh --if-changed 2>&1)"
+expect_output "a repeat shows the kept leak line" "RID allocations of type 'Foo' were leaked at exit" "$out"
+# Process lines come first in the cap: 25 GDIR-FAIL lines and a group that crashed.
+cat > "$work/godot-cap" <<CAP
+#!/usr/bin/env bash
+"$godot" "\$@"
+status=\$?
+case "\$*" in
+  *"--tests 1 2"*) i=1; while [ \$i -le 25 ]; do echo "GDIR-FAIL: selftest finding \$i"; i=\$((i + 1)); done ;;
+  *"--tests 2 2"*) exit 139 ;;
+esac
+exit \$status
+CAP
+chmod +x "$work/godot-cap"
+export GODOT_BIN="$work/godot-cap"
+out="$(bash tools/check.sh 2>&1)"; status=$?
+expect_status "25 GDIR-FAIL lines and a crashed group fail the check" 1 "$status" "$out"
+grep -q 'check: test group 2 of 2 exited with 139' "$state/last-fail-reason" \
+  && ok "the saved reason keeps the line that names the crashed group" || bad "the saved reason keeps the line that names the crashed group" "$(cat "$state/last-fail-reason")"
+lines="$(tail -n +2 "$state/last-fail-reason" | wc -l | tr -d ' ')"
+[ "$lines" -le 21 ] && ok "and stays capped" || bad "and stays capped" "$lines lines"
+grep -q 'GDIR-FAIL: selftest finding' "$state/last-fail-reason" \
+  && grep -qE 'and [0-9]+ more reason lines' "$state/last-fail-reason" \
+  && ok "with GDIR-FAIL lines after it and the count of what was left out" || bad "with GDIR-FAIL lines after it and the count of what was left out" "$(cat "$state/last-fail-reason")"
+# When a process line is named. An ordinary failing test exits 1 and gets no line of its own; a status other than 1 is
+# named at once, even with error lines in its log; status 1 is named only when another log's GDIR-IGNORE allowed
+# its errors away.
+exit_re="check: (tools/check\.gd|the load pass .*|test group [0-9]+ of [0-9]+) exited"
+export GODOT_BIN="$work/godot-real"
+cat > "$work/godot-real" <<REAL
+#!/usr/bin/env bash
+exec "$godot" "\$@"
+REAL
+chmod +x "$work/godot-real"
+cp tests/test_market.gd "$work/saved-market-reason"
+printf '\nfunc test_selftest_reason_failure() -> void:\n\texpect_eq(1, 2)\n' >> tests/test_market.gd
+out="$(bash tools/check.sh --jobs 2 2>&1)"; status=$?
+expect_status "an ordinary failing test fails a parallel run" 1 "$status" "$out"
+expect_output "and the errors block names it" "test_market\.gd::test_selftest_reason_failure: expected 2, got 1" "$out"
+expect_no_output "with no line for the exit of a process" "$exit_re" "$out"
+out="$(bash tools/check.sh --jobs 1 2>&1)"; status=$?
+expect_status "an ordinary failing test fails a serial run" 1 "$status" "$out"
+expect_no_output "with no line for the exit of a process" "$exit_re" "$out"
+grep -q ' exited ' "$state/last-fail-reason" && bad "and none in the saved reason" "$(cat "$state/last-fail-reason")" || ok "and none in the saved reason"
+cp "$work/saved-market-reason" tests/test_market.gd
+cat > "$work/godot-err139" <<ERR
+#!/usr/bin/env bash
+"$godot" "\$@"
+status=\$?
+case "\$*" in
+  *"--tests 2 2"*) echo "ERROR: selftest real error"; exit 139 ;;
+esac
+exit \$status
+ERR
+cat > "$work/godot-hole1" <<HOLE1
+#!/usr/bin/env bash
+"$godot" "\$@"
+status=\$?
+case "\$*" in
+  *"--tests 1 2"*) echo "GDIR-IGNORE:selftest hole line" ;;
+  *"--tests 2 2"*) echo "ERROR: selftest hole line"; exit 1 ;;
+esac
+exit \$status
+HOLE1
+chmod +x "$work/godot-err139" "$work/godot-hole1"
+export GODOT_BIN="$work/godot-err139"
+out="$(bash tools/check.sh --jobs 2 2>&1)"; status=$?
+expect_status "a group that exits 139 after its tests, with an error line in its log, fails the check" 1 "$status" "$out"
+expect_output "the group is named" "check: test group 2 of 2 exited 139 \(segmentation fault\) after its tests finished" "$out"
+expect_output "beside the errors block" "ERROR: selftest real error" "$out"
+export GODOT_BIN="$work/godot-hole1"
+out="$(bash tools/check.sh --jobs 2 2>&1)"; status=$?
+expect_status "a group that exits 1 with its error allowed away by another group fails the check" 1 "$status" "$out"
+expect_output "and is named, since no error is reported for it" "check: test group 2 of 2 exited 1 after its tests finished" "$out"
+# The Stop hook and the pre-commit hook show the reason of a repeat.
+export GODOT_BIN="$work/godot-hole"
+git add -A && { git_q commit -qm "state for the reason tests" >/dev/null 2>&1 || true; }
+printf '\n# a change for the reason tests\n' >> scripts/systems/market.gd
+hook() { echo '{}' | CLAUDE_PROJECT_DIR="$game" bash .claude/hooks/stop-check.sh 2>&1; }
+out="$(hook)"; status=$?
+expect_status "the Stop hook blocks the failing change" 2 "$status" "$out"
+rm -f "$state/last-reported"
+out="$(hook)"; status=$?
+expect_status "and blocks its repeat" 2 "$status" "$out"
+expect_output "the Stop hook's repeat shows the FAIL line" "nothing changed since the last failing run" "$out"
+expect_output "and the saved reason" "check: test group 2 of 2 exited 139 \(segmentation fault\) after its tests finished" "$out"
+git add scripts/systems/market.gd
+out="$(git_q commit -qm "failing" 2>&1)"; status=$?
+expect_status "the pre-commit hook blocks the repeat" 1 "$status" "$out"
+expect_output "and shows the FAIL line" "nothing changed since the last failing run" "$out"
+expect_output "and the saved reason" "check: test group 2 of 2 exited 139 \(segmentation fault\) after its tests finished" "$out"
+expect_output "and says the commit is blocked" "the check fails; commit blocked" "$out"
+# A pass removes the reason with last-fail.
+unset GODOT_BIN
+git reset -q HEAD -- scripts/systems/market.gd
+out="$(bash tools/check.sh 2>&1)"; expect_status "the same files pass with the real Godot" 0 $? "$out"
+[ ! -f "$state/last-fail" ] && [ ! -f "$state/last-fail-reason" ] \
+  && ok "a pass removes last-fail and its reason" || bad "a pass removes last-fail and its reason" "$(ls "$state")"
+out="$(bash tools/check.sh --if-changed 2>&1)"
+expect_no_output "and a repeat shows no reason" "check: test group" "$out"
+}
+
 l_par_c1() {
 lane_game warm
 parallel_prelude
@@ -7650,6 +7842,7 @@ if [ -n "$godot" ]; then
   lane_start capture-b           l_capture_b           warm
   lane_start capture-a3          l_capture_a3          warm
   lane_start par-b2              l_par_b2              warm
+  lane_start fail-reason         l_fail_reason         warm
   lane_start par-b1              l_par_b1              warm
   lane_start check-misc-b        l_check_misc_b        warm
   lane_start autoplay2-c         l_autoplay2_c         warm
@@ -7666,7 +7859,7 @@ if [ -z "$godot" ]; then
   lanes_times
   finish
 fi
-lanes_print setup check-import-a check-import-b check-faults-a check-faults-b check-misc-a check-misc-b par-a par-b1 par-b2 par-c1 par-c2 par-d \
+lanes_print setup check-import-a check-import-b check-faults-a check-faults-b check-misc-a check-misc-b par-a par-b1 par-b2 fail-reason par-c1 par-c2 par-d \
   playlog stop-hook pre-commit secrets-a secrets-b secrets-c prototype capture-a1 capture-a2 capture-a3 capture-b autoplay \
   autoplay2-a autoplay2-b autoplay2-c autoplay-check-a autoplay-check-b autoplay-beside-a autoplay-beside-b autoplay-fresh
 lanes_times
