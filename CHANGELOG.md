@@ -2,7 +2,7 @@
 
 Each entry lists what changed. **Upgrade steps** at the end of an entry cover both framework fixes and game-owned file updates (AGENTS.md, TASKS.md, the GDD), so every project reaches the same capability level after upgrading. Onboarding carries them out; the fast upgrade mode runs only these steps, and the full mode also re-checks everything as if newly installed.
 
-## Unreleased
+## 4.10.4 (2026-11-11)
 
 - **The check's fingerprint stays the same when a new file is staged.** The fingerprint hashed the paths in the order `git ls-files` printed them, untracked files before tracked ones, so `git add` of a new file changed it although no file's content had changed. `--if-changed` then missed, and the pre-commit hook ran the whole check again right after the build or the Stop hook had passed the same files. The paths are now sorted before they are hashed. The import fingerprint in `tools/check.sh`, `tools/autoplay.sh` and `tools/ui_capture.sh` ordered its files the same way, so staging a new asset or script ran the import pass again; it sorts them too.
   - **Upgrade steps:** none; the three scripts are framework-owned and arrive with the upgrade.
