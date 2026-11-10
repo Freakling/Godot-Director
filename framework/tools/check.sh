@@ -127,17 +127,20 @@ version_gte() {
   [ "$ic" -ge "$mc" ]
 }
 
-# Hash of every file that can change the result. Empty outside a git repository.
+# Hash of every file that can change the result. Empty outside a git repository. The paths are sorted
+# before they are hashed: git lists untracked files before tracked ones, so staging a new file would
+# otherwise change the order, and the hash, though no file's content changed.
 fingerprint() {
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
-  local paths
+  local paths sort_cmd=sort   # not Windows' sort.exe
+  [ -x /usr/bin/sort ] && sort_cmd=/usr/bin/sort
   paths="$( {
     git -c core.quotePath=false ls-files -z -c -o --exclude-standard -- '*.gd' '*.tscn' '*.scn' \
       '*.tres' '*.res' '*.gdshader' '*.gdshaderinc' project.godot tools/check.cfg tools/ui_capture.cfg \
       tools/check.sh tools/check.local.sh tools/autoplay.sh .gitleaks.toml .gitleaksignore 2>/dev/null | tr '\0' '\n'
     echo tools/godot_bin.local
     echo tools/check.ignore
-  } | while IFS= read -r path; do [ -f "$path" ] && printf '%s\n' "$path"; done )"
+  } | LC_ALL=C "$sort_cmd" -u | while IFS= read -r path; do [ -f "$path" ] && printf '%s\n' "$path"; done )"
   [ -n "$paths" ] || return 0
   { printf '%s\n' "$paths"; printf '%s\n' "$paths" | git hash-object --no-filters --stdin-paths; } \
     | git hash-object --stdin
@@ -149,12 +152,14 @@ fingerprint() {
 # read directly, .cfg and .md files, .uid files and .godot/, plus project.godot, which holds the import
 # settings); the path of every script with its class_name, extends and @icon lines (what the class
 # cache records, so a body-only edit doesn't count); and the paths of scenes and shaders. Empty outside
-# a git repository.
+# a git repository. The file list is sorted before it is hashed (git lists untracked files before tracked
+# ones, so staging a new file would otherwise change the order and the hash).
 import_fingerprint() {
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
-  local all imported gd decl scenes
+  local all imported gd decl scenes sort_cmd=sort   # not Windows' sort.exe
+  [ -x /usr/bin/sort ] && sort_cmd=/usr/bin/sort
   all="$(git -c core.quotePath=false ls-files -z -c -o --exclude-standard 2>/dev/null | tr '\0' '\n' \
-    | while IFS= read -r path; do [ -f "$path" ] && printf '%s\n' "$path"; done)"
+    | LC_ALL=C "$sort_cmd" -u | while IFS= read -r path; do [ -f "$path" ] && printf '%s\n' "$path"; done)"
   imported="$( { printf '%s\n' "$all" | grep -v -E '^$|^\.godot/|\.(gd|tscn|scn|tres|res|gdshader|gdshaderinc|godot|cfg|md|uid)$'; \
     [ -f project.godot ] && echo project.godot; } )"
   [ -n "$imported" ] || return 0

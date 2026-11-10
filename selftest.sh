@@ -424,6 +424,32 @@ if [ -n "$block" ] && [ "$block" = "$(import_block "$src/framework/tools/autopla
 else
   bad "the import skip block differs between check.sh, autoplay.sh and ui_capture.sh"
 fi
+# Staging a new file must not change either fingerprint. git lists untracked files before tracked ones, so
+# staging scripts/z.gd moved it in the list the check hashes, though no file's content had changed.
+fp_game="$work/fp-game"; new_repo "$fp_game" || exit 1
+cd "$fp_game" || exit 1
+mkdir -p tools scripts art
+cp "$src/framework/tools/check.sh" tools/check.sh
+printf 'config_version=5\n' > project.godot
+printf 'extends Node\n' > scripts/a.gd
+printf 'a\n' > art/a.png
+git add -A && git_q commit -qm files
+printf 'extends Node\nclass_name Zed\n' > scripts/z.gd
+printf 'z\n' > art/z.png
+fp_before="$(bash tools/check.sh --fingerprint)"
+imp_before="$(eval "$block"; import_fingerprint)"
+git add scripts/z.gd art/z.png
+fp_after="$(bash tools/check.sh --fingerprint)"
+imp_after="$(eval "$block"; import_fingerprint)"
+printf 'extends Node2D\n' > scripts/a.gd
+fp_changed="$(bash tools/check.sh --fingerprint)"
+cd "$work" || exit 1
+if [ -n "$fp_before" ] && [ "$fp_before" = "$fp_after" ]; then ok "staging a new file keeps the check's fingerprint"
+else bad "staging a new file changes the check's fingerprint ($fp_before before, $fp_after after)"; fi
+if [ -n "$imp_before" ] && [ "$imp_before" = "$imp_after" ]; then ok "staging a new file keeps the import fingerprint"
+else bad "staging a new file changes the import fingerprint ($imp_before before, $imp_after after)"; fi
+if [ -n "$fp_after" ] && [ "$fp_changed" != "$fp_after" ]; then ok "a changed script still changes the check's fingerprint"
+else bad "a changed script does not change the check's fingerprint ($fp_after before, $fp_changed after)"; fi
 missing=""
 for skill in "$src"/framework/.claude/skills/*/SKILL.md; do
   name="$(basename "$(dirname "$skill")")"
