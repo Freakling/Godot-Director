@@ -159,12 +159,14 @@ run_godot() { # run_godot <log file> <wrapper or ""> <godot arguments...>
 # read directly, .cfg and .md files, .uid files and .godot/, plus project.godot, which holds the import
 # settings); the path of every script with its class_name, extends and @icon lines (what the class
 # cache records, so a body-only edit doesn't count); and the paths of scenes and shaders. Empty outside
-# a git repository.
+# a git repository. The file list is sorted before it is hashed (git lists untracked files before tracked
+# ones, so staging a new file would otherwise change the order and the hash).
 import_fingerprint() {
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
-  local all imported gd decl scenes
+  local all imported gd decl scenes sort_cmd=sort   # not Windows' sort.exe
+  [ -x /usr/bin/sort ] && sort_cmd=/usr/bin/sort
   all="$(git -c core.quotePath=false ls-files -z -c -o --exclude-standard 2>/dev/null | tr '\0' '\n' \
-    | while IFS= read -r path; do [ -f "$path" ] && printf '%s\n' "$path"; done)"
+    | LC_ALL=C "$sort_cmd" -u | while IFS= read -r path; do [ -f "$path" ] && printf '%s\n' "$path"; done)"
   imported="$( { printf '%s\n' "$all" | grep -v -E '^$|^\.godot/|\.(gd|tscn|scn|tres|res|gdshader|gdshaderinc|godot|cfg|md|uid)$'; \
     [ -f project.godot ] && echo project.godot; } )"
   [ -n "$imported" ] || return 0

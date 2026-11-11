@@ -4,9 +4,16 @@ This is Godot Director's own work queue, for developing the framework itself. It
 
 Item format: `framework/.godot-director/tasks.md`. Queue order is priority; reorder by moving items.
 
-**Next IDs:** T54 · B7 · R1
+**Next IDs:** T54 · B8 · R1
 
 ## Queue
+
+### B7 · Staging a new file changes the check's fingerprint and the import fingerprint · done · S · agent · med
+- Touches: framework/tools/check.sh, framework/tools/autoplay.sh, framework/tools/ui_capture.sh, selftest.sh, CHANGELOG.md, TASKS.md
+- Repro: in a game with a committed `scripts/a.gd` and a new, untracked `scripts/b.gd`, run `bash tools/check.sh --fingerprint`, then `git add scripts/b.gd` and run it again → expected: the same hash, since no file's content changed / actual: a different hash, because `fingerprint()` hashes the paths in the order `git ls-files -c -o --exclude-standard` prints them, untracked files first, so `--if-changed` misses and the pre-commit hook runs the whole check again; `import_fingerprint()` orders its list the same way, so staging a new asset or script runs the import pass again
+- Found in: Director-Driven-Development B69 (the review of App-Director's fast check tier)
+- GDD: (none)
+- Source: Director-Driven-Development B69
 
 ### B6 · A check failure doesn't always say why · done · M · agent · med
 - Touches: framework/tools/check.sh, selftest.sh, CHANGELOG.md, TASKS.md
